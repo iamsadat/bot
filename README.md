@@ -1,4 +1,20 @@
-# TradeBot — a precise mock day-trading bot
+# TradeBot
+
+This repo contains two things that share the same decision engine:
+
+| Component                    | Where        | What it is                                      |
+| ---------------------------- | ------------ | ----------------------------------------------- |
+| Mock trading bot (CLI)       | `tradebot/`  | Headless backtester + live rich-terminal dashboard. Synthetic data, no broker. |
+| Live web app (paper-first)   | `app/` + `web/` | FastAPI backend + React frontend that talks to **Alpaca**. Paper trading by default; live mode behind a confirmation phrase. |
+
+Start with the **mock bot** to understand the strategy. Use the **web app**
+to watch it run on the real market in paper mode. Only consider live
+trading after you have weeks of audit-log evidence that it works on real
+ticks. See [`app/README.md`](app/README.md) for the live-app docs.
+
+---
+
+# TradeBot mock bot — a precise day-trading sandbox
 
 A single-symbol, intraday mock trading bot built around **multi-signal
 confluence**, **strict risk management**, and a **rich live dashboard** in
