@@ -20,12 +20,16 @@ from .api import (
     routes_account,
     routes_audit,
     routes_orders,
+    routes_predictions,
     routes_safety,
+    routes_setup,
     routes_strategy,
+    routes_stream,
 )
 from .config import settings
 from .db import init_db
 from .deps import make_broker
+from .market_stream import MarketStream
 from .trading.engine import TradingEngine
 from .ws import hub
 
@@ -40,12 +44,18 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     init_db()
     engine = TradingEngine(broker_factory=make_broker, broadcast=hub.broadcast)
+    market_stream = MarketStream(broadcast=hub.broadcast)
     app.state.engine = engine
+    app.state.market_stream = market_stream
     try:
         yield
     finally:
         try:
             await engine.stop()
+        except Exception:                                       # noqa: BLE001
+            pass
+        try:
+            await market_stream.stop()
         except Exception:                                       # noqa: BLE001
             pass
 
@@ -70,6 +80,9 @@ app.include_router(routes_orders.router, prefix="/api", tags=["orders"])
 app.include_router(routes_strategy.router, prefix="/api", tags=["strategy"])
 app.include_router(routes_safety.router, prefix="/api", tags=["safety"])
 app.include_router(routes_audit.router, prefix="/api", tags=["audit"])
+app.include_router(routes_setup.router, prefix="/api", tags=["setup"])
+app.include_router(routes_stream.router, prefix="/api", tags=["stream"])
+app.include_router(routes_predictions.router, prefix="/api", tags=["predictions"])
 
 
 @app.get("/api/health")

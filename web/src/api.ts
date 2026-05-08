@@ -133,4 +133,89 @@ export const api = {
     }),
 
   audit: (limit = 200) => req<AuditEntry[]>(`/api/audit?limit=${limit}`),
+
+  setupStatus: () =>
+    req<Record<"paper" | "live", { configured: boolean; source: string; key_preview: string | null }>>(
+      "/api/setup/status",
+    ),
+  setupTest: (mode: Mode, api_key: string, api_secret: string) =>
+    req<{ ok: boolean; mode: Mode; equity: number; cash: number; buying_power: number }>(
+      "/api/setup/test",
+      { method: "POST", body: JSON.stringify({ mode, api_key, api_secret }) },
+    ),
+  setupSave: (mode: Mode, api_key: string, api_secret: string) =>
+    req("/api/setup/keys", {
+      method: "POST",
+      body: JSON.stringify({ mode, api_key, api_secret }),
+    }),
+  setupClear: (mode: Mode) =>
+    req("/api/setup/clear", { method: "POST", body: JSON.stringify({ mode }) }),
+
+  subscribe: (symbols: string[], mode?: Mode) =>
+    req<{ subscribed: string[]; mode: Mode }>("/api/market/subscribe", {
+      method: "POST",
+      body: JSON.stringify({ symbols, mode }),
+    }),
+  unsubscribe: () =>
+    req<{ subscribed: string[] }>("/api/market/unsubscribe", { method: "POST" }),
+
+  prediction: (symbol: string, lookback = 240) =>
+    req<PredictionResponse>(
+      `/api/prediction/${symbol}?lookback_minutes=${lookback}`,
+    ),
 };
+
+// ---------- chart / prediction types ---------------------------------
+
+export interface IndicatorBar {
+  ts: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema_fast: number | null;
+  ema_mid: number | null;
+  ema_slow: number | null;
+  vwap: number | null;
+  bb_up: number | null;
+  bb_lo: number | null;
+  bb_mid: number | null;
+  rsi: number | null;
+  adx: number | null;
+  atr: number | null;
+  macd: number | null;
+  macd_signal: number | null;
+  macd_hist: number | null;
+}
+
+export interface ScoreSample {
+  ts: string;
+  score: number;
+  direction: number;
+}
+
+export interface TradePlan {
+  direction: number;
+  entry: number;
+  stop: number;
+  take_profit: number;
+  risk_per_share: number;
+  rr_ratio: number;
+}
+
+export interface PredictionResponse {
+  symbol: string;
+  bars: IndicatorBar[];
+  score_history: ScoreSample[];
+  current_score: number;
+  current_direction: number;
+  current_reason: string;
+  current_votes: Record<string, number>;
+  plan: TradePlan | null;
+  last_close: number;
+  rsi: number;
+  adx: number;
+  atr: number;
+  vwap: number;
+}

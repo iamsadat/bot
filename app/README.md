@@ -56,7 +56,16 @@ It's free, takes 2 minutes, no funding required:
 * Go to <https://app.alpaca.markets/paper/dashboard/overview>
 * Click **View API Keys** → **Generate New Key**
 
-### 2. Configure the app
+### 2. Configure credentials
+
+You have two options:
+
+**A. From the UI (easiest).** Click the **⚙ Setup** button in the header
+once the app is running, paste your key + secret into the Paper tab,
+click **Test**, then **Save**. The keys are persisted in the app's SQLite
+database and used immediately — no restart required.
+
+**B. From a `.env` file.** If you'd rather not put secrets in the DB:
 
 ```bash
 cd bot
@@ -65,6 +74,9 @@ cp .env.example .env
 #   ALPACA_PAPER_KEY=PK...
 #   ALPACA_PAPER_SECRET=...
 ```
+
+Environment variables, when present, **override** anything saved via the
+Setup UI.
 
 ### 3. Install dependencies
 
@@ -108,29 +120,50 @@ The Vite dev server proxies `/api/*` and `/ws` to the backend.
 
 | Panel             | What it shows                                                   |
 | ----------------- | --------------------------------------------------------------- |
-| Header            | Mode (paper/live), market open/closed, engine state, **kill button**. |
+| Header            | Mode, market open/closed, engine state, **live-stream badge** (lights green when ticks are flowing for the chart's symbol), live last price, **⚙ Setup**, **kill button**. |
 | Account           | Equity, cash, buying power, day P&L (% and $).                  |
+| Chart             | Candlestick chart (lightweight-charts) with toggleable EMA 9/21/55, VWAP, Bollinger Band overlays, RSI/MACD subplot, crosshair tooltip with OHLCV + indicators, and **dashed entry / stop / take-profit lines** at the strategy's projected levels. Type a symbol and press Enter / click Load to switch tickers. |
+| Live Prediction   | Score meter (–1 / 0 / +1), current direction, RSI / ADX / ATR KPIs, projected entry / SL / TP table, sparkline of the score over the last 120 bars with long/short/flat counts. |
 | Positions         | Each open position with side, qty, mark, P&L, **Close** button. |
 | Orders            | Recent orders (manual + strategy) with status, source, **Cancel** per row, **Cancel all open**. |
 | Strategy          | Live confluence score with per-signal vote bars + last-tick reason; configurable threshold/ADX/risk/RR; start / stop / save. |
 | Manual Order      | Symbol, side, qty, market / limit / bracket, with stop & TP for brackets. |
-| Audit Log         | Append-only system log (orders, kills, mode changes, errors).  |
+| Audit Log         | Append-only system log (orders, kills, mode changes, errors, credentials saved, etc.). |
 
 The header polls every 5 s and the WebSocket pushes any decision/order/kill
 event the moment it happens.
 
 ### Auto-trading workflow
 
-1. Set your symbol(s) and parameters in **Strategy**, save.
-2. Click **Start** in the Strategy card. The engine begins an async loop,
+1. Open **⚙ Setup**, paste your Alpaca paper keys, click **Test** → **Save**.
+2. Pick a symbol on the **Chart** card; the chart subscribes to the live
+   data feed and the **LIVE …** header badge turns green when ticks
+   start flowing.
+3. Set your symbol(s) and parameters in **Strategy**, save.
+4. Click **Start** in the Strategy card. The engine begins an async loop,
    ticking every `ENGINE_TICK_SECONDS` (default 60 s) while the market is
    open.
-3. Each tick: pull bars → compute confluence score → if score clears
+5. Each tick: pull bars → compute confluence score → if score clears
    threshold AND 5/8 signals agree AND ADX/VWAP/RSI gates pass → size a
    bracket order and submit it.
-4. Bracket orders carry their own stop-loss and take-profit on the broker
+6. Bracket orders carry their own stop-loss and take-profit on the broker
    side, so you are protected even if the app crashes.
-5. Watch the **Audit log** for everything that happens.
+7. Watch the **Live Prediction** panel for what the engine will do *next*,
+   and the **Audit log** for what already happened.
+
+### Live data & predictions
+
+* Historical: `/api/market/bars/{symbol}` returns minute bars; the
+  prediction route `/api/prediction/{symbol}` returns the same bars
+  enriched with EMA / VWAP / Bollinger / RSI / MACD / ADX / ATR plus the
+  strategy's per-bar score history and projected trade plan.
+* Real-time: a server-side `MarketStream` opens a single Alpaca
+  WebSocket per process and re-broadcasts `bar`, `trade`, `quote` events
+  through `/ws` to every connected browser. The chart auto-subscribes
+  to whatever symbol you load.
+* The prediction is recomputed locally every minute and on every
+  incoming `bar` push, so the score / SL / TP lines stay in sync without
+  any polling fight.
 
 ### Manual workflow
 
@@ -221,11 +254,19 @@ All routes live under `/api`. WebSocket is `/ws`.
 | POST   | `/api/strategy/start`           | Arm the engine.                              |
 | POST   | `/api/strategy/stop`            | Disarm the engine.                           |
 | PUT    | `/api/strategy/config`          | Update threshold / ADX / risk / symbols.     |
+| GET    | `/api/prediction/{symbol}`      | Bars + per-bar score history + projected trade plan. |
+| GET    | `/api/setup/status`             | Which credential slots are configured (no secrets). |
+| POST   | `/api/setup/test`               | Try a `(mode, key, secret)` against Alpaca.  |
+| POST   | `/api/setup/keys`               | Persist credentials after a successful test. |
+| POST   | `/api/setup/clear`              | Delete a stored credential row.              |
+| GET    | `/api/market/subscriptions`     | Symbols currently streaming.                 |
+| POST   | `/api/market/subscribe`         | `{symbols, mode?}` — open WS data stream.    |
+| POST   | `/api/market/unsubscribe`       | Close the WS data stream.                    |
 | POST   | `/api/safety/kill`              | Cancel + flatten + halt.                     |
 | POST   | `/api/safety/release`           | Release the kill.                            |
 | POST   | `/api/safety/mode`              | `{mode, confirmation}` — switch paper↔live.  |
 | GET    | `/api/audit`                    | Audit log (filterable by `kind`).            |
-| WS     | `/ws`                           | Server-pushed events: `decision`, `order`, `kill`. |
+| WS     | `/ws`                           | Server-pushed events: `decision`, `order`, `kill`, `bar`, `trade`, `quote`, `stream_status`. |
 
 OpenAPI docs are auto-generated at `http://127.0.0.1:8000/docs`.
 

@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, AccountInfo, AuditEntry, OrderInfo, PositionInfo, StrategyState } from "./api";
+import {
+  AccountInfo,
+  AuditEntry,
+  OrderInfo,
+  PositionInfo,
+  PredictionResponse,
+  StrategyState,
+  api,
+} from "./api";
 import { connectWs } from "./ws";
 import { Header } from "./components/Header";
 import { AccountPanel } from "./components/AccountPanel";
@@ -9,6 +17,9 @@ import { OrderTicket } from "./components/OrderTicket";
 import { StrategyPanel } from "./components/StrategyPanel";
 import { AuditLog } from "./components/AuditLog";
 import { ModeModal } from "./components/ModeModal";
+import { Chart } from "./components/Chart";
+import { PredictionPanel } from "./components/PredictionPanel";
+import { SetupModal } from "./components/SetupModal";
 
 export default function App() {
   const [account, setAccount] = useState<AccountInfo | null>(null);
@@ -19,21 +30,32 @@ export default function App() {
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [modeModal, setModeModal] = useState<"paper" | "live" | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+
+  // Chart / prediction state
+  const [symbol, setSymbol] = useState("SPY");
+  const [prediction, setPrediction] = useState<PredictionResponse | null>(null);
+  const [predBusy, setPredBusy] = useState(false);
+  const [streamSubs, setStreamSubs] = useState<string[]>([]);
+  const [livePrice, setLivePrice] = useState<number | null>(null);
 
   const showToast = useCallback((s: string) => {
     setToast(s);
     window.setTimeout(() => setToast(null), 3500);
   }, []);
 
+  // ---------- polling refresh -----------------------------------------
   const refreshAll = useCallback(async () => {
-    const tasks: Promise<unknown>[] = [
-      api.account().then(setAccount, (e) => { setAccountErr(String(e)); setAccount(null); }),
+    await Promise.allSettled([
+      api.account().then(
+        (a) => { setAccount(a); setAccountErr(null); },
+        (e) => { setAccountErr(String(e)); setAccount(null); },
+      ),
       api.positions().then(setPositions, () => {}),
       api.orders().then(setOrders, () => {}),
       api.strategy().then(setStrategy, () => {}),
       api.audit(50).then(setAudit, () => {}),
-    ];
-    await Promise.allSettled(tasks);
+    ]);
   }, []);
 
   useEffect(() => {
@@ -42,7 +64,38 @@ export default function App() {
     return () => window.clearInterval(t);
   }, [refreshAll]);
 
-  // WebSocket pushes
+  // ---------- prediction & live subscribe ------------------------------
+  const refreshPrediction = useCallback(async () => {
+    if (!symbol) return;
+    setPredBusy(true);
+    try {
+      const p = await api.prediction(symbol, 240);
+      setPrediction(p);
+      setLivePrice(p.last_close);
+    } catch (e) {
+      // 503 if broker not configured — keep silent
+      if (!String(e).includes("not set")) showToast(String(e));
+    } finally {
+      setPredBusy(false);
+    }
+  }, [symbol, showToast]);
+
+  useEffect(() => {
+    refreshPrediction();
+    const t = window.setInterval(refreshPrediction, 30000);
+    return () => window.clearInterval(t);
+  }, [refreshPrediction]);
+
+  // Try to subscribe to live data for the chart's symbol.
+  useEffect(() => {
+    if (!symbol || !account) return;
+    api.subscribe([symbol], account.mode).then(
+      (r) => setStreamSubs(r.subscribed),
+      () => {},
+    );
+  }, [symbol, account]);
+
+  // ---------- websocket -----------------------------------------------
   const wsRef = useRef<() => void>();
   useEffect(() => {
     wsRef.current = connectWs(({ kind, payload }) => {
@@ -51,12 +104,24 @@ export default function App() {
       }
       if (kind === "order" || kind === "kill") {
         refreshAll();
-        showToast(kind === "kill" ? "Kill switch engaged" : `Order: ${payload.side} ${payload.qty} ${payload.symbol}`);
+        showToast(kind === "kill" ? "Kill switch engaged"
+                                  : `Order: ${payload.side} ${payload.qty} ${payload.symbol}`);
+      }
+      if (kind === "trade" && payload.symbol === symbol) {
+        setLivePrice(payload.price);
+      }
+      if (kind === "bar" && payload.symbol === symbol) {
+        // Live bar — refresh prediction; cheap because bars arrive at ~1/min.
+        refreshPrediction();
+      }
+      if (kind === "stream_status") {
+        setStreamSubs(payload.subscribed || []);
       }
     });
     return () => wsRef.current?.();
-  }, [refreshAll, showToast]);
+  }, [refreshAll, refreshPrediction, showToast, symbol]);
 
+  // ---------- safety actions ------------------------------------------
   const handleKill = async () => {
     if (!confirm("KILL SWITCH:\n\nThis will cancel ALL open orders, flatten ALL positions, and halt the engine. Continue?")) return;
     try { await api.kill(); showToast("Kill switch engaged"); }
@@ -77,11 +142,21 @@ export default function App() {
         onKill={handleKill}
         onRelease={handleRelease}
         onSwitchMode={(m) => setModeModal(m)}
+        onOpenSetup={() => setSetupOpen(true)}
+        livePrice={livePrice}
+        chartSymbol={symbol}
+        streamSubs={streamSubs}
       />
 
       <div className="layout">
         <div className="col">
           <AccountPanel account={account} error={accountErr} />
+          <Chart
+            data={prediction}
+            symbol={symbol}
+            setSymbol={setSymbol}
+            busy={predBusy}
+          />
           <PositionsPanel
             positions={positions}
             onClose={async (s) => {
@@ -107,6 +182,7 @@ export default function App() {
         </div>
 
         <div className="col">
+          <PredictionPanel prediction={prediction} />
           <StrategyPanel
             strategy={strategy}
             onStart={async () => {
@@ -159,6 +235,18 @@ export default function App() {
             } catch (e) {
               showToast(String(e));
             }
+          }}
+        />
+      )}
+
+      {setupOpen && (
+        <SetupModal
+          initialMode={strategy?.mode || "paper"}
+          onClose={() => setSetupOpen(false)}
+          onSaved={() => {
+            showToast("Credentials saved");
+            refreshAll();
+            refreshPrediction();
           }}
         />
       )}

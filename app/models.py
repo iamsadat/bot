@@ -76,3 +76,20 @@ class AppKv(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow,
     )
+
+
+class Credential(Base):
+    """Runtime-editable broker credentials.
+
+    Keys are stored plaintext (this app is intended for localhost / VPN use
+    only).  Environment variables, when present, take precedence over rows
+    in this table.
+    """
+    __tablename__ = "credentials"
+    mode: Mapped[str] = mapped_column(String(8), primary_key=True)  # paper/live
+    broker: Mapped[str] = mapped_column(String(32), default="alpaca")
+    api_key: Mapped[str] = mapped_column(String(128))
+    api_secret: Mapped[str] = mapped_column(String(256))
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow,
+    )
