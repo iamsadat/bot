@@ -142,5 +142,14 @@ parsing recorded HTTP responses.
 
 ## Recent commits (most recent first)
 
-(Will be filled in as we go; see `git log --oneline` for the source of
-truth.)
+**Phase 1.5 — Persistence layer** (4 commits):
+- `d3312fc` Add S3 client abstraction for artifact storage (Phase 1.5 complete)
+- `3d9f55c` Add Redis client abstraction for queues, pub/sub, and caching
+- `30dbee2` Add pgvector support and embedding infrastructure for Phase 2
+- `c89e42a` Add Phase 1.5 Postgres persistence layer with SQLAlchemy and Alembic
+
+**Phase 1 — Real ATS adapters** (1 commit):
+- `7b816c1` Phase 1: real Greenhouse / Lever / Ashby adapters
+
+**Phase 0 — Foundation** (1 commit):
+- `72bf5ed` Add JobHunt — multi-agent job hunting platform (Phase-0 MVP)
