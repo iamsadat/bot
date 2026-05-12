@@ -1,0 +1,46 @@
+[
+  {
+    "id": "abc-def-001",
+    "text": "Senior Backend Engineer",
+    "hostedUrl": "https://jobs.lever.co/northwind/abc-def-001",
+    "applyUrl": "https://jobs.lever.co/northwind/abc-def-001/apply",
+    "createdAt": 1778000000000,
+    "categories": {
+      "location": "Remote",
+      "team": "Engineering",
+      "commitment": "Full-time",
+      "department": "Backend"
+    },
+    "tags": ["python", "kubernetes", "fastapi"],
+    "descriptionPlain": "Northwind is hiring a Senior Backend Engineer to build distributed Python services on Kubernetes. Stack: Python, FastAPI, PostgreSQL, Redis, pgvector. Bonus points for LangGraph or agent orchestration experience.",
+    "additionalPlain": "We offer competitive compensation, equity, and remote-friendly culture."
+  },
+  {
+    "id": "abc-def-002",
+    "text": "Staff Engineer, Reliability",
+    "hostedUrl": "https://jobs.lever.co/northwind/abc-def-002",
+    "applyUrl": "https://jobs.lever.co/northwind/abc-def-002/apply",
+    "createdAt": 1777900000000,
+    "categories": {
+      "location": "San Francisco",
+      "team": "Reliability",
+      "commitment": "Full-time"
+    },
+    "tags": ["observability", "kubernetes", "distributed-systems"],
+    "descriptionPlain": "Lead reliability engineering at Northwind. Own SLOs, on-call, and observability tooling (OpenTelemetry, Prometheus, Grafana). Strong Python and distributed-systems background required."
+  },
+  {
+    "id": "abc-def-003",
+    "text": "Sales Director, Enterprise",
+    "hostedUrl": "https://jobs.lever.co/northwind/abc-def-003",
+    "applyUrl": "https://jobs.lever.co/northwind/abc-def-003/apply",
+    "createdAt": 1777800000000,
+    "categories": {
+      "location": "New York",
+      "team": "Sales",
+      "commitment": "Full-time"
+    },
+    "tags": ["enterprise-sales"],
+    "descriptionPlain": "Enterprise sales role. Channel partnerships, quota carrying, SaaS background required."
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "jobs": [
+    {
+      "id": "f1e2d3-001",
+      "title": "Senior Software Engineer, Agent Platform",
+      "department": "Engineering",
+      "team": "Agent Platform",
+      "employmentType": "FullTime",
+      "location": "Remote",
+      "isRemote": true,
+      "jobUrl": "https://jobs.ashbyhq.com/contoso/f1e2d3-001",
+      "applyUrl": "https://jobs.ashbyhq.com/contoso/f1e2d3-001/application",
+      "publishedAt": "2026-05-10T15:42:00Z",
+      "descriptionPlain": "Build LLM-powered agent systems at Contoso. Python, FastAPI, vector databases (pgvector, Qdrant), Postgres, Redis. You will design tool-use loops, self-critique pipelines, and orchestration graphs. Familiarity with LangGraph or CrewAI is a strong plus.",
+      "compensationTierSummary": "$180k-$220k base + equity"
+    },
+    {
+      "id": "f1e2d3-002",
+      "title": "Engineering Manager, Backend",
+      "department": "Engineering",
+      "team": "Backend",
+      "employmentType": "FullTime",
+      "location": "New York, NY",
+      "isRemote": false,
+      "jobUrl": "https://jobs.ashbyhq.com/contoso/f1e2d3-002",
+      "applyUrl": "https://jobs.ashbyhq.com/contoso/f1e2d3-002/application",
+      "publishedAt": "2026-05-06T11:00:00Z",
+      "descriptionPlain": "Manage a team of 6 backend engineers. Strong Python background, distributed systems, mentoring, on-call leadership. Experience with agent systems a plus.",
+      "compensationTierSummary": "$220k-$260k base + equity"
+    }
+  ]
+}
