@@ -1,4 +1,4 @@
-"""FastAPI dashboard — onboarding + live pipeline.
+"""FastAPI dashboard — onboarding + live pipeline + persistence.
 
 Endpoints:
 
@@ -6,10 +6,16 @@ Endpoints:
   GET  /api/status                hunt lifecycle state
   POST /api/onboarding/profile    save user info + preferences
   POST /api/onboarding/resume     parse pasted resume text → extract skills
+  POST /api/onboarding/ats        save ATS handles (greenhouse/lever/ashby)
   POST /api/hunt/start            kick off the background orchestrator
+  POST /api/hunt/reset            clear everything and return to onboarding
   GET  /api/plan                  current execution plan (steps + statuses)
   GET  /api/jobs                  discovered job postings (Kanban source)
+  POST /api/jobs/{job_id}/status  move a job between pipeline statuses
   GET  /api/applications          pipeline applications
+  GET  /api/documents/{job_id}    fetch tailored resume + cover letter text
+  GET  /api/documents/{job_id}/download
+                                  download artifact (txt / pdf / docx)
   GET  /api/traces                reasoning traces (paginated)
   GET  /api/approvals             approval queue
   POST /api/approve/{id}          human one-click decision
@@ -20,14 +26,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
+from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue
 from jobhunt.models import JobHuntPlan, UserProfile
 from jobhunt.onboarding import build_user_profile, parse_resume_text
 from jobhunt.trace import ThoughtBus, TraceStore
+
+
+_VALID_STATUSES = {"Saved", "Applied", "Assessment", "Interview", "Offer", "Closed"}
 
 
 # ---------------------------------------------------------------------------
@@ -42,27 +53,91 @@ class DashboardState:
     jobs: list[dict] = field(default_factory=list)
     applications: list[dict] = field(default_factory=list)
     approval_queue: ApprovalQueue = field(default_factory=ApprovalQueue)
+    documents: dict[str, dict] = field(default_factory=dict)  # job_id → doc dict
     user_profile: UserProfile | None = None
     # hunt lifecycle: idle | running | complete | failed
     hunt_status: str = "idle"
     hunt_error: str = ""
-    hunt_progress: dict[str, str] = field(default_factory=dict)  # step_id → status
+    hunt_progress: dict[str, str] = field(default_factory=dict)
+    ats_config: dict = field(default_factory=dict)  # greenhouse_tokens / lever_slugs / ashby_slugs
+    store: DashboardStore | None = None
+
+    # ------------------------------------------------------------ persistence
+    def persist(self) -> None:
+        if self.store is None:
+            return
+        try:
+            plan_dict = _plan_to_dict(self.plan) if self.plan else None
+            self.store.save(
+                profile=self.user_profile,
+                jobs=self.jobs,
+                applications=self.applications,
+                approvals=self.approval_queue.all(),
+                plan=plan_dict,
+                documents=self.documents,
+                hunt_status=self.hunt_status,
+                hunt_error=self.hunt_error,
+                ats_config=self.ats_config,
+            )
+        except Exception:
+            pass  # never let persistence block the API
+
+    def restore(self) -> None:
+        if self.store is None:
+            return
+        snap = self.store.load()
+        if snap is None:
+            return
+        self.user_profile = snap.get("profile")
+        self.jobs = snap.get("jobs", [])
+        self.applications = snap.get("applications", [])
+        self.documents = snap.get("documents", {})
+        self.hunt_status = snap.get("hunt_status", "idle")
+        self.hunt_error = snap.get("hunt_error", "")
+        self.ats_config = snap.get("ats_config", {})
+        # Defensive: hunts that were mid-run when the server died → idle
+        if self.hunt_status == "running":
+            self.hunt_status = "idle"
+        restore_approval_queue(self.approval_queue, snap.get("approvals", []))
 
 
 # ---------------------------------------------------------------------------
 # Background hunt runner
 # ---------------------------------------------------------------------------
 
+def _build_sources(ats_config: dict):
+    """Construct JobSources from the user's ATS handles, fixture fallback."""
+    from jobhunt.adapters import (
+        AshbySource, FixtureSource, GreenhouseSource, LeverSource,
+    )
+
+    sources = []
+    gh = [s.strip() for s in ats_config.get("greenhouse_tokens", []) if s.strip()]
+    lv = [s.strip() for s in ats_config.get("lever_slugs", []) if s.strip()]
+    ab = [s.strip() for s in ats_config.get("ashby_slugs", []) if s.strip()]
+    if gh:
+        sources.append(GreenhouseSource(board_tokens=gh))
+    if lv:
+        sources.append(LeverSource(companies=lv))
+    if ab:
+        sources.append(AshbySource(companies=ab))
+
+    if not sources:
+        # Offline fallback — uses fixture jobs so the demo always has data
+        sources = [
+            FixtureSource(name="greenhouse",
+                          only_sources=["greenhouse", "ashby", "lever"]),
+            FixtureSource(name="linkedin", only_sources=["linkedin"]),
+            FixtureSource(name="indeed", only_sources=["indeed"]),
+        ]
+    return sources
+
+
 def _execute_hunt(state: DashboardState) -> None:
     """Runs the full orchestrator pipeline synchronously (called in a thread)."""
-    from jobhunt.adapters.fixture import FixtureSource
     from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
 
-    sources = [
-        FixtureSource(name="greenhouse", only_sources=["greenhouse", "ashby", "lever"]),
-        FixtureSource(name="linkedin", only_sources=["linkedin"]),
-        FixtureSource(name="indeed", only_sources=["indeed"]),
-    ]
+    sources = _build_sources(state.ats_config)
 
     assert state.user_profile is not None
     orch = Orchestrator(state.trace_store, state.bus)
@@ -95,26 +170,41 @@ def _execute_hunt(state: DashboardState) -> None:
                 "salary_max": p.salary_max,
                 "remote": p.remote,
                 "status": "Saved",
+                "posted_at": p.posted_at,
             }
             for p in batch.postings
         ]
 
-    # Populate applications from submission
+    # Populate submission packages
     subs = output.results.get("submission", [])
     state.applications = [
         {
+            "job_id": s.job_id,
             "company": s.company,
-            "title": s.title,
+            "title": "",  # filled below from doc
             "route": s.route,
             "requires_user_click": s.requires_user_click,
-            "status": "Applied" if not s.requires_user_click else "Saved",
+            "status": "Saved",
+            "notes": s.notes,
         }
         for s in subs
     ]
 
-    # Enqueue tailored documents for approval
+    # Persist tailored documents for download + approval
     docs = output.results.get("resume", [])
     for doc in docs:
+        state.documents[doc.job_id] = {
+            "job_id": doc.job_id,
+            "company": doc.company,
+            "title": doc.title,
+            "url": doc.url,
+            "resume_text": doc.resume_text,
+            "cover_letter_text": doc.cover_letter_text,
+            "keyword_coverage": doc.keyword_coverage,
+            "matched_keywords": doc.matched_keywords,
+            "missing_keywords": doc.missing_keywords,
+            "bullets": doc.bullets,
+        }
         state.approval_queue.submit(
             job_id=doc.job_id,
             document_id=f"doc-{doc.job_id}",
@@ -123,28 +213,37 @@ def _execute_hunt(state: DashboardState) -> None:
         )
         state.bus.publish(
             "approval", "hunt-bg",
-            f"Resume ready for {doc.company} — {doc.title}. Awaiting your approval.",
+            f"Tailored resume ready: {doc.company} — {doc.title} "
+            f"(coverage {doc.keyword_coverage:.0%}). Awaiting your approval.",
         )
 
-    # Track plan step progress
+    # Backfill application titles from documents
+    for app in state.applications:
+        if app["job_id"] in state.documents:
+            app["title"] = state.documents[app["job_id"]]["title"]
+
     for step in output.plan.steps:
         state.hunt_progress[step.step_id] = step.status
 
 
 async def _run_hunt_bg(state: DashboardState) -> None:
-    """Async wrapper: runs synchronous orchestrator in a thread pool."""
     state.hunt_status = "running"
     state.bus.publish("orchestrator", "hunt-bg", "Hunt started — running all agents.")
+    state.persist()
     try:
         await asyncio.to_thread(_execute_hunt, state)
         state.hunt_status = "complete"
-        state.bus.publish("orchestrator", "hunt-bg",
-                          f"Hunt complete — {len(state.jobs)} jobs discovered, "
-                          f"{len(state.applications)} applications queued.")
+        state.bus.publish(
+            "orchestrator", "hunt-bg",
+            f"Hunt complete — {len(state.jobs)} jobs discovered, "
+            f"{len(state.documents)} tailored resumes ready for review.",
+        )
     except Exception as exc:
         state.hunt_status = "failed"
         state.hunt_error = str(exc)
         state.bus.publish("orchestrator", "hunt-bg", f"Hunt failed: {exc!r}")
+    finally:
+        state.persist()
 
 
 # ---------------------------------------------------------------------------
@@ -153,23 +252,19 @@ async def _run_hunt_bg(state: DashboardState) -> None:
 
 def create_app(state: DashboardState):
     try:
-        from contextlib import asynccontextmanager
-
         from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-        from fastapi.responses import HTMLResponse
+        from fastapi.responses import HTMLResponse, Response
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "fastapi is not installed. Run `pip install fastapi uvicorn`."
         ) from exc
-
-    from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def lifespan(app):
         state.bus.set_loop(asyncio.get_event_loop())
         yield
 
-    app = FastAPI(title="JobHunt Dashboard", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="JobHunt Dashboard", version="0.3.0", lifespan=lifespan)
 
     # ------------------------------------------------------------------ static
 
@@ -181,12 +276,18 @@ def create_app(state: DashboardState):
 
     @app.get("/api/status")
     def get_status() -> dict:
+        applied = sum(1 for j in state.jobs if j.get("status") in
+                      ("Applied", "Assessment", "Interview", "Offer"))
         return {
             "hunt_status": state.hunt_status,
             "hunt_error": state.hunt_error,
             "has_profile": state.user_profile is not None,
             "jobs_count": len(state.jobs),
+            "applied_count": applied,
             "approvals_pending": len(state.approval_queue.pending()),
+            "ats_configured": any(state.ats_config.get(k) for k in (
+                "greenhouse_tokens", "lever_slugs", "ashby_slugs"
+            )),
         }
 
     # ---------------------------------------------------------------- onboarding
@@ -204,6 +305,7 @@ def create_app(state: DashboardState):
         if not body["target_roles"]:
             raise HTTPException(status_code=422, detail="at least one target role required")
         state.user_profile = build_user_profile(body)
+        state.persist()
         return {"ok": True, "user_id": state.user_profile.user_id}
 
     @app.post("/api/onboarding/resume")
@@ -212,12 +314,28 @@ def create_app(state: DashboardState):
         if not text.strip():
             raise HTTPException(status_code=422, detail="resume text is required")
         result = parse_resume_text(text)
-        # Merge extracted skills into existing profile if present
         if state.user_profile is not None:
             existing = set(state.user_profile.skills)
             merged = sorted(existing | set(result["skills"]))
             state.user_profile.skills = merged
+            state.persist()
         return result
+
+    @app.post("/api/onboarding/ats")
+    def save_ats(body: dict) -> dict:
+        def _parse_list(key: str) -> list[str]:
+            v = body.get(key, "")
+            if isinstance(v, list):
+                return [s.strip() for s in v if str(s).strip()]
+            return [s.strip() for s in str(v).split(",") if s.strip()]
+
+        state.ats_config = {
+            "greenhouse_tokens": _parse_list("greenhouse_tokens"),
+            "lever_slugs": _parse_list("lever_slugs"),
+            "ashby_slugs": _parse_list("ashby_slugs"),
+        }
+        state.persist()
+        return {"ok": True, "ats_config": state.ats_config}
 
     # ---------------------------------------------------------------- hunt control
 
@@ -227,13 +345,29 @@ def create_app(state: DashboardState):
             raise HTTPException(status_code=400, detail="complete onboarding first")
         if state.hunt_status == "running":
             raise HTTPException(status_code=409, detail="hunt already running")
-        # Reset any previous run
         state.jobs = []
         state.applications = []
+        state.documents = {}
         state.hunt_error = ""
         state.hunt_progress = {}
         asyncio.create_task(_run_hunt_bg(state))
         return {"ok": True, "hunt_status": "running"}
+
+    @app.post("/api/hunt/reset")
+    def reset_hunt() -> dict:
+        if state.hunt_status == "running":
+            raise HTTPException(status_code=409, detail="cannot reset while running")
+        state.user_profile = None
+        state.jobs = []
+        state.applications = []
+        state.documents = {}
+        state.plan = None
+        state.hunt_status = "idle"
+        state.hunt_error = ""
+        state.ats_config = {}
+        state.approval_queue = ApprovalQueue()
+        state.persist()
+        return {"ok": True}
 
     # ------------------------------------------------------------------ plan / jobs
 
@@ -247,9 +381,101 @@ def create_app(state: DashboardState):
     def get_jobs() -> dict:
         return {"jobs": state.jobs}
 
+    @app.post("/api/jobs/{job_id}/status")
+    def update_job_status(job_id: str, body: dict) -> dict:
+        new_status = body.get("status", "")
+        if new_status not in _VALID_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"status must be one of {sorted(_VALID_STATUSES)}",
+            )
+        for j in state.jobs:
+            if j["job_id"] == job_id:
+                old = j.get("status", "Saved")
+                j["status"] = new_status
+                state.bus.publish(
+                    "tracking", job_id,
+                    f"{j['company']} → {j['title']}: {old} → {new_status}",
+                )
+                state.persist()
+                return {"ok": True, "job": j}
+        raise HTTPException(status_code=404, detail="job not found")
+
     @app.get("/api/applications")
     def get_apps() -> dict:
         return {"applications": state.applications}
+
+    # ----------------------------------------------------------------- documents
+
+    @app.get("/api/documents/{job_id}")
+    def get_document(job_id: str) -> dict:
+        doc = state.documents.get(job_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        return {"document": doc}
+
+    @app.get("/api/documents/{job_id}/download")
+    def download_document(job_id: str, format: str = "txt", kind: str = "resume") -> Any:
+        doc = state.documents.get(job_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        if kind not in ("resume", "cover"):
+            raise HTTPException(status_code=400, detail="kind must be 'resume' or 'cover'")
+
+        text = doc["resume_text"] if kind == "resume" else doc["cover_letter_text"]
+        safe = f"{doc['company']}-{doc['title']}".replace(" ", "_").replace("/", "_")
+        filename = f"{safe}-{kind}.{format}"
+
+        if format == "txt":
+            return Response(
+                content=text.encode("utf-8"),
+                media_type="text/plain; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        if format == "html":
+            html = _doc_to_simple_html(doc, kind)
+            return Response(
+                content=html.encode("utf-8"),
+                media_type="text/html; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        if format == "pdf":
+            try:
+                from weasyprint import HTML  # type: ignore
+                html = _doc_to_simple_html(doc, kind)
+                pdf = HTML(string=html).write_pdf()
+                return Response(
+                    content=pdf,
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+                )
+            except ImportError:
+                raise HTTPException(
+                    status_code=503,
+                    detail="PDF unavailable — install weasyprint (pip install weasyprint)",
+                )
+        if format == "docx":
+            try:
+                from docx import Document  # type: ignore
+                from io import BytesIO
+                d = Document()
+                for line in text.split("\n"):
+                    d.add_paragraph(line)
+                buf = BytesIO()
+                d.save(buf)
+                return Response(
+                    content=buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+                )
+            except ImportError:
+                raise HTTPException(
+                    status_code=503,
+                    detail="DOCX unavailable — install python-docx (pip install python-docx)",
+                )
+        raise HTTPException(status_code=400, detail=f"unknown format: {format}")
+
+    # ----------------------------------------------------------------- traces
 
     @app.get("/api/traces")
     def get_traces(agent: str | None = None, limit: int = 50) -> dict:
@@ -294,8 +520,20 @@ def create_app(state: DashboardState):
             )
         except InvalidTransition as e:
             raise HTTPException(status_code=409, detail=str(e))
+        # Auto-advance: when a resume is approved, mark the matching job as "Applied"
+        if decision == "approve":
+            for j in state.jobs:
+                if j["job_id"] == req.job_id and j.get("status") == "Saved":
+                    j["status"] = "Applied"
+                    state.bus.publish(
+                        "submission", req.job_id,
+                        f"{j['company']} → {j['title']}: marked Applied "
+                        f"(use 'Open job' to submit on the company site).",
+                    )
+                    break
         state.bus.publish("approval", req.job_id,
                           f"{req.company} → {decision} by {reviewer or 'anon'}")
+        state.persist()
         return {"ok": True, "request": req.to_dict()}
 
     # ----------------------------------------------------------------- WebSocket
@@ -349,3 +587,21 @@ def _trace_to_dict(trace) -> dict[str, Any]:
         "tool_calls": [asdict(tc) for tc in trace.tool_calls],
         "created_at": trace.created_at,
     }
+
+
+def _doc_to_simple_html(doc: dict, kind: str) -> str:
+    text = doc["resume_text"] if kind == "resume" else doc["cover_letter_text"]
+    body = "<br/>".join(
+        line if line.strip() else "&nbsp;" for line in text.split("\n")
+    )
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>{doc['company']} — {doc['title']}</title>
+<style>
+  body {{ font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
+          max-width: 720px; margin: 32px auto; padding: 0 16px;
+          color: #1a1a1a; line-height: 1.5; }}
+  h1 {{ font-size: 1.4em; }}
+</style></head><body>
+  <h1>{doc['company']} — {doc['title']}</h1>
+  <p>{body}</p>
+</body></html>"""

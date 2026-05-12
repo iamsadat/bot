@@ -3,664 +3,1055 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>JobHunt</title>
+  <title>JobHunt — Multi-agent hiring autopilot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    /* ---- design tokens -------------------------------------------------- */
+    /* ════════════════════════════════════════════════════════════════════
+       DESIGN TOKENS
+       ══════════════════════════════════════════════════════════════════ */
     :root {
-      --bg: #0b0d11;
-      --panel: #141821;
-      --panel2: #1a1f2e;
-      --border: #232838;
+      /* surfaces */
+      --bg: #08090f;
+      --bg-glow-1: #1e1b4b;
+      --bg-glow-2: #1a1730;
+      --panel: rgba(255,255,255,0.025);
+      --panel-strong: rgba(255,255,255,0.04);
+      --panel-hover: rgba(255,255,255,0.055);
+
+      /* borders */
+      --border: rgba(255,255,255,0.07);
+      --border-strong: rgba(255,255,255,0.12);
+      --border-accent: rgba(110,168,254,0.4);
+
+      /* text */
       --fg: #e7e9ee;
-      --muted: #8b93a7;
+      --fg-soft: #c7cbd5;
+      --muted: #8088a0;
+      --muted-2: #5e667a;
+
+      /* accents */
       --accent: #6ea8fe;
-      --accent2: #a78bfa;
-      --good: #4ade80;
-      --bad: #f87171;
+      --accent-2: #a78bfa;
+      --accent-grad: linear-gradient(135deg, #6ea8fe 0%, #a78bfa 100%);
+      --accent-grad-hover: linear-gradient(135deg, #82b6ff 0%, #b89dfb 100%);
+
+      --good: #22d3a8;
       --warn: #fbbf24;
+      --bad: #f87171;
+      --info: #60a5fa;
+
+      /* effects */
+      --shadow-card: 0 1px 0 rgba(255,255,255,0.04) inset,
+                     0 8px 32px rgba(0,0,0,0.35);
+      --shadow-hover: 0 1px 0 rgba(255,255,255,0.08) inset,
+                      0 12px 40px rgba(110,168,254,0.12),
+                      0 4px 12px rgba(0,0,0,0.4);
+      --blur: blur(24px) saturate(140%);
+      --ease: cubic-bezier(0.4, 0, 0.2, 1);
     }
     [data-theme="light"] {
-      --bg: #f3f4f8;
-      --panel: #ffffff;
-      --panel2: #f7f8fc;
-      --border: #dde1ea;
-      --fg: #1b1d22;
-      --muted: #5c6473;
-      --accent: #2563eb;
-      --accent2: #7c3aed;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body {
-      height: 100%;
-      background: var(--bg);
-      color: var(--fg);
-      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      --bg: #f5f6fa;
+      --bg-glow-1: #e2e6f2;
+      --bg-glow-2: #eef0f8;
+      --panel: rgba(255,255,255,0.7);
+      --panel-strong: rgba(255,255,255,0.9);
+      --panel-hover: rgba(255,255,255,1);
+      --border: rgba(0,0,0,0.07);
+      --border-strong: rgba(0,0,0,0.12);
+      --fg: #14161f;
+      --fg-soft: #2c3041;
+      --muted: #5b6478;
+      --muted-2: #8088a0;
     }
 
-    /* ---- header --------------------------------------------------------- */
+    /* ════════════════════════════════════════════════════════════════════
+       RESET + BASE
+       ══════════════════════════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      min-height: 100%;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 14px; line-height: 1.5;
+      color: var(--fg);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      letter-spacing: -0.005em;
+    }
+    body { overflow-x: hidden; }
+
+    /* Animated gradient mesh background */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: -2;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 0%, var(--bg-glow-1) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 80% 100%, var(--bg-glow-2) 0%, transparent 60%),
+        var(--bg);
+    }
+    body::after {
+      content: '';
+      position: fixed; inset: 0; z-index: -1;
+      background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.012) 1px, transparent 0);
+      background-size: 24px 24px;
+      pointer-events: none;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border); border-radius: 999px;
+      border: 2px solid transparent; background-clip: padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); background-clip: padding-box; }
+
+    /* Typography helpers */
+    .mono { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+    .num  { font-variant-numeric: tabular-nums; }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ════════════════════════════════════════════════════════════════════
+       HEADER
+       ══════════════════════════════════════════════════════════════════ */
     header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 16px; border-bottom: 1px solid var(--border);
-      position: sticky; top: 0; background: var(--bg); z-index: 10;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(8,9,15,0.65);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      position: sticky; top: 0; z-index: 50;
     }
-    header h1 { font-size: 15px; font-weight: 700; letter-spacing: 0.03em; }
-    .header-right { display: flex; gap: 8px; align-items: center; }
-    .badge {
-      font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; letter-spacing: -0.02em; font-size: 15px;
+    }
+    .brand-logo {
+      width: 28px; height: 28px; border-radius: 8px;
+      background: var(--accent-grad);
+      display: grid; place-items: center; color: white;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset,
+                  0 6px 20px rgba(167,139,250,0.35);
+      animation: pulse-glow 4s ease-in-out infinite;
+    }
+    @keyframes pulse-glow {
+      0%,100% { box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset, 0 6px 20px rgba(167,139,250,0.35); }
+      50%     { box-shadow: 0 0 0 1px rgba(255,255,255,0.1)  inset, 0 6px 28px rgba(110,168,254,0.5); }
+    }
+    .brand svg { width: 14px; height: 14px; }
+    .brand-name { background: var(--accent-grad); -webkit-background-clip: text;
+                  background-clip: text; color: transparent; }
+    .header-right { display: flex; gap: 10px; align-items: center; }
+
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11.5px; font-weight: 600;
+      padding: 4px 11px; border-radius: 999px;
       border: 1px solid var(--border); color: var(--muted);
+      background: var(--panel);
+      letter-spacing: 0.02em; text-transform: uppercase;
     }
-    .badge.running { color: var(--warn); border-color: var(--warn); animation: pulse 1.5s infinite; }
-    .badge.complete { color: var(--good); border-color: var(--good); }
-    .badge.failed { color: var(--bad); border-color: var(--bad); }
-    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
-    .btn-ghost {
-      background: transparent; color: var(--fg); border: 1px solid var(--border);
-      padding: 5px 10px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px;
+    .pill::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--muted);
     }
-    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .pill.running { color: var(--warn); border-color: rgba(251,191,36,0.4); }
+    .pill.running::before { background: var(--warn);
+      box-shadow: 0 0 8px var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+    .pill.complete { color: var(--good); border-color: rgba(34,211,168,0.4); }
+    .pill.complete::before { background: var(--good); box-shadow: 0 0 6px var(--good); }
+    .pill.failed { color: var(--bad); border-color: rgba(248,113,113,0.4); }
+    .pill.failed::before { background: var(--bad); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-    /* ---- wizard ---------------------------------------------------------- */
-    #wizard {
-      min-height: calc(100vh - 44px);
-      display: flex; align-items: flex-start; justify-content: center;
-      padding: 32px 16px 64px;
+    .icon-btn {
+      width: 32px; height: 32px; display: grid; place-items: center;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--panel); color: var(--muted);
+      cursor: pointer; transition: all 0.15s var(--ease);
     }
-    .wizard-card {
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: 16px; width: 100%; max-width: 560px; overflow: hidden;
-    }
-    .wizard-progress {
-      display: flex; border-bottom: 1px solid var(--border);
-    }
-    .w-step {
-      flex: 1; padding: 12px 8px; text-align: center; font-size: 12px;
-      color: var(--muted); border-bottom: 2px solid transparent; cursor: default;
-    }
-    .w-step.active { color: var(--accent); border-bottom-color: var(--accent); }
-    .w-step.done { color: var(--good); border-bottom-color: var(--good); }
-    .wizard-body { padding: 28px 28px 24px; }
-    .wizard-body h2 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
-    .wizard-body p { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+    .icon-btn:hover { color: var(--fg); border-color: var(--border-strong);
+      background: var(--panel-hover); }
+    .icon-btn svg { width: 15px; height: 15px; }
 
-    .step-panel { display: none; }
-    .step-panel.active { display: block; }
-
-    .form-group { margin-bottom: 16px; }
-    .form-group label { display: block; font-size: 12px; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
-      margin-bottom: 6px; }
-    .form-group input[type="text"],
-    .form-group input[type="email"],
-    .form-group input[type="number"],
-    .form-group textarea,
-    .form-group select {
-      width: 100%; padding: 9px 12px; background: var(--bg);
-      border: 1px solid var(--border); border-radius: 8px; color: var(--fg);
-      font: inherit; font-size: 13px; outline: none;
-      transition: border-color 0.15s;
-    }
-    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
-      border-color: var(--accent);
-    }
-    .form-group textarea { resize: vertical; min-height: 140px; }
-
-    /* chip inputs */
-    .chip-input {
-      display: flex; flex-wrap: wrap; gap: 6px;
-      padding: 8px; background: var(--bg); border: 1px solid var(--border);
-      border-radius: 8px; min-height: 44px; cursor: text;
-    }
-    .chip-input:focus-within { border-color: var(--accent); }
-    .chip {
-      display: inline-flex; align-items: center; gap: 5px;
-      background: var(--panel2); border: 1px solid var(--border);
-      padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
-    }
-    .chip .chip-remove {
-      cursor: pointer; color: var(--muted); font-size: 14px; line-height: 1;
-      border: none; background: none; padding: 0; display: flex;
-    }
-    .chip.skill { border-color: var(--accent2); color: var(--accent2); }
-    .chip-input input {
-      border: none; background: transparent; color: var(--fg);
-      font: inherit; font-size: 13px; outline: none; min-width: 80px; flex: 1;
-    }
-    .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
-
-    /* toggle */
-    .toggle-row {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 0;
-    }
-    .toggle-row label { font-size: 13px; }
-    .toggle {
-      position: relative; width: 40px; height: 22px; cursor: pointer;
-    }
-    .toggle input { opacity: 0; width: 0; height: 0; }
-    .toggle-track {
-      position: absolute; inset: 0; background: var(--border);
-      border-radius: 999px; transition: background 0.2s;
-    }
-    .toggle input:checked + .toggle-track { background: var(--accent); }
-    .toggle-thumb {
-      position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
-      background: white; border-radius: 50%; transition: transform 0.2s;
-    }
-    .toggle input:checked ~ .toggle-thumb { transform: translateX(18px); }
-
-    /* wizard footer */
-    .wizard-footer {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 16px 28px; border-top: 1px solid var(--border);
-      background: var(--panel2);
+    /* ════════════════════════════════════════════════════════════════════
+       BUTTONS
+       ══════════════════════════════════════════════════════════════════ */
+    button { font: inherit; cursor: pointer; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      padding: 9px 18px; border-radius: 9px; border: 1px solid transparent;
+      font-size: 13px; font-weight: 600; letter-spacing: -0.01em;
+      transition: all 0.18s var(--ease);
+      white-space: nowrap;
     }
     .btn-primary {
-      background: var(--accent); color: #0b0d11; border: none;
-      padding: 9px 22px; border-radius: 8px; cursor: pointer; font: inherit;
-      font-size: 13px; font-weight: 700; transition: opacity 0.15s;
+      background: var(--accent-grad); color: white;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset,
+                  0 6px 16px rgba(110,168,254,0.25);
     }
-    .btn-primary:hover { opacity: 0.9; }
-    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-secondary {
-      background: transparent; color: var(--muted); border: 1px solid var(--border);
-      padding: 9px 18px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px;
-    }
-    .btn-secondary:hover { border-color: var(--fg); color: var(--fg); }
+    .btn-primary:hover { background: var(--accent-grad-hover);
+      transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset,
+        0 10px 28px rgba(110,168,254,0.4); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-    /* review step */
-    .review-block {
-      background: var(--panel2); border: 1px solid var(--border);
-      border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+    .btn-ghost {
+      background: var(--panel); color: var(--fg-soft);
+      border-color: var(--border);
     }
-    .review-block h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
-      color: var(--muted); margin-bottom: 8px; }
-    .review-block .rv { font-size: 13px; color: var(--fg); margin-bottom: 3px; }
+    .btn-ghost:hover { background: var(--panel-hover); color: var(--fg);
+      border-color: var(--border-strong); }
+
+    .btn-good { background: rgba(34,211,168,0.12); color: var(--good);
+      border-color: rgba(34,211,168,0.3); }
+    .btn-good:hover { background: rgba(34,211,168,0.2); }
+    .btn-bad { background: rgba(248,113,113,0.1); color: var(--bad);
+      border-color: rgba(248,113,113,0.3); }
+    .btn-bad:hover { background: rgba(248,113,113,0.18); }
+    .btn-warn { background: rgba(251,191,36,0.1); color: var(--warn);
+      border-color: rgba(251,191,36,0.3); }
+    .btn-warn:hover { background: rgba(251,191,36,0.18); }
+
+    .btn-sm { padding: 5px 11px; font-size: 12px; border-radius: 7px; }
+
+    /* ════════════════════════════════════════════════════════════════════
+       WIZARD
+       ══════════════════════════════════════════════════════════════════ */
+    #wizard {
+      min-height: calc(100vh - 65px); display: flex; align-items: flex-start;
+      justify-content: center; padding: 56px 16px 96px;
+      animation: fade-up 0.5s var(--ease);
+    }
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .wizard-frame {
+      width: 100%; max-width: 580px;
+      display: flex; flex-direction: column; gap: 24px;
+    }
+
+    .wizard-hero {
+      text-align: center; padding: 0 8px;
+    }
+    .wizard-hero h1 {
+      font-size: 32px; font-weight: 700; letter-spacing: -0.025em;
+      margin-bottom: 10px;
+    }
+    .wizard-hero h1 .grad {
+      background: var(--accent-grad); -webkit-background-clip: text;
+      background-clip: text; color: transparent;
+    }
+    .wizard-hero p { color: var(--muted); font-size: 14.5px; }
+
+    .step-dots {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 0 8px;
+    }
+    .dot {
+      display: flex; align-items: center; gap: 6px;
+      color: var(--muted-2); font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      transition: color 0.2s var(--ease);
+    }
+    .dot::before {
+      content: ''; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--muted-2); transition: all 0.3s var(--ease);
+    }
+    .dot.active { color: var(--accent); }
+    .dot.active::before { background: var(--accent);
+      box-shadow: 0 0 0 4px rgba(110,168,254,0.18);
+      transform: scale(1.2); }
+    .dot.done { color: var(--good); }
+    .dot.done::before { background: var(--good); }
+    .dot-line {
+      width: 18px; height: 1px; background: var(--border);
+    }
+
+    .wizard-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 18px; overflow: hidden;
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      box-shadow: var(--shadow-card);
+    }
+    .wizard-body { padding: 32px 32px 24px; }
+    .wizard-body h2 { font-size: 19px; font-weight: 700; letter-spacing: -0.02em;
+      margin-bottom: 6px; }
+    .wizard-body .lede { color: var(--muted); font-size: 13.5px; margin-bottom: 24px; }
+
+    .step-panel { display: none; animation: step-in 0.35s var(--ease); }
+    .step-panel.active { display: block; }
+    @keyframes step-in {
+      from { opacity: 0; transform: translateX(8px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .field { margin-bottom: 16px; }
+    .field-label { display: flex; justify-content: space-between; align-items: baseline;
+      font-size: 12px; font-weight: 600; letter-spacing: -0.005em;
+      margin-bottom: 8px; color: var(--fg-soft); }
+    .field-label .hint { font-size: 11px; color: var(--muted-2); font-weight: 500; }
+
+    .input, .textarea {
+      width: 100%; padding: 11px 14px; border-radius: 10px;
+      background: rgba(0,0,0,0.18); border: 1px solid var(--border);
+      color: var(--fg); font: inherit; font-size: 13.5px;
+      outline: none; transition: all 0.15s var(--ease);
+    }
+    [data-theme="light"] .input, [data-theme="light"] .textarea {
+      background: rgba(255,255,255,0.85);
+    }
+    .input::placeholder, .textarea::placeholder { color: var(--muted-2); }
+    .input:focus, .textarea:focus {
+      border-color: var(--border-accent);
+      box-shadow: 0 0 0 4px rgba(110,168,254,0.1);
+      background: rgba(0,0,0,0.25);
+    }
+    .textarea { resize: vertical; min-height: 160px; font-size: 13px;
+      line-height: 1.55; }
+
+    /* Chip input */
+    .chips {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 7px 9px; min-height: 44px;
+      background: rgba(0,0,0,0.18); border: 1px solid var(--border);
+      border-radius: 10px; cursor: text;
+      transition: all 0.15s var(--ease);
+    }
+    [data-theme="light"] .chips { background: rgba(255,255,255,0.85); }
+    .chips:focus-within {
+      border-color: var(--border-accent);
+      box-shadow: 0 0 0 4px rgba(110,168,254,0.1);
+    }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: linear-gradient(135deg, rgba(110,168,254,0.15), rgba(167,139,250,0.15));
+      border: 1px solid rgba(110,168,254,0.25);
+      color: var(--fg-soft);
+      padding: 4px 4px 4px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 500;
+      animation: chip-in 0.2s var(--ease);
+    }
+    @keyframes chip-in {
+      from { opacity: 0; transform: scale(0.85); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    .chip-x {
+      display: grid; place-items: center;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: rgba(255,255,255,0.06); border: none; color: var(--muted);
+      cursor: pointer; transition: all 0.15s var(--ease);
+      padding: 0; font-size: 13px; line-height: 1;
+    }
+    .chip-x:hover { background: rgba(248,113,113,0.2); color: var(--bad); }
+    .chips input {
+      border: none; background: transparent; color: var(--fg);
+      font: inherit; font-size: 13.5px; outline: none;
+      min-width: 100px; flex: 1; padding: 4px 6px;
+    }
+
+    /* Toggle */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 0; border-top: 1px solid var(--border);
+    }
+    .toggle-row:first-child { border-top: none; }
+    .toggle-row .tl { font-weight: 500; }
+    .toggle-row .tld { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .toggle {
+      position: relative; width: 38px; height: 22px; flex-shrink: 0;
+      background: rgba(255,255,255,0.08); border-radius: 999px;
+      cursor: pointer; transition: background 0.25s var(--ease);
+      border: 1px solid var(--border);
+    }
+    .toggle.on { background: var(--accent-grad); border-color: transparent; }
+    .toggle-thumb {
+      position: absolute; top: 2px; left: 2px;
+      width: 16px; height: 16px; border-radius: 50%; background: white;
+      transition: transform 0.25s var(--ease);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .toggle.on .toggle-thumb { transform: translateX(16px); }
+
+    /* Extracted skills panel */
+    .extracted {
+      background: linear-gradient(135deg, rgba(34,211,168,0.06), rgba(110,168,254,0.06));
+      border: 1px solid rgba(34,211,168,0.2);
+      border-radius: 12px; padding: 14px; margin-top: 14px;
+      display: none;
+    }
+    .extracted.show { display: block; animation: chip-in 0.3s var(--ease); }
+    .extracted-head {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 600; color: var(--good);
+      margin-bottom: 10px;
+    }
+    .extracted-head::before {
+      content: '✓'; display: grid; place-items: center;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: var(--good); color: var(--bg); font-size: 11px; font-weight: 700;
+    }
+
+    /* Review summary */
+    .review-list {
+      display: flex; flex-direction: column; gap: 10px;
+      margin-bottom: 18px;
+    }
+    .review-row {
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+      padding: 12px 14px; background: rgba(255,255,255,0.025);
+      border: 1px solid var(--border); border-radius: 10px;
+    }
+    .review-row .rk { font-size: 11.5px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.06em; font-weight: 600; flex-shrink: 0; padding-top: 1px; }
+    .review-row .rv { font-size: 13px; text-align: right; word-break: break-word; }
+    .review-row .rv .pill-sm {
+      display: inline-block; background: rgba(110,168,254,0.1);
+      color: var(--accent); padding: 2px 8px; border-radius: 6px;
+      font-size: 11.5px; margin: 1px 2px;
+    }
+
     .launch-btn {
-      width: 100%; padding: 14px; background: var(--accent); color: #0b0d11;
-      border: none; border-radius: 10px; cursor: pointer; font: inherit;
-      font-size: 15px; font-weight: 700; margin-top: 8px;
-      transition: opacity 0.15s, transform 0.1s;
+      width: 100%; padding: 14px 22px; border: none; cursor: pointer;
+      background: var(--accent-grad); color: white;
+      font: inherit; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+      border-radius: 12px; transition: all 0.2s var(--ease);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset,
+                  0 10px 30px rgba(110,168,254,0.3);
     }
-    .launch-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .launch-btn:hover { transform: translateY(-2px);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset,
+                  0 16px 40px rgba(110,168,254,0.45); }
     .launch-btn:active { transform: translateY(0); }
+    .launch-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
-    /* skills extracted panel */
-    .extracted-box {
-      background: var(--panel2); border: 1px solid var(--border);
-      border-radius: 8px; padding: 12px; margin-top: 10px; display: none;
+    .wizard-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 20px; border-top: 1px solid var(--border);
     }
-    .extracted-box.visible { display: block; }
-    .extracted-box .et { font-size: 11px; text-transform: uppercase;
-      letter-spacing: 0.07em; color: var(--muted); margin-bottom: 8px; }
+    .wizard-skip {
+      font-size: 12.5px; color: var(--muted); cursor: pointer;
+      background: none; border: none;
+    }
+    .wizard-skip:hover { color: var(--fg-soft); }
 
-    /* ---- main dashboard ------------------------------------------------- */
-    #dashboard { display: none; flex-direction: column; }
-    #dashboard.visible { display: flex; }
+    /* ════════════════════════════════════════════════════════════════════
+       DASHBOARD
+       ══════════════════════════════════════════════════════════════════ */
+    #dashboard { display: none; padding: 20px; gap: 20px;
+      flex-direction: column; animation: fade-up 0.5s var(--ease); }
+    #dashboard.show { display: flex; }
 
-    .dash-grid {
-      display: grid; gap: 12px; padding: 12px;
+    /* Stat cards row */
+    .stat-row {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+    }
+    .stat {
+      padding: 18px 20px; border-radius: 14px;
+      background: var(--panel); border: 1px solid var(--border);
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      position: relative; overflow: hidden;
+      transition: all 0.25s var(--ease);
+    }
+    .stat:hover { background: var(--panel-hover); border-color: var(--border-strong); }
+    .stat::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, transparent 50%, rgba(110,168,254,0.04));
+      pointer-events: none;
+    }
+    .stat .sk { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+    .stat .sv { font-size: 28px; font-weight: 700; letter-spacing: -0.025em;
+      font-variant-numeric: tabular-nums; }
+    .stat .sv.grad { background: var(--accent-grad); -webkit-background-clip: text;
+      background-clip: text; color: transparent; }
+
+    /* Grid layout */
+    .layout {
+      display: grid; gap: 16px;
       grid-template-columns: 1fr;
     }
-    @media (min-width: 900px) {
-      .dash-grid {
-        grid-template-columns: 280px 1fr 280px;
-        grid-template-areas: "left-col kanban right-col";
+    @media (min-width: 1100px) {
+      .layout {
+        grid-template-columns: 300px 1fr 320px;
+        align-items: start;
       }
-      .left-col { grid-area: left-col; display: flex; flex-direction: column; gap: 12px; }
-      .kanban { grid-area: kanban; }
-      .right-col { grid-area: right-col; display: flex; flex-direction: column; gap: 12px; }
     }
+    .col { display: flex; flex-direction: column; gap: 16px; }
 
     .panel {
       background: var(--panel); border: 1px solid var(--border);
-      border-radius: 12px; padding: 14px;
+      border-radius: 14px; padding: 18px;
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      box-shadow: var(--shadow-card);
     }
-    .panel-title {
-      font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
-      color: var(--muted); margin-bottom: 10px; font-weight: 600;
+    .panel-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .panel-head .pt {
+      font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--muted);
+    }
+    .panel-head .pc {
+      font-size: 11px; font-weight: 600; color: var(--muted-2);
+      padding: 2px 8px; border-radius: 999px; background: var(--panel-strong);
     }
 
-    /* plan steps */
-    .plan-step {
-      display: flex; align-items: flex-start; gap: 10px;
-      padding: 8px 0; border-bottom: 1px solid var(--border);
+    /* Plan stepper */
+    .plan-steps { position: relative; padding-left: 22px; }
+    .plan-steps::before {
+      content: ''; position: absolute; left: 7px; top: 8px; bottom: 8px;
+      width: 1px; background: var(--border);
     }
-    .plan-step:last-child { border-bottom: none; }
-    .step-dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      flex-shrink: 0; margin-top: 5px;
-      background: var(--border);
+    .plan-step { position: relative; padding: 6px 0 16px; }
+    .plan-step:last-child { padding-bottom: 0; }
+    .plan-step::before {
+      content: ''; position: absolute; left: -22px; top: 8px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--bg); border: 2px solid var(--border);
+      transition: all 0.3s var(--ease);
     }
-    .step-dot.done { background: var(--good); }
-    .step-dot.running { background: var(--warn); animation: pulse 1s infinite; }
-    .step-dot.failed { background: var(--bad); }
-    .step-info .step-agent { font-size: 13px; font-weight: 600; }
-    .step-info .step-action { font-size: 11px; color: var(--muted); }
+    .plan-step.done::before { background: var(--good); border-color: var(--good);
+      box-shadow: 0 0 0 4px rgba(34,211,168,0.12); }
+    .plan-step.running::before { background: var(--warn); border-color: var(--warn);
+      box-shadow: 0 0 0 4px rgba(251,191,36,0.15);
+      animation: pulse-glow-step 1.5s ease-in-out infinite; }
+    @keyframes pulse-glow-step {
+      0%,100% { box-shadow: 0 0 0 4px rgba(251,191,36,0.15); }
+      50%     { box-shadow: 0 0 0 8px rgba(251,191,36,0.25); }
+    }
+    .plan-step.failed::before { background: var(--bad); border-color: var(--bad); }
+    .plan-step .agent {
+      font-size: 13px; font-weight: 600; letter-spacing: -0.01em;
+      text-transform: capitalize;
+    }
+    .plan-step .action { font-size: 11.5px; color: var(--muted); margin-top: 2px;
+      line-height: 1.45; }
 
-    /* kanban */
-    .kanban-cols { display: grid; gap: 8px;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
-    .k-col h3 { font-size: 11px; text-transform: uppercase;
-      letter-spacing: 0.07em; color: var(--muted); margin-bottom: 8px; }
+    /* Kanban */
+    .kanban-cols {
+      display: grid; gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    }
+    .kanban-col {
+      background: rgba(0,0,0,0.12); border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px;
+      min-height: 80px;
+    }
+    [data-theme="light"] .kanban-col { background: rgba(0,0,0,0.02); }
+    .kanban-col .kh {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--muted); margin-bottom: 10px;
+      padding: 0 2px;
+    }
+    .kanban-col .kc {
+      background: var(--panel-strong); color: var(--fg-soft);
+      padding: 1px 7px; border-radius: 999px; font-size: 10.5px;
+    }
+
     .job-card {
-      border: 1px solid var(--border); border-radius: 8px;
-      padding: 9px; margin-bottom: 6px; background: var(--panel2);
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 11px 12px; margin-bottom: 8px;
+      cursor: pointer; transition: all 0.18s var(--ease);
+      position: relative; overflow: hidden;
     }
-    .job-card .jt { font-size: 13px; font-weight: 600; line-height: 1.3; }
-    .job-card .jm { font-size: 11px; color: var(--muted); margin-top: 3px; }
-    .job-card .jtags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-    .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px;
-      background: var(--panel); border: 1px solid var(--border); }
-    .tag.remote { color: var(--good); border-color: var(--good); }
-    .job-card a { color: var(--accent); text-decoration: none; font-size: 11px; }
+    .job-card:hover {
+      background: var(--panel-hover); border-color: var(--border-accent);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.18);
+    }
+    .job-card::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+      background: var(--accent-grad); opacity: 0;
+      transition: opacity 0.18s var(--ease);
+    }
+    .job-card:hover::before { opacity: 1; }
+    .job-card .jt {
+      font-size: 13px; font-weight: 600; line-height: 1.35;
+      letter-spacing: -0.01em;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .job-card .jc { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+    .job-card .jtags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+    .tag {
+      font-size: 10px; padding: 2px 6px; border-radius: 5px;
+      background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+      color: var(--muted); font-weight: 500; letter-spacing: 0.02em;
+    }
+    .tag.remote { color: var(--good); border-color: rgba(34,211,168,0.3);
+      background: rgba(34,211,168,0.08); }
+    .tag.match { color: var(--accent); border-color: rgba(110,168,254,0.3);
+      background: rgba(110,168,254,0.08); }
+    .tag.salary { color: var(--accent-2); border-color: rgba(167,139,250,0.3);
+      background: rgba(167,139,250,0.08); }
 
-    /* thought stream */
-    .stream-list { list-style: none; max-height: 320px; overflow-y: auto; }
-    .stream-list li {
-      padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12px;
+    /* Stream */
+    .stream { max-height: 460px; overflow-y: auto; padding-right: 6px;
+      list-style: none; }
+    .stream li {
+      padding: 8px 0 10px 18px; position: relative;
+      border-bottom: 1px solid var(--border);
+      font-size: 12.5px; line-height: 1.5;
     }
-    .stream-list li:last-child { border-bottom: none; }
-    .sw { color: var(--accent); font-weight: 600; margin-right: 5px; }
+    .stream li:last-child { border-bottom: none; }
+    .stream li::before {
+      content: ''; position: absolute; left: 0; top: 12px;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px rgba(110,168,254,0.6);
+    }
+    .stream li.new { animation: stream-in 0.4s var(--ease); }
+    @keyframes stream-in {
+      from { opacity: 0; transform: translateX(-8px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    .stream .sa {
+      display: inline-block; font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      background: var(--accent-grad); -webkit-background-clip: text;
+      background-clip: text; color: transparent;
+      margin-right: 8px;
+    }
+    .stream .st { color: var(--fg-soft); }
 
-    /* approvals */
-    .approval-card {
-      border: 1px solid var(--border); border-radius: 8px;
-      padding: 10px; margin-bottom: 8px; background: var(--panel2);
+    /* Approval card */
+    .appr-card {
+      padding: 14px; background: var(--panel-strong);
+      border: 1px solid var(--border); border-radius: 12px;
+      margin-bottom: 10px; transition: all 0.18s var(--ease);
     }
-    .approval-card .ac-title { font-weight: 600; font-size: 13px; }
-    .approval-card .ac-co { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
-    .approval-card .ac-btns { display: flex; gap: 6px; flex-wrap: wrap; }
-    button.approve {
-      background: var(--good); color: #0b0d11; border: none;
-      padding: 4px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px;
+    .appr-card:hover { border-color: var(--border-accent); }
+    .appr-card .ah {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      margin-bottom: 4px;
     }
-    button.reject {
-      background: var(--bad); color: #0b0d11; border: none;
-      padding: 4px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px;
-      margin-left: 0;
-    }
-    button.edit {
-      background: transparent; color: var(--warn); border: 1px solid var(--warn);
-      padding: 4px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px;
-    }
+    .appr-card .at { font-size: 13.5px; font-weight: 600; line-height: 1.3;
+      flex: 1; padding-right: 8px; }
+    .appr-card .ac { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+    .appr-card .ab { display: flex; gap: 6px; flex-wrap: wrap; }
 
-    /* empty states */
+    /* Empty states */
     .empty {
-      color: var(--muted); font-size: 12px; padding: 12px 0; text-align: center;
+      text-align: center; padding: 24px 12px;
+      color: var(--muted); font-size: 12.5px;
+    }
+    .empty-icon {
+      font-size: 22px; margin-bottom: 6px; opacity: 0.4;
+      display: block;
     }
 
-    /* loading spinners inline */
-    .spinner {
-      display: inline-block; width: 12px; height: 12px;
-      border: 2px solid var(--border); border-top-color: var(--accent);
-      border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 6px;
+    /* Skeleton loader */
+    .skel {
+      background: linear-gradient(90deg, var(--panel) 0%,
+                                          var(--panel-hover) 50%,
+                                          var(--panel) 100%);
+      background-size: 200% 100%;
+      animation: skel 1.4s ease-in-out infinite;
+      border-radius: 8px;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes skel { 0% { background-position: 200% 0; }
+                      100% { background-position: -200% 0; } }
 
-    footer { padding: 12px 16px; color: var(--muted); font-size: 11px;
-      text-align: center; border-top: 1px solid var(--border); }
+    /* ════════════════════════════════════════════════════════════════════
+       DRAWER (job/document detail)
+       ══════════════════════════════════════════════════════════════════ */
+    .drawer-back {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      z-index: 90; opacity: 0; pointer-events: none;
+      transition: opacity 0.25s var(--ease);
+    }
+    .drawer-back.show { opacity: 1; pointer-events: auto; }
+    .drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; width: 100%;
+      max-width: 560px; background: var(--bg);
+      border-left: 1px solid var(--border);
+      box-shadow: -20px 0 60px rgba(0,0,0,0.5);
+      z-index: 100; transform: translateX(100%);
+      transition: transform 0.35s var(--ease);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .drawer.show { transform: translateX(0); }
+    .drawer-head {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 20px 22px 16px; border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .drawer-head h3 {
+      font-size: 17px; font-weight: 700; letter-spacing: -0.02em;
+      line-height: 1.3; flex: 1;
+    }
+    .drawer-head .ds { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+    .drawer-body { flex: 1; overflow-y: auto; padding: 18px 22px; }
+    .drawer-section { margin-bottom: 22px; }
+    .drawer-section h4 {
+      font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--muted); margin-bottom: 10px;
+    }
+    .resume-preview {
+      background: rgba(0,0,0,0.18); border: 1px solid var(--border);
+      border-radius: 10px; padding: 16px 18px;
+      font-family: 'JetBrains Mono', monospace; font-size: 12px;
+      line-height: 1.55; white-space: pre-wrap;
+      max-height: 320px; overflow-y: auto;
+      color: var(--fg-soft);
+    }
+    [data-theme="light"] .resume-preview { background: rgba(255,255,255,0.85); }
+
+    .status-btn-row {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .status-btn {
+      padding: 6px 12px; border-radius: 8px; font: inherit;
+      font-size: 12px; font-weight: 600;
+      background: var(--panel-strong); color: var(--fg-soft);
+      border: 1px solid var(--border); cursor: pointer;
+      transition: all 0.15s var(--ease);
+    }
+    .status-btn:hover { background: var(--panel-hover); border-color: var(--border-strong); }
+    .status-btn.active { background: var(--accent-grad); color: white;
+      border-color: transparent;
+      box-shadow: 0 4px 12px rgba(110,168,254,0.3); }
+
+    /* Toast */
+    .toast-stack {
+      position: fixed; bottom: 24px; right: 24px; z-index: 200;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      padding: 11px 16px; background: var(--panel);
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.4);
+      font-size: 13px; color: var(--fg);
+      animation: toast-in 0.3s var(--ease);
+      max-width: 340px; pointer-events: auto;
+    }
+    .toast.good { border-color: rgba(34,211,168,0.35); }
+    .toast.bad { border-color: rgba(248,113,113,0.35); }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    footer {
+      text-align: center; color: var(--muted-2); font-size: 11.5px;
+      padding: 24px 16px; border-top: 1px solid var(--border);
+      margin-top: 16px;
+    }
   </style>
 </head>
 <body>
+
+  <!-- ═════════════════════ HEADER ═════════════════════ -->
   <header>
-    <h1>JobHunt</h1>
+    <div class="brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 17l6-6 4 4 8-8"/>
+          <path d="M14 7h7v7"/>
+        </svg>
+      </div>
+      <span><span class="brand-name">JobHunt</span></span>
+    </div>
     <div class="header-right">
-      <span id="hunt-badge" class="badge">idle</span>
-      <button class="btn-ghost" id="btn-theme">Theme</button>
-      <button class="btn-ghost" id="btn-refresh" style="display:none">Refresh</button>
+      <span id="hunt-pill" class="pill">idle</span>
+      <button class="icon-btn" id="btn-theme" aria-label="theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-refresh" aria-label="refresh" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 0 1 15-6.7L21 8M3 16l3 2.7A9 9 0 0 0 21 12"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-reset" aria-label="reset" style="display:none" title="Reset everything">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+      </button>
     </div>
   </header>
 
-  <!-- ===================== ONBOARDING WIZARD ===================== -->
+  <!-- ═════════════════════ WIZARD ═════════════════════ -->
   <div id="wizard">
-    <div class="wizard-card">
-      <div class="wizard-progress">
-        <div class="w-step active" id="wp-1">1 · You</div>
-        <div class="w-step" id="wp-2">2 · Resume</div>
-        <div class="w-step" id="wp-3">3 · Preferences</div>
-        <div class="w-step" id="wp-4">4 · Launch</div>
+    <div class="wizard-frame">
+      <div class="wizard-hero">
+        <h1>Hire-on-<span class="grad">autopilot</span></h1>
+        <p>Seven agents work the funnel. You approve the moments that matter.</p>
       </div>
-      <div class="wizard-body">
 
-        <!-- Step 1: Basic info -->
-        <div class="step-panel active" id="step-1">
-          <h2>Let's get started</h2>
-          <p>Tell us who you are and what kind of role you're hunting for.</p>
-          <div class="form-group">
-            <label>Full name</label>
-            <input type="text" id="f-name" placeholder="Ada Lovelace" />
-          </div>
-          <div class="form-group">
-            <label>Email</label>
-            <input type="email" id="f-email" placeholder="ada@example.com" />
-          </div>
-          <div class="form-group">
-            <label>Target roles <span class="hint" style="text-transform:none;letter-spacing:0">(press Enter to add)</span></label>
-            <div class="chip-input" id="roles-input">
-              <input type="text" id="roles-text" placeholder="e.g. backend engineer" />
+      <div class="step-dots">
+        <div class="dot active" id="wp-1">You</div>
+        <div class="dot-line"></div>
+        <div class="dot" id="wp-2">Resume</div>
+        <div class="dot-line"></div>
+        <div class="dot" id="wp-3">Sources</div>
+        <div class="dot-line"></div>
+        <div class="dot" id="wp-4">Tune</div>
+        <div class="dot-line"></div>
+        <div class="dot" id="wp-5">Launch</div>
+      </div>
+
+      <div class="wizard-card">
+        <div class="wizard-body">
+
+          <!-- Step 1 -->
+          <div class="step-panel active" id="step-1">
+            <h2>Who are we hunting for?</h2>
+            <div class="lede">Just the essentials. We'll dial in the details as we go.</div>
+            <div class="field">
+              <div class="field-label">Full name</div>
+              <input class="input" type="text" id="f-name" placeholder="Ada Lovelace" autocomplete="name" />
+            </div>
+            <div class="field">
+              <div class="field-label">Email</div>
+              <input class="input" type="email" id="f-email" placeholder="ada@example.com" autocomplete="email" />
+            </div>
+            <div class="field">
+              <div class="field-label">Target roles <span class="hint">press Enter to add</span></div>
+              <div class="chips" id="roles-input">
+                <input type="text" id="roles-text" placeholder="backend engineer, staff engineer…" />
+              </div>
+            </div>
+            <div class="field">
+              <div class="field-label">Preferred locations <span class="hint">press Enter to add</span></div>
+              <div class="chips" id="locs-input">
+                <input type="text" id="locs-text" placeholder="Remote, San Francisco, NYC…" />
+              </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Preferred locations <span class="hint" style="text-transform:none;letter-spacing:0">(press Enter to add)</span></label>
-            <div class="chip-input" id="locs-input">
-              <input type="text" id="locs-text" placeholder="e.g. Remote, San Francisco" />
+
+          <!-- Step 2 -->
+          <div class="step-panel" id="step-2">
+            <h2>Your starting line</h2>
+            <div class="lede">Paste your resume. We mine it for keywords — we won't ship it. The system rebuilds tailored versions per role.</div>
+            <div class="field">
+              <textarea class="textarea" id="f-resume" placeholder="Paste resume text here…"></textarea>
+            </div>
+            <button class="btn btn-ghost" id="btn-extract" style="width:100%; justify-content:center;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <path d="M3.27 6.96L12 12l8.73-5.04M12 22.08V12"/>
+              </svg>
+              Extract skills
+            </button>
+            <div class="extracted" id="extracted-box">
+              <div class="extracted-head">Skills extracted</div>
+              <div class="chips" id="skills-extracted" style="background:transparent; border:none; padding:0;">
+                <input type="text" style="display:none" />
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- Step 2: Resume -->
-        <div class="step-panel" id="step-2">
-          <h2>Your background</h2>
-          <p>Paste your current resume text. We'll extract skills automatically — this is just a reference, not what we submit.</p>
-          <div class="form-group">
-            <label>Resume text</label>
-            <textarea id="f-resume" placeholder="Paste your resume here…"></textarea>
-          </div>
-          <button class="btn-secondary" id="btn-extract" style="margin-bottom:12px">
-            Extract skills from resume
-          </button>
-          <div class="extracted-box" id="extracted-box">
-            <div class="et">Skills extracted from your resume</div>
-            <div class="chip-input" id="skills-extracted"></div>
-            <p class="hint" style="margin-top:8px">You can add or remove skills — these train the matching engine.</p>
-          </div>
-        </div>
-
-        <!-- Step 3: Preferences -->
-        <div class="step-panel" id="step-3">
-          <h2>Preferences</h2>
-          <p>Fine-tune the hunt. All optional — sensible defaults apply.</p>
-          <div class="form-group">
-            <label>Minimum salary (USD / year)</label>
-            <input type="number" id="f-salary" placeholder="e.g. 150000" step="5000" />
-          </div>
-          <div class="toggle-row">
-            <label>Open to remote roles</label>
-            <label class="toggle">
-              <input type="checkbox" id="f-remote" checked />
-              <div class="toggle-track"></div>
-              <div class="toggle-thumb"></div>
-            </label>
-          </div>
-          <div class="form-group" style="margin-top:14px">
-            <label>Weekly application target</label>
-            <input type="number" id="f-weekly" placeholder="10" min="1" max="50" value="10" />
-          </div>
-          <div class="form-group">
-            <label>Skills <span class="hint" style="text-transform:none;letter-spacing:0">(press Enter to add)</span></label>
-            <div class="chip-input" id="skills-input">
-              <input type="text" id="skills-text" placeholder="e.g. python, redis, kubernetes" />
+          <!-- Step 3 -->
+          <div class="step-panel" id="step-3">
+            <h2>Where should we hunt?</h2>
+            <div class="lede">Optional. Add public Greenhouse / Lever / Ashby handles for live discovery. Skip to use offline fixtures.</div>
+            <div class="field">
+              <div class="field-label">Greenhouse boards <span class="hint">e.g. stripe, airtable</span></div>
+              <input class="input" type="text" id="f-greenhouse" placeholder="stripe, airtable, retool" />
+            </div>
+            <div class="field">
+              <div class="field-label">Lever slugs <span class="hint">company slug from jobs.lever.co</span></div>
+              <input class="input" type="text" id="f-lever" placeholder="netflix, github" />
+            </div>
+            <div class="field">
+              <div class="field-label">Ashby slugs <span class="hint">company slug from jobs.ashbyhq.com</span></div>
+              <input class="input" type="text" id="f-ashby" placeholder="vercel, supabase" />
             </div>
           </div>
-          <div class="form-group">
-            <label>Companies to avoid <span class="hint" style="text-transform:none;letter-spacing:0">(press Enter to add)</span></label>
-            <div class="chip-input" id="veto-input">
-              <input type="text" id="veto-text" placeholder="e.g. Fabrikam" />
+
+          <!-- Step 4 -->
+          <div class="step-panel" id="step-4">
+            <h2>Tune the funnel</h2>
+            <div class="lede">All optional. Sensible defaults apply.</div>
+            <div class="field">
+              <div class="field-label">Minimum salary (USD / year)</div>
+              <input class="input" type="number" id="f-salary" placeholder="e.g. 150000" step="5000" />
+            </div>
+            <div class="field">
+              <div class="field-label">Weekly application target</div>
+              <input class="input" type="number" id="f-weekly" placeholder="10" min="1" max="50" value="10" />
+            </div>
+            <div class="toggle-row">
+              <div>
+                <div class="tl">Open to remote roles</div>
+                <div class="tld">Includes remote-OK postings even when location doesn't match.</div>
+              </div>
+              <div class="toggle on" id="f-remote-toggle"><div class="toggle-thumb"></div></div>
+            </div>
+            <div class="field" style="margin-top:18px;">
+              <div class="field-label">Skills <span class="hint">press Enter to add</span></div>
+              <div class="chips" id="skills-input">
+                <input type="text" id="skills-text" placeholder="python, redis, kubernetes…" />
+              </div>
+            </div>
+            <div class="field">
+              <div class="field-label">Companies to avoid</div>
+              <div class="chips" id="veto-input">
+                <input type="text" id="veto-text" placeholder="Fabrikam…" />
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- Step 4: Review + launch -->
-        <div class="step-panel" id="step-4">
-          <h2>Ready to hunt</h2>
-          <p>Review your setup and hit Start Hunting — the agents will take it from here.</p>
-          <div id="review-summary"></div>
-          <button class="launch-btn" id="btn-launch">🚀 Start Hunting</button>
-        </div>
+          <!-- Step 5 -->
+          <div class="step-panel" id="step-5">
+            <h2>Ready to launch</h2>
+            <div class="lede">Review your setup. The agents will start working immediately.</div>
+            <div class="review-list" id="review-list"></div>
+            <button class="launch-btn" id="btn-launch">
+              Launch the agents →
+            </button>
+          </div>
 
-      </div><!-- /wizard-body -->
-      <div class="wizard-footer">
-        <button class="btn-secondary" id="btn-back" style="visibility:hidden">Back</button>
-        <button class="btn-primary" id="btn-next">Continue</button>
+        </div>
+        <div class="wizard-footer">
+          <button class="btn btn-ghost btn-sm" id="btn-back" style="visibility:hidden;">← Back</button>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button class="wizard-skip" id="btn-skip" style="display:none;">Skip</button>
+            <button class="btn btn-primary" id="btn-next">Continue</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- ===================== MAIN DASHBOARD ===================== -->
+  <!-- ═════════════════════ DASHBOARD ═════════════════════ -->
   <div id="dashboard">
-    <div class="dash-grid">
-      <div class="left-col">
-        <section class="panel" aria-label="Execution plan">
-          <div class="panel-title">Plan</div>
-          <div id="plan-body"><div class="empty">Waiting for plan…</div></div>
+    <div class="stat-row">
+      <div class="stat"><div class="sk">Discovered</div><div class="sv num grad" id="s-jobs">0</div></div>
+      <div class="stat"><div class="sk">Approved</div><div class="sv num" id="s-approved">0</div></div>
+      <div class="stat"><div class="sk">Applied</div><div class="sv num" id="s-applied">0</div></div>
+      <div class="stat"><div class="sk">In Pipeline</div><div class="sv num" id="s-pipeline">0</div></div>
+    </div>
+
+    <div class="layout">
+      <div class="col">
+        <section class="panel">
+          <div class="panel-head"><span class="pt">Execution plan</span></div>
+          <div class="plan-steps" id="plan-body">
+            <div class="empty">
+              <span class="empty-icon">⏳</span>
+              Waiting for plan…
+            </div>
+          </div>
         </section>
-        <section class="panel" aria-label="Pending approvals">
-          <div class="panel-title">Awaiting your approval</div>
-          <div id="approvals-body"><div class="empty">Nothing yet.</div></div>
+        <section class="panel">
+          <div class="panel-head">
+            <span class="pt">Awaiting your approval</span>
+            <span class="pc" id="approvals-count">0</span>
+          </div>
+          <div id="approvals-body">
+            <div class="empty">
+              <span class="empty-icon">✓</span>
+              Nothing waiting for you.
+            </div>
+          </div>
         </section>
       </div>
 
-      <section class="panel kanban" aria-label="Job pipeline">
-        <div class="panel-title">Pipeline</div>
-        <div id="kanban-body" class="kanban-cols"></div>
+      <section class="panel">
+        <div class="panel-head">
+          <span class="pt">Pipeline</span>
+          <span class="pc">Click a card to open</span>
+        </div>
+        <div class="kanban-cols" id="kanban-body"></div>
       </section>
 
-      <div class="right-col">
-        <section class="panel" aria-label="Live thought stream">
-          <div class="panel-title">
-            <span id="stream-spinner" class="spinner"></span>Agent thoughts
+      <div class="col">
+        <section class="panel">
+          <div class="panel-head">
+            <span class="pt">Live agent thoughts</span>
+            <span class="pc" id="stream-count">0</span>
           </div>
-          <ul class="stream-list" id="stream-list"></ul>
+          <ul class="stream" id="stream-list"></ul>
         </section>
       </div>
     </div>
+
+    <footer>
+      Seven agents · plan → discovery → vetting → resume → critique → submission → tracking
+    </footer>
   </div>
 
-  <footer>Multi-agent job hunting platform — <a href="ARCHITECTURE.md" style="color:var(--muted)">ARCHITECTURE.md</a></footer>
+  <!-- ═════════════════════ DRAWER ═════════════════════ -->
+  <div class="drawer-back" id="drawer-back"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <div style="flex:1;">
+        <h3 id="d-title">—</h3>
+        <div class="ds" id="d-sub">—</div>
+      </div>
+      <button class="icon-btn" id="d-close" aria-label="close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <!-- ═════════════════════ TOASTS ═════════════════════ -->
+  <div class="toast-stack" id="toasts"></div>
 
   <script>
   'use strict';
 
-  // ── state ──────────────────────────────────────────────────────────────────
+  /* ────── state ──────────────────────────────────────────────── */
   const state = {
-    currentStep: 1,
+    step: 1,
     name: '', email: '',
     targetRoles: [], locations: [],
     skills: [], vetoCompanies: [],
     resumeText: '',
     minSalary: null, remoteOk: true, weeklyTarget: 10,
     huntStatus: 'idle',
+    currentJob: null,
   };
 
-  // ── theme ──────────────────────────────────────────────────────────────────
-  document.getElementById('btn-theme').addEventListener('click', () => {
+  /* ────── DOM helpers ───────────────────────────────────────── */
+  const $ = (id) => document.getElementById(id);
+  const $$ = (q) => document.querySelectorAll(q);
+
+  /* ────── toasts ─────────────────────────────────────────────── */
+  function toast(msg, kind = '') {
+    const stack = $('toasts');
+    const t = document.createElement('div');
+    t.className = 'toast' + (kind ? ' ' + kind : '');
+    t.textContent = msg;
+    stack.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateY(8px)'; }, 2800);
+    setTimeout(() => t.remove(), 3200);
+  }
+
+  /* ────── theme ──────────────────────────────────────────────── */
+  $('btn-theme').addEventListener('click', () => {
     const h = document.documentElement;
     h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark';
   });
 
-  // ── chip input helper ──────────────────────────────────────────────────────
-  function makeChipInput(containerId, textId, arr, cls = '') {
-    const container = document.getElementById(containerId);
-    const textInput = document.getElementById(textId);
-
-    function renderChips() {
-      container.querySelectorAll('.chip').forEach(c => c.remove());
-      arr.forEach((val, i) => {
-        const chip = document.createElement('span');
-        chip.className = 'chip' + (cls ? ' ' + cls : '');
-        chip.innerHTML = `${val}<button class="chip-remove" data-i="${i}" aria-label="remove">×</button>`;
-        container.insertBefore(chip, textInput);
-      });
-    }
-
-    container.addEventListener('click', e => {
-      if (e.target.dataset.i !== undefined) {
-        arr.splice(Number(e.target.dataset.i), 1);
-        renderChips();
-      } else {
-        textInput.focus();
-      }
-    });
-
-    textInput.addEventListener('keydown', e => {
-      if ((e.key === 'Enter' || e.key === ',') && textInput.value.trim()) {
-        e.preventDefault();
-        const val = textInput.value.trim().replace(/,$/, '');
-        if (val && !arr.includes(val)) {
-          arr.push(val);
-          renderChips();
-        }
-        textInput.value = '';
-      } else if (e.key === 'Backspace' && !textInput.value && arr.length) {
-        arr.pop();
-        renderChips();
-      }
-    });
-
-    return renderChips;
-  }
-
-  const renderRoles = makeChipInput('roles-input', 'roles-text', state.targetRoles);
-  const renderLocs  = makeChipInput('locs-input', 'locs-text', state.locations);
-  const renderSkills = makeChipInput('skills-input', 'skills-text', state.skills, 'skill');
-  const renderVeto  = makeChipInput('veto-input', 'veto-text', state.vetoCompanies);
-
-  // ── resume skill extraction ────────────────────────────────────────────────
-  document.getElementById('btn-extract').addEventListener('click', async () => {
-    const text = document.getElementById('f-resume').value.trim();
-    if (!text) return;
-    const btn = document.getElementById('btn-extract');
-    btn.disabled = true; btn.textContent = 'Extracting…';
-    try {
-      const r = await api('POST', '/api/onboarding/resume', { text });
-      const box = document.getElementById('extracted-box');
-      const container = document.getElementById('skills-extracted');
-      container.innerHTML = '';
-      (r.skills || []).forEach(s => {
-        if (!state.skills.includes(s)) state.skills.push(s);
-        const chip = document.createElement('span');
-        chip.className = 'chip skill';
-        chip.textContent = s;
-        container.appendChild(chip);
-      });
-      renderSkills();
-      box.classList.add('visible');
-      btn.textContent = `✓ ${r.skills.length} skills extracted`;
-    } catch (e) {
-      btn.textContent = 'Extraction failed';
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  // ── wizard navigation ──────────────────────────────────────────────────────
-  const STEPS = 4;
-  const btnNext = document.getElementById('btn-next');
-  const btnBack = document.getElementById('btn-back');
-
-  function showStep(n) {
-    for (let i = 1; i <= STEPS; i++) {
-      document.getElementById(`step-${i}`).classList.toggle('active', i === n);
-      const wp = document.getElementById(`wp-${i}`);
-      if (i < n) { wp.className = 'w-step done'; }
-      else if (i === n) { wp.className = 'w-step active'; }
-      else { wp.className = 'w-step'; }
-    }
-    btnBack.style.visibility = n > 1 ? 'visible' : 'hidden';
-    btnNext.style.display = n < STEPS ? 'block' : 'none';
-    if (n === STEPS) buildReview();
-    state.currentStep = n;
-  }
-
-  function validateStep(n) {
-    if (n === 1) {
-      const name = document.getElementById('f-name').value.trim();
-      const email = document.getElementById('f-email').value.trim();
-      if (!name) { alert('Please enter your name.'); return false; }
-      if (!email.includes('@')) { alert('Please enter a valid email.'); return false; }
-      if (!state.targetRoles.length) { alert('Add at least one target role.'); return false; }
-      if (!state.locations.length) { alert('Add at least one location (or "Remote").'); return false; }
-      state.name = name; state.email = email;
-    }
-    if (n === 3) {
-      state.minSalary = parseInt(document.getElementById('f-salary').value) || null;
-      state.remoteOk = document.getElementById('f-remote').checked;
-      state.weeklyTarget = parseInt(document.getElementById('f-weekly').value) || 10;
-    }
-    return true;
-  }
-
-  btnNext.addEventListener('click', () => {
-    if (!validateStep(state.currentStep)) return;
-    if (state.currentStep < STEPS) showStep(state.currentStep + 1);
-  });
-  btnBack.addEventListener('click', () => {
-    if (state.currentStep > 1) showStep(state.currentStep - 1);
-  });
-
-  function buildReview() {
-    const root = document.getElementById('review-summary');
-    root.innerHTML = '';
-    function block(title, items) {
-      const d = document.createElement('div');
-      d.className = 'review-block';
-      d.innerHTML = `<h4>${title}</h4>` +
-        items.map(v => `<div class="rv">${v}</div>`).join('');
-      root.appendChild(d);
-    }
-    block('Who you are', [
-      document.getElementById('f-name').value,
-      document.getElementById('f-email').value,
-    ]);
-    block('Target roles', state.targetRoles.length ? state.targetRoles : ['(none)']);
-    block('Locations', state.locations.length ? state.locations : ['(none)']);
-    const prefs = [];
-    if (state.minSalary) prefs.push(`Min salary: $${state.minSalary.toLocaleString()}`);
-    prefs.push(`Remote ok: ${document.getElementById('f-remote').checked ? 'Yes' : 'No'}`);
-    prefs.push(`Weekly target: ${document.getElementById('f-weekly').value} applications`);
-    block('Preferences', prefs);
-    if (state.skills.length) block('Skills', [`${state.skills.length} skills identified`]);
-  }
-
-  // ── launch hunt ────────────────────────────────────────────────────────────
-  document.getElementById('btn-launch').addEventListener('click', async () => {
-    const btn = document.getElementById('btn-launch');
-    btn.disabled = true;
-    btn.textContent = 'Saving profile…';
-
-    const name  = document.getElementById('f-name').value.trim();
-    const email = document.getElementById('f-email').value.trim();
-    state.name = name; state.email = email;
-    state.minSalary = parseInt(document.getElementById('f-salary').value) || null;
-    state.remoteOk  = document.getElementById('f-remote').checked;
-    state.weeklyTarget = parseInt(document.getElementById('f-weekly').value) || 10;
-
-    try {
-      await api('POST', '/api/onboarding/profile', {
-        name:         state.name,
-        email:        state.email,
-        target_roles: state.targetRoles,
-        locations:    state.locations,
-        min_salary:   state.minSalary,
-        remote_ok:    state.remoteOk,
-        skills:       state.skills,
-        veto_companies: state.vetoCompanies,
-        weekly_target: state.weeklyTarget,
-      });
-
-      const resumeText = document.getElementById('f-resume').value.trim();
-      if (resumeText) {
-        await api('POST', '/api/onboarding/resume', { text: resumeText });
-      }
-
-      btn.textContent = 'Starting hunt…';
-      await api('POST', '/api/hunt/start', {});
-
-      // Show dashboard
-      document.getElementById('wizard').style.display = 'none';
-      document.getElementById('btn-refresh').style.display = '';
-      document.getElementById('dashboard').classList.add('visible');
-      updateHuntBadge('running');
-      openStream();
-      startPolling();
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = '🚀 Start Hunting';
-      alert('Error: ' + (err.message || err));
-    }
-  });
-
-  // ── API helper ─────────────────────────────────────────────────────────────
+  /* ────── api ────────────────────────────────────────────────── */
   async function api(method, path, body) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
     if (body !== undefined) opts.body = JSON.stringify(body);
@@ -672,148 +1063,448 @@
     return r.json();
   }
 
-  // ── dashboard renderers ────────────────────────────────────────────────────
-  async function refreshDashboard() {
-    await Promise.all([renderPlan(), renderJobs(), renderApprovals(), checkStatus()]);
+  /* ────── chip input ─────────────────────────────────────────── */
+  function makeChip(container, textInput, arr) {
+    function render() {
+      container.querySelectorAll('.chip').forEach((c) => c.remove());
+      arr.forEach((v, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.innerHTML = `${v}<button class="chip-x" data-i="${i}" aria-label="remove">×</button>`;
+        container.insertBefore(chip, textInput);
+      });
+    }
+    container.addEventListener('click', (e) => {
+      if (e.target.dataset.i !== undefined) {
+        arr.splice(Number(e.target.dataset.i), 1);
+        render();
+      } else if (e.target === container) {
+        textInput.focus();
+      }
+    });
+    textInput.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ',') && textInput.value.trim()) {
+        e.preventDefault();
+        const v = textInput.value.trim().replace(/,$/, '');
+        if (v && !arr.includes(v)) { arr.push(v); render(); }
+        textInput.value = '';
+      } else if (e.key === 'Backspace' && !textInput.value && arr.length) {
+        arr.pop(); render();
+      }
+    });
+    return render;
+  }
+  const renderRoles  = makeChip($('roles-input'),  $('roles-text'),  state.targetRoles);
+  const renderLocs   = makeChip($('locs-input'),   $('locs-text'),   state.locations);
+  const renderSkills = makeChip($('skills-input'), $('skills-text'), state.skills);
+  const renderVeto   = makeChip($('veto-input'),   $('veto-text'),   state.vetoCompanies);
+
+  /* ────── resume extract ─────────────────────────────────────── */
+  $('btn-extract').addEventListener('click', async () => {
+    const text = $('f-resume').value.trim();
+    if (!text) { toast('Paste some resume text first', 'bad'); return; }
+    const btn = $('btn-extract');
+    btn.disabled = true; btn.innerHTML = '<svg class="skel" width="14" height="14"></svg> Extracting…';
+    try {
+      const r = await api('POST', '/api/onboarding/resume', { text });
+      $('extracted-box').classList.add('show');
+      (r.skills || []).forEach((s) => {
+        if (!state.skills.includes(s)) state.skills.push(s);
+      });
+      renderSkills();
+      btn.innerHTML = `✓ ${r.skills.length} skills found`;
+      toast(`Found ${r.skills.length} skills · ${r.inferred_titles?.length || 0} titles`, 'good');
+    } catch (e) {
+      toast('Extraction failed', 'bad');
+      btn.innerHTML = 'Extract skills';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /* ────── toggle ─────────────────────────────────────────────── */
+  $('f-remote-toggle').addEventListener('click', (e) => {
+    const t = e.currentTarget;
+    t.classList.toggle('on');
+    state.remoteOk = t.classList.contains('on');
+  });
+
+  /* ────── wizard navigation ──────────────────────────────────── */
+  const TOTAL_STEPS = 5;
+  function showStep(n) {
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
+      $(`step-${i}`).classList.toggle('active', i === n);
+      const wp = $(`wp-${i}`);
+      wp.className = 'dot' + (i < n ? ' done' : i === n ? ' active' : '');
+    }
+    $('btn-back').style.visibility = n > 1 ? 'visible' : 'hidden';
+    $('btn-next').style.display = n < TOTAL_STEPS ? 'inline-flex' : 'none';
+    $('btn-skip').style.display = (n === 3) ? 'inline-block' : 'none';
+    if (n === TOTAL_STEPS) buildReview();
+    state.step = n;
+  }
+  function validateStep(n) {
+    if (n === 1) {
+      const name = $('f-name').value.trim();
+      const email = $('f-email').value.trim();
+      if (!name) { toast('Please enter your name', 'bad'); return false; }
+      if (!email.includes('@')) { toast('Please enter a valid email', 'bad'); return false; }
+      if (!state.targetRoles.length) { toast('Add at least one target role', 'bad'); return false; }
+      if (!state.locations.length) { toast('Add at least one location', 'bad'); return false; }
+      state.name = name; state.email = email;
+    }
+    if (n === 4) {
+      state.minSalary = parseInt($('f-salary').value) || null;
+      state.weeklyTarget = parseInt($('f-weekly').value) || 10;
+    }
+    return true;
+  }
+  $('btn-next').addEventListener('click', () => {
+    if (!validateStep(state.step)) return;
+    if (state.step < TOTAL_STEPS) showStep(state.step + 1);
+  });
+  $('btn-back').addEventListener('click', () => {
+    if (state.step > 1) showStep(state.step - 1);
+  });
+  $('btn-skip').addEventListener('click', () => showStep(state.step + 1));
+
+  function buildReview() {
+    const root = $('review-list'); root.innerHTML = '';
+    function row(k, v) {
+      const d = document.createElement('div');
+      d.className = 'review-row';
+      d.innerHTML = `<div class="rk">${k}</div><div class="rv">${v}</div>`;
+      root.appendChild(d);
+    }
+    row('Identity', `${state.name} · ${state.email}`);
+    row('Target roles', state.targetRoles.map((r) => `<span class="pill-sm">${r}</span>`).join(' '));
+    row('Locations', state.locations.map((l) => `<span class="pill-sm">${l}</span>`).join(' '));
+
+    const ats = [];
+    const gh = $('f-greenhouse').value.trim(); if (gh) ats.push(`GH: ${gh}`);
+    const lv = $('f-lever').value.trim();      if (lv) ats.push(`Lever: ${lv}`);
+    const ab = $('f-ashby').value.trim();      if (ab) ats.push(`Ashby: ${ab}`);
+    row('ATS sources', ats.length ? ats.join(' · ') : '<span style="color:var(--muted)">offline fixtures</span>');
+
+    const prefs = [];
+    if (state.minSalary) prefs.push(`≥ $${state.minSalary.toLocaleString()}`);
+    prefs.push(`Remote: ${state.remoteOk ? 'OK' : 'no'}`);
+    prefs.push(`${state.weeklyTarget}/week`);
+    row('Preferences', prefs.join(' · '));
+    if (state.skills.length) row('Skills', `<strong>${state.skills.length}</strong> tracked`);
+    if (state.vetoCompanies.length) row('Avoid', state.vetoCompanies.join(', '));
   }
 
-  document.getElementById('btn-refresh').addEventListener('click', refreshDashboard);
+  /* ────── launch ─────────────────────────────────────────────── */
+  $('btn-launch').addEventListener('click', async () => {
+    const btn = $('btn-launch');
+    btn.disabled = true; btn.textContent = 'Saving profile…';
+    try {
+      await api('POST', '/api/onboarding/profile', {
+        name: state.name, email: state.email,
+        target_roles: state.targetRoles, locations: state.locations,
+        min_salary: state.minSalary, remote_ok: state.remoteOk,
+        skills: state.skills, veto_companies: state.vetoCompanies,
+        weekly_target: state.weeklyTarget,
+      });
+      const rt = $('f-resume').value.trim();
+      if (rt) await api('POST', '/api/onboarding/resume', { text: rt });
 
-  async function checkStatus() {
-    const s = await api('GET', '/api/status');
-    updateHuntBadge(s.hunt_status);
-    if (s.hunt_status === 'complete' || s.hunt_status === 'failed') {
-      clearInterval(pollTimer);
-      document.getElementById('stream-spinner').style.display = 'none';
+      await api('POST', '/api/onboarding/ats', {
+        greenhouse_tokens: $('f-greenhouse').value,
+        lever_slugs:       $('f-lever').value,
+        ashby_slugs:       $('f-ashby').value,
+      });
+
+      btn.textContent = 'Launching agents…';
+      await api('POST', '/api/hunt/start', {});
+
+      switchToDashboard();
+      toast('🚀 Hunt launched', 'good');
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Launch the agents →';
+      toast(e.message || 'Launch failed', 'bad');
+    }
+  });
+
+  function switchToDashboard() {
+    $('wizard').style.display = 'none';
+    $('dashboard').classList.add('show');
+    $('btn-refresh').style.display = '';
+    $('btn-reset').style.display = '';
+    openStream();
+    startPolling();
+  }
+
+  /* ────── refresh / poll ─────────────────────────────────────── */
+  let pollTimer = null;
+  async function refreshAll() {
+    await Promise.all([renderStatus(), renderPlan(), renderJobs(), renderApprovals()]);
+  }
+  function startPolling() { pollTimer = setInterval(refreshAll, 2500); refreshAll(); }
+  function stopPolling()  { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+  $('btn-refresh').addEventListener('click', refreshAll);
+
+  /* ────── reset ──────────────────────────────────────────────── */
+  $('btn-reset').addEventListener('click', async () => {
+    if (!confirm('Reset everything? This clears profile, jobs, applications.')) return;
+    try {
+      await api('POST', '/api/hunt/reset', {});
+      stopPolling();
+      location.reload();
+    } catch (e) { toast(e.message, 'bad'); }
+  });
+
+  /* ────── status / stats ─────────────────────────────────────── */
+  async function renderStatus() {
+    const s = await api('GET', '/api/status').catch(() => null);
+    if (!s) return;
+    const pill = $('hunt-pill');
+    pill.textContent = s.hunt_status;
+    pill.className = 'pill ' + s.hunt_status;
+
+    $('s-jobs').textContent = s.jobs_count;
+    $('s-approved').textContent = s.approvals_pending === 0
+      ? '✓' : '—';
+
+    // Pipeline metric: from current jobs
+    const jobs = await api('GET', '/api/jobs').then((x) => x.jobs);
+    const applied = jobs.filter((j) => j.status === 'Applied').length;
+    const pipeline = jobs.filter((j) => ['Assessment','Interview','Offer'].includes(j.status)).length;
+    $('s-applied').textContent = applied;
+    $('s-pipeline').textContent = pipeline;
+    $('s-approved').textContent = jobs.filter((j) => j.status !== 'Saved').length;
+
+    if (['complete','failed'].includes(s.hunt_status)) {
+      // keep polling slow but don't stop entirely (user can move cards manually)
     }
   }
 
-  function updateHuntBadge(status) {
-    const b = document.getElementById('hunt-badge');
-    b.textContent = status;
-    b.className = 'badge ' + status;
-  }
-
+  /* ────── plan ───────────────────────────────────────────────── */
   async function renderPlan() {
-    const root = document.getElementById('plan-body');
+    const root = $('plan-body');
     const { plan } = await api('GET', '/api/plan');
-    if (!plan) { root.innerHTML = '<div class="empty">Waiting for plan…</div>'; return; }
+    if (!plan) {
+      root.innerHTML = '<div class="empty"><span class="empty-icon">⏳</span>Waiting for plan…</div>';
+      return;
+    }
     root.innerHTML = '';
     for (const s of plan.steps) {
       const el = document.createElement('div');
-      el.className = 'plan-step';
-      el.innerHTML = `<div class="step-dot ${s.status}"></div>
-        <div class="step-info">
-          <div class="step-agent">${s.agent}</div>
-          <div class="step-action">${s.action}</div>
-        </div>`;
+      el.className = 'plan-step ' + s.status;
+      el.innerHTML = `<div class="agent">${s.agent}</div><div class="action">${s.action}</div>`;
       root.appendChild(el);
     }
   }
 
+  /* ────── jobs / kanban ──────────────────────────────────────── */
   async function renderJobs() {
-    const root = document.getElementById('kanban-body');
+    const root = $('kanban-body');
     const { jobs } = await api('GET', '/api/jobs');
-    const cols = { Saved: [], Applied: [], Assessment: [], Interview: [], Offer: [], Closed: [] };
-    for (const j of jobs) (cols[j.status] || cols.Saved).push(j);
+    const COLS = ['Saved', 'Applied', 'Assessment', 'Interview', 'Offer', 'Closed'];
+    const grouped = Object.fromEntries(COLS.map((c) => [c, []]));
+    jobs.forEach((j) => (grouped[j.status] || grouped.Saved).push(j));
 
     root.innerHTML = '';
-    for (const [name, items] of Object.entries(cols)) {
+    for (const name of COLS) {
+      const items = grouped[name];
       if (!items.length && name !== 'Saved') continue;
       const col = document.createElement('div');
-      col.className = 'k-col';
-      col.innerHTML = `<h3>${name} <span style="color:var(--fg)">${items.length}</span></h3>`;
+      col.className = 'kanban-col';
+      col.innerHTML = `<div class="kh">${name}<span class="kc">${items.length}</span></div>`;
       for (const j of items) {
         const card = document.createElement('div');
         card.className = 'job-card';
-        const sal = j.salary_min
-          ? `$${(j.salary_min/1000).toFixed(0)}k${j.salary_max ? '–'+Math.round(j.salary_max/1000)+'k' : '+'}`
-          : '';
+        const sal = j.salary_min ?
+          `$${Math.round(j.salary_min/1000)}k${j.salary_max ? '–' + Math.round(j.salary_max/1000) + 'k' : '+'}` : '';
         card.innerHTML = `
           <div class="jt">${j.title}</div>
-          <div class="jm">${j.company} · ${j.location}</div>
-          ${sal ? `<div class="jm">${sal}</div>` : ''}
+          <div class="jc">${j.company} · ${j.location || '—'}</div>
           <div class="jtags">
             ${j.remote ? '<span class="tag remote">Remote</span>' : ''}
-            <span class="tag">${(j.relevance_score||0).toFixed(2)} match</span>
-            <span class="tag">${j.source}</span>
-          </div>
-          ${j.url ? `<a href="${j.url}" target="_blank" rel="noopener">View posting ↗</a>` : ''}`;
+            <span class="tag match">${((j.relevance_score||0)*100).toFixed(0)}% match</span>
+            ${sal ? `<span class="tag salary">${sal}</span>` : ''}
+          </div>`;
+        card.addEventListener('click', () => openDrawer(j));
         col.appendChild(card);
       }
       root.appendChild(col);
     }
-    if (!jobs.length) root.innerHTML = '<div class="empty">Discovering jobs…</div>';
+    if (!jobs.length) {
+      root.innerHTML = '<div class="empty" style="grid-column: 1/-1;"><span class="empty-icon">🔍</span>Discovering jobs…</div>';
+    }
   }
 
+  /* ────── approvals ──────────────────────────────────────────── */
   async function renderApprovals() {
-    const root = document.getElementById('approvals-body');
+    const root = $('approvals-body');
     const { approvals } = await api('GET', '/api/approvals?state_filter=pending');
+    $('approvals-count').textContent = approvals.length;
     if (!approvals.length) {
-      root.innerHTML = '<div class="empty">Nothing waiting for you right now.</div>';
+      root.innerHTML = '<div class="empty"><span class="empty-icon">✓</span>All caught up.</div>';
       return;
     }
     root.innerHTML = '';
     for (const a of approvals) {
       const card = document.createElement('div');
-      card.className = 'approval-card';
+      card.className = 'appr-card';
       card.innerHTML = `
-        <div class="ac-title">${a.title}</div>
-        <div class="ac-co">${a.company} · req ${a.request_id.slice(0,8)}…</div>
-        <div class="ac-btns">
-          <button class="approve" data-id="${a.request_id}">Approve</button>
-          <button class="reject"  data-id="${a.request_id}">Reject</button>
-          <button class="edit"    data-id="${a.request_id}">Request edits</button>
+        <div class="ah">
+          <div class="at">${a.title}</div>
+        </div>
+        <div class="ac">${a.company}</div>
+        <div class="ab">
+          <button class="btn btn-good btn-sm" data-act="approve" data-id="${a.request_id}">✓ Approve</button>
+          <button class="btn btn-bad  btn-sm" data-act="reject"  data-id="${a.request_id}">✕ Reject</button>
+          <button class="btn btn-warn btn-sm" data-act="edit"    data-id="${a.request_id}">↻ Edits</button>
+          <button class="btn btn-ghost btn-sm" data-act="open"   data-job="${a.job_id}">View</button>
         </div>`;
       root.appendChild(card);
     }
-    root.querySelectorAll('.approve').forEach(b =>
-      b.addEventListener('click', () => doApprove(b.dataset.id, 'approve')));
-    root.querySelectorAll('.reject').forEach(b =>
-      b.addEventListener('click', () => doApprove(b.dataset.id, 'reject')));
-    root.querySelectorAll('.edit').forEach(b =>
-      b.addEventListener('click', () => doApprove(b.dataset.id, 'edit')));
+    root.querySelectorAll('button[data-act]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const act = b.dataset.act;
+        if (act === 'open') {
+          const { jobs } = await api('GET', '/api/jobs');
+          const j = jobs.find((x) => x.job_id === b.dataset.job);
+          if (j) openDrawer(j);
+          return;
+        }
+        try {
+          await api('POST', `/api/approve/${b.dataset.id}?decision=${act}`);
+          toast(`Marked ${act}`, 'good');
+          await refreshAll();
+        } catch (e) { toast(e.message, 'bad'); }
+      });
+    });
   }
 
-  async function doApprove(id, decision) {
-    await api('POST', `/api/approve/${encodeURIComponent(id)}?decision=${decision}`);
-    await renderApprovals();
+  /* ────── drawer ─────────────────────────────────────────────── */
+  function openDrawer(job) {
+    state.currentJob = job;
+    $('d-title').textContent = job.title;
+    $('d-sub').textContent = `${job.company} · ${job.location || '—'} · ${job.source}`;
+    renderDrawerBody(job);
+    $('drawer').classList.add('show');
+    $('drawer-back').classList.add('show');
+  }
+  function closeDrawer() {
+    $('drawer').classList.remove('show');
+    $('drawer-back').classList.remove('show');
+    state.currentJob = null;
+  }
+  $('d-close').addEventListener('click', closeDrawer);
+  $('drawer-back').addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+
+  async function renderDrawerBody(job) {
+    const root = $('drawer-body'); root.innerHTML = '<div class="skel" style="height:200px"></div>';
+    let doc = null;
+    try { doc = (await api('GET', `/api/documents/${job.job_id}`)).document; } catch {}
+    const STATUSES = ['Saved','Applied','Assessment','Interview','Offer','Closed'];
+    let html = '';
+
+    html += `<div class="drawer-section">
+      <h4>Status</h4>
+      <div class="status-btn-row">
+        ${STATUSES.map((s) =>
+          `<button class="status-btn ${s === job.status ? 'active' : ''}" data-status="${s}">${s}</button>`
+        ).join('')}
+      </div>
+    </div>`;
+
+    html += `<div class="drawer-section">
+      <h4>Posting</h4>
+      <div style="font-size:13px; line-height:1.5;">
+        <div>Source: <strong>${job.source}</strong></div>
+        ${job.salary_min ? `<div>Salary: $${(job.salary_min/1000).toFixed(0)}k${job.salary_max ? '–' + (job.salary_max/1000).toFixed(0) + 'k' : '+'}</div>` : ''}
+        <div>Relevance: ${(job.relevance_score*100).toFixed(0)}%</div>
+        ${job.url ? `<div style="margin-top:10px;"><a href="${job.url}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">↗ Open job posting</a></div>` : ''}
+      </div>
+    </div>`;
+
+    if (doc) {
+      html += `<div class="drawer-section">
+        <h4>Tailored resume</h4>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
+          <a class="btn btn-ghost btn-sm" href="/api/documents/${job.job_id}/download?format=txt&kind=resume">↓ Text</a>
+          <a class="btn btn-ghost btn-sm" href="/api/documents/${job.job_id}/download?format=html&kind=resume">↓ HTML</a>
+          <a class="btn btn-ghost btn-sm" href="/api/documents/${job.job_id}/download?format=pdf&kind=resume">↓ PDF</a>
+          <a class="btn btn-ghost btn-sm" href="/api/documents/${job.job_id}/download?format=docx&kind=resume">↓ DOCX</a>
+        </div>
+        <div style="font-size:11.5px; color:var(--muted); margin-bottom:8px;">
+          Coverage: <strong>${(doc.keyword_coverage*100).toFixed(0)}%</strong> ·
+          Matched: ${doc.matched_keywords.length} · Missing: ${doc.missing_keywords.length}
+        </div>
+        <div class="resume-preview">${escapeHtml(doc.resume_text)}</div>
+      </div>`;
+      html += `<div class="drawer-section">
+        <h4>Cover letter</h4>
+        <div style="display:flex; gap:6px; margin-bottom:10px;">
+          <a class="btn btn-ghost btn-sm" href="/api/documents/${job.job_id}/download?format=txt&kind=cover">↓ Text</a>
+          <a class="btn btn-ghost btn-sm" href="/api/documents/${job.job_id}/download?format=pdf&kind=cover">↓ PDF</a>
+        </div>
+        <div class="resume-preview">${escapeHtml(doc.cover_letter_text)}</div>
+      </div>`;
+    } else {
+      html += `<div class="drawer-section"><h4>Tailored documents</h4>
+        <div class="empty" style="padding:14px;">Not yet — agents are still working.</div></div>`;
+    }
+
+    root.innerHTML = html;
+    root.querySelectorAll('button[data-status]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const newStatus = b.dataset.status;
+        try {
+          await api('POST', `/api/jobs/${job.job_id}/status`, { status: newStatus });
+          job.status = newStatus;
+          renderDrawerBody(job);
+          await renderJobs();
+          await renderStatus();
+          toast(`Moved to ${newStatus}`, 'good');
+        } catch (e) { toast(e.message, 'bad'); }
+      });
+    });
   }
 
-  // ── thought stream ─────────────────────────────────────────────────────────
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  /* ────── thought stream ─────────────────────────────────────── */
+  let streamCount = 0;
   function openStream() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws/stream`);
-    ws.onmessage = ev => {
+    ws.onmessage = (ev) => {
       const { agent, thought } = JSON.parse(ev.data);
-      const ul = document.getElementById('stream-list');
+      const ul = $('stream-list');
       const li = document.createElement('li');
-      li.innerHTML = `<span class="sw">${agent}</span>${thought}`;
+      li.className = 'new';
+      li.innerHTML = `<span class="sa">${agent}</span><span class="st">${escapeHtml(thought)}</span>`;
       ul.insertBefore(li, ul.firstChild);
       while (ul.children.length > 200) ul.removeChild(ul.lastChild);
+      streamCount++;
+      $('stream-count').textContent = streamCount;
     };
     ws.onclose = () => setTimeout(openStream, 2000);
   }
 
-  // ── polling during hunt ────────────────────────────────────────────────────
-  let pollTimer = null;
-  function startPolling() {
-    pollTimer = setInterval(refreshDashboard, 3000);
-  }
-
-  // ── init ───────────────────────────────────────────────────────────────────
+  /* ────── boot ───────────────────────────────────────────────── */
   (async () => {
-    const s = await api('GET', '/api/status').catch(() => ({ hunt_status: 'idle', has_profile: false }));
-    updateHuntBadge(s.hunt_status);
+    try {
+      const s = await api('GET', '/api/status');
+      const pill = $('hunt-pill');
+      pill.textContent = s.hunt_status;
+      pill.className = 'pill ' + s.hunt_status;
 
-    if (s.hunt_status !== 'idle') {
-      // Resume already started — skip wizard, show dashboard
-      document.getElementById('wizard').style.display = 'none';
-      document.getElementById('btn-refresh').style.display = '';
-      document.getElementById('dashboard').classList.add('visible');
-      openStream();
-      if (s.hunt_status === 'running') startPolling();
-      else refreshDashboard();
+      if (s.has_profile && s.hunt_status !== 'idle') {
+        switchToDashboard();
+      } else if (s.has_profile && s.jobs_count > 0) {
+        switchToDashboard();
+      }
+    } catch (e) {
+      console.error(e);
     }
   })();
   </script>

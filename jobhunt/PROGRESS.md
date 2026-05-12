@@ -114,6 +114,40 @@ parsing recorded HTTP responses.
 
 ---
 
+## Phase 2.6 — De-stub + Premium UI  ·  ✅ shipped
+
+- [x] **SQLite persistence** (`jobhunt/dashboard/persistence.py`):
+      single-row snapshot store; profile / jobs / applications / approvals /
+      documents / plan / ATS config / hunt status survive server restart.
+      `--db-path` CLI flag on `serve`. 9 tests.
+- [x] **Live ATS sources from onboarding**: 3rd wizard step accepts
+      Greenhouse / Lever / Ashby handles; background runner builds real
+      adapters from them (falls back to fixtures only when empty).
+- [x] **Tailored document storage + downloads**:
+      `state.documents[job_id]` keeps full resume + cover-letter text;
+      `GET /api/documents/{job_id}` returns them; download endpoint streams
+      TXT / HTML / PDF (WeasyPrint) / DOCX (python-docx) with graceful
+      503 when optional deps missing.
+- [x] **Manual pipeline transitions**: `POST /api/jobs/{job_id}/status`
+      moves a job between Saved / Applied / Assessment / Interview / Offer /
+      Closed.  Auto-advances Saved→Applied when matching resume approved.
+- [x] **Reset endpoint** (`POST /api/hunt/reset`): clears profile + state
+      and returns to onboarding (blocked while running).
+- [x] **Premium UI rebuild** (`client.html`):
+      Inter font, glassmorphism cards, animated gradient mesh background,
+      timeline plan stepper, slide-in detail drawer with download buttons
+      and status transition row, toast notifications, custom scrollbars,
+      brand logo, animated chip inputs, premium step dots.
+- [x] **Onboarding flow**: 5 steps (You → Resume → Sources → Tune → Launch);
+      smooth step transitions; skip button on optional ATS step.
+- [x] **Drawer**: clicking a job card opens a detail panel with the tailored
+      resume / cover letter preview, multi-format downloads, status buttons,
+      and "Open job posting" link.
+- [x] 26 new tests (9 persistence + 17 dashboard API endpoints).
+      Total: 158 tests passing.
+
+---
+
 ## Phase 2.5 — Onboarding + Live Pipeline  ·  ✅ shipped
 
 - [x] Multi-step onboarding wizard in the dashboard (4 steps):

@@ -274,3 +274,170 @@ def test_get_jobs_populated():
     r = client.get("/api/jobs")
     assert len(r.json()["jobs"]) == 1
     assert r.json()["jobs"][0]["title"] == "Backend"
+
+
+# ── /api/jobs/{id}/status (manual pipeline transitions) ──────────────────────
+
+def test_job_status_transition_ok():
+    state, client = _client()
+    state.jobs = [{"job_id": "j-1", "title": "X", "company": "Acme",
+                   "status": "Saved"}]
+    r = client.post("/api/jobs/j-1/status", json={"status": "Applied"})
+    assert r.status_code == 200
+    assert state.jobs[0]["status"] == "Applied"
+
+
+def test_job_status_invalid_400():
+    state, client = _client()
+    state.jobs = [{"job_id": "j-1", "status": "Saved"}]
+    r = client.post("/api/jobs/j-1/status", json={"status": "Nonsense"})
+    assert r.status_code == 400
+
+
+def test_job_status_unknown_job_404():
+    _, client = _client()
+    r = client.post("/api/jobs/missing/status", json={"status": "Applied"})
+    assert r.status_code == 404
+
+
+def test_job_status_publishes_to_bus():
+    state, client = _client()
+    state.jobs = [{"job_id": "j-1", "title": "T", "company": "C", "status": "Saved"}]
+    client.post("/api/jobs/j-1/status", json={"status": "Interview"})
+    history = state.bus.history()
+    assert any(h.get("agent") == "tracking" for h in history)
+
+
+# ── /api/onboarding/ats ──────────────────────────────────────────────────────
+
+def test_save_ats_from_csv_string():
+    state, client = _client()
+    r = client.post("/api/onboarding/ats", json={
+        "greenhouse_tokens": "stripe, airtable",
+        "lever_slugs": "netflix",
+        "ashby_slugs": "",
+    })
+    assert r.status_code == 200
+    assert state.ats_config["greenhouse_tokens"] == ["stripe", "airtable"]
+    assert state.ats_config["lever_slugs"] == ["netflix"]
+    assert state.ats_config["ashby_slugs"] == []
+
+
+def test_save_ats_from_list():
+    state, client = _client()
+    client.post("/api/onboarding/ats", json={
+        "greenhouse_tokens": ["stripe", "airtable"],
+        "lever_slugs": [],
+        "ashby_slugs": ["vercel"],
+    })
+    assert state.ats_config["greenhouse_tokens"] == ["stripe", "airtable"]
+    assert state.ats_config["ashby_slugs"] == ["vercel"]
+
+
+def test_status_includes_ats_flag():
+    state, client = _client()
+    r = client.get("/api/status")
+    assert r.json()["ats_configured"] is False
+    client.post("/api/onboarding/ats", json={"greenhouse_tokens": ["stripe"]})
+    assert client.get("/api/status").json()["ats_configured"] is True
+
+
+# ── /api/documents/{id} (download) ───────────────────────────────────────────
+
+def _seed_doc(state):
+    state.documents["j-1"] = {
+        "job_id": "j-1", "company": "Acme", "title": "Backend",
+        "url": "https://example.com/jobs/1",
+        "resume_text": "Ada Lovelace\nada@example.com\n\nHighlights:\n- python",
+        "cover_letter_text": "Dear Acme team,\nI'm applying for Backend.",
+        "keyword_coverage": 0.8,
+        "matched_keywords": ["python"], "missing_keywords": ["go"],
+        "bullets": [{"text": "x", "evidence_id": "skill:0"}],
+    }
+
+
+def test_get_document_ok():
+    state, client = _client()
+    _seed_doc(state)
+    r = client.get("/api/documents/j-1")
+    assert r.status_code == 200
+    assert r.json()["document"]["company"] == "Acme"
+
+
+def test_get_document_404():
+    _, client = _client()
+    r = client.get("/api/documents/missing")
+    assert r.status_code == 404
+
+
+def test_download_txt():
+    state, client = _client()
+    _seed_doc(state)
+    r = client.get("/api/documents/j-1/download?format=txt&kind=resume")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert b"Ada Lovelace" in r.content
+
+
+def test_download_html():
+    state, client = _client()
+    _seed_doc(state)
+    r = client.get("/api/documents/j-1/download?format=html&kind=resume")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert b"Acme" in r.content
+
+
+def test_download_cover_letter():
+    state, client = _client()
+    _seed_doc(state)
+    r = client.get("/api/documents/j-1/download?format=txt&kind=cover")
+    assert r.status_code == 200
+    assert b"Dear Acme" in r.content
+
+
+def test_download_unknown_kind_400():
+    state, client = _client()
+    _seed_doc(state)
+    r = client.get("/api/documents/j-1/download?format=txt&kind=nope")
+    assert r.status_code == 400
+
+
+def test_download_missing_doc_404():
+    _, client = _client()
+    r = client.get("/api/documents/missing/download")
+    assert r.status_code == 404
+
+
+# ── /api/hunt/reset ──────────────────────────────────────────────────────────
+
+def test_hunt_reset_clears_state():
+    state, client = _client()
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    state.jobs = [{"job_id": "j-1", "status": "Saved"}]
+    state.documents["j-1"] = {"company": "X"}
+
+    r = client.post("/api/hunt/reset", json={})
+    assert r.status_code == 200
+    assert state.user_profile is None
+    assert state.jobs == []
+    assert state.documents == {}
+
+
+def test_hunt_reset_blocked_while_running():
+    state, client = _client()
+    state.hunt_status = "running"
+    r = client.post("/api/hunt/reset", json={})
+    assert r.status_code == 409
+
+
+# ── approval auto-advances job to "Applied" ──────────────────────────────────
+
+def test_approve_marks_matching_job_as_applied():
+    state, client = _client()
+    state.jobs = [{"job_id": "j-1", "title": "T", "company": "C", "status": "Saved"}]
+    req = state.approval_queue.submit(
+        job_id="j-1", document_id="d-1", company="C", title="T",
+    )
+    client.post(f"/api/approve/{req.request_id}", params={"decision": "approve"})
+    assert state.jobs[0]["status"] == "Applied"
