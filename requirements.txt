@@ -3,3 +3,9 @@ pandas>=2.0
 rich>=13.0
 click>=8.1
 matplotlib>=3.7
+
+# jobhunt (multi-agent job hunting platform) — core is stdlib-only; these
+# are needed only for the dashboard server and the test suite.
+fastapi>=0.110
+uvicorn>=0.27
+pytest>=8.0

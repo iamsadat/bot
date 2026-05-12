@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>JobHunt</title>
+  <style>
+    :root {
+      --bg: #0b0d11;
+      --panel: #141821;
+      --border: #232838;
+      --fg: #e7e9ee;
+      --muted: #8b93a7;
+      --accent: #6ea8fe;
+      --good: #4ade80;
+      --bad: #f87171;
+      --warn: #fbbf24;
+    }
+    [data-theme="light"] {
+      --bg: #f7f7f9;
+      --panel: #ffffff;
+      --border: #e3e6ec;
+      --fg: #1b1d22;
+      --muted: #5c6473;
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+        Roboto, "Helvetica Neue", Arial, sans-serif; }
+    header { display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: var(--bg); z-index: 5; }
+    header h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
+    header .actions button { background: transparent; color: var(--fg);
+      border: 1px solid var(--border); padding: 6px 10px; border-radius: 8px;
+      cursor: pointer; font: inherit; }
+    header .actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    main { display: grid; gap: 12px; padding: 12px;
+      grid-template-columns: 1fr; }
+    @media (min-width: 900px) {
+      main { grid-template-columns: 320px 1fr 320px;
+        grid-template-areas: "plan kanban stream"; }
+      .plan { grid-area: plan; }
+      .kanban { grid-area: kanban; }
+      .stream { grid-area: stream; }
+    }
+    .panel { background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px; }
+    .panel h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--muted); }
+    .step { border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px; margin-bottom: 6px; }
+    .step .agent { font-weight: 600; }
+    .step .status { font-size: 11px; padding: 2px 6px; border-radius: 999px;
+      border: 1px solid var(--border); margin-left: 8px; color: var(--muted); }
+    .step.done .status { color: var(--good); border-color: var(--good); }
+    .step.failed .status { color: var(--bad); border-color: var(--bad); }
+    .step.running .status { color: var(--warn); border-color: var(--warn); }
+    .kanban-cols { display: grid; gap: 8px;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+    .col h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); }
+    .card { border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px; margin-bottom: 6px; }
+    .card .meta { color: var(--muted); font-size: 12px; }
+    .stream ul { list-style: none; margin: 0; padding: 0; max-height: 70vh;
+      overflow-y: auto; }
+    .stream li { border-bottom: 1px solid var(--border); padding: 6px 0;
+      font-size: 12px; }
+    .stream li .who { color: var(--accent); font-weight: 600; margin-right: 6px; }
+    footer { padding: 12px 16px; color: var(--muted); font-size: 12px;
+      text-align: center; }
+    button.approve { background: var(--good); color: #0b0d11; border: none;
+      padding: 4px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
+    button.reject { background: var(--bad); color: #0b0d11; border: none;
+      padding: 4px 10px; border-radius: 6px; cursor: pointer; font: inherit;
+      margin-left: 4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>JobHunt</h1>
+    <div class="actions">
+      <button id="theme" aria-label="toggle theme">Theme</button>
+      <button id="refresh" aria-label="refresh">Refresh</button>
+    </div>
+  </header>
+  <main>
+    <section class="panel plan" aria-label="Planning studio">
+      <h2>Plan</h2>
+      <div id="plan">Loading…</div>
+    </section>
+    <section class="panel kanban" aria-label="Application pipeline">
+      <h2>Pipeline</h2>
+      <div id="kanban" class="kanban-cols"></div>
+    </section>
+    <section class="panel stream" aria-label="Live agent thought stream">
+      <h2>Thought stream</h2>
+      <ul id="stream"></ul>
+    </section>
+  </main>
+  <footer>Multi-agent job hunting platform — see ARCHITECTURE.md.</footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    document.getElementById("theme").addEventListener("click", () => {
+      const html = document.documentElement;
+      html.dataset.theme = html.dataset.theme === "dark" ? "light" : "dark";
+    });
+    document.getElementById("refresh").addEventListener("click", refresh);
+
+    async function refresh() {
+      await Promise.all([loadPlan(), loadJobs()]);
+    }
+    async function loadPlan() {
+      const r = await fetch("/api/plan").then((r) => r.json());
+      const root = $("plan");
+      if (!r.plan) { root.textContent = "(no plan yet)"; return; }
+      root.innerHTML = "";
+      for (const m of r.plan.milestones) {
+        const li = document.createElement("div");
+        li.textContent = "• " + m;
+        li.style.color = "var(--muted)";
+        li.style.fontSize = "12px";
+        root.appendChild(li);
+      }
+      for (const s of r.plan.steps) {
+        const div = document.createElement("div");
+        div.className = "step " + s.status;
+        div.innerHTML = `<span class="agent">${s.agent}</span> — ${s.action}
+          <span class="status">${s.status}</span>`;
+        root.appendChild(div);
+      }
+    }
+    async function loadJobs() {
+      const r = await fetch("/api/jobs").then((r) => r.json());
+      const cols = { Saved: [], Applied: [], Assessment: [], Interview: [], Offer: [], Closed: [] };
+      for (const j of r.jobs) {
+        const c = j.status || "Saved";
+        (cols[c] || cols.Saved).push(j);
+      }
+      const root = $("kanban"); root.innerHTML = "";
+      for (const [name, items] of Object.entries(cols)) {
+        const col = document.createElement("div"); col.className = "col";
+        const h = document.createElement("h3"); h.textContent = `${name} (${items.length})`;
+        col.appendChild(h);
+        for (const j of items) {
+          const card = document.createElement("div"); card.className = "card";
+          card.innerHTML = `<div><strong>${j.title}</strong></div>
+            <div class="meta">${j.company} • ${j.location}</div>
+            <div class="meta">relevance ${(j.relevance_score ?? 0).toFixed(2)}</div>
+            <div>
+              <button class="approve" data-id="${j.job_id}">Approve</button>
+              <button class="reject" data-id="${j.job_id}">Reject</button>
+            </div>`;
+          col.appendChild(card);
+        }
+        root.appendChild(col);
+      }
+      root.querySelectorAll("button.approve").forEach((b) =>
+        b.addEventListener("click", () => approve(b.dataset.id, "approve")));
+      root.querySelectorAll("button.reject").forEach((b) =>
+        b.addEventListener("click", () => approve(b.dataset.id, "reject")));
+    }
+    async function approve(jobId, decision) {
+      await fetch(`/api/approve/${encodeURIComponent(jobId)}?decision=${decision}`,
+        { method: "POST" });
+    }
+    function openStream() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${location.host}/ws/stream`);
+      ws.onmessage = (ev) => {
+        const { agent, thought } = JSON.parse(ev.data);
+        const ul = $("stream");
+        const li = document.createElement("li");
+        li.innerHTML = `<span class="who">${agent}</span>${thought}`;
+        ul.insertBefore(li, ul.firstChild);
+        while (ul.children.length > 200) ul.removeChild(ul.lastChild);
+      };
+      ws.onclose = () => setTimeout(openStream, 1000);
+    }
+    refresh();
+    openStream();
+  </script>
+</body>
+</html>
