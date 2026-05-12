@@ -147,10 +147,20 @@ def cmd_serve(args) -> int:
               file=sys.stderr)
         return 1
 
-    store = TraceStore()
+    from jobhunt.dashboard.persistence import DashboardStore
+
+    trace = TraceStore()
     bus = ThoughtBus()
-    state = DashboardState(trace_store=store, bus=bus)
-    app = __import__("jobhunt.dashboard.server", fromlist=["create_app"]).create_app(state)
+    db = DashboardStore(args.db_path)
+    state = DashboardState(trace_store=trace, bus=bus, store=db)
+    state.restore()
+    if state.user_profile:
+        print(f"  Restored profile: {state.user_profile.name} "
+              f"({len(state.jobs)} jobs, hunt_status={state.hunt_status})")
+    app = __import__(
+        "jobhunt.dashboard.server", fromlist=["create_app"]
+    ).create_app(state)
+    print(f"\n  JobHunt dashboard running at http://{args.host}:{args.port}\n")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
 
@@ -171,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     p_serve = sub.add_parser("serve", help="run the dashboard")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", default=8765, type=int)
+    p_serve.add_argument("--db-path", default="jobhunt.db",
+                         help="SQLite path for dashboard persistence")
     args = parser.parse_args(argv)
     if args.cmd == "demo":
         return cmd_demo(args)
