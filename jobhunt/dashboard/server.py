@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
 from jobhunt.models import JobHuntPlan
 from jobhunt.trace import ThoughtBus, TraceStore
 
@@ -35,7 +36,7 @@ class DashboardState:
     plan: JobHuntPlan | None = None
     jobs: list[dict] = field(default_factory=list)
     applications: list[dict] = field(default_factory=list)
-    approvals: dict[str, str] = field(default_factory=dict)  # job_id -> status
+    approval_queue: ApprovalQueue = field(default_factory=ApprovalQueue)
 
 
 def create_app(state: DashboardState):
@@ -80,12 +81,42 @@ def create_app(state: DashboardState):
         traces = list(reversed(traces))[:limit]
         return {"traces": [_trace_to_dict(t) for t in traces]}
 
-    @app.post("/api/approve/{job_id}")
-    def approve(job_id: str, decision: str = "approve") -> dict:
-        if decision not in ("approve", "reject", "edit"):
+    @app.get("/api/approvals")
+    def list_approvals(state_filter: str | None = None) -> dict:
+        items = state.approval_queue.all()
+        if state_filter:
+            items = [r for r in items if r.state.value == state_filter]
+        return {"approvals": [r.to_dict() for r in items]}
+
+    @app.post("/api/approve/{identifier}")
+    def approve(identifier: str, decision: str = "approve",
+                reviewer: str = "", notes: str = "") -> dict:
+        verb_to_state = {
+            "approve": ApprovalState.APPROVED,
+            "reject": ApprovalState.REJECTED,
+            "edit": ApprovalState.EDIT_REQUESTED,
+        }
+        if decision not in verb_to_state:
             raise HTTPException(status_code=400, detail="bad decision")
-        state.approvals[job_id] = decision
-        return {"ok": True, "job_id": job_id, "decision": decision}
+        # Accept either request_id (preferred) or job_id (UI back-compat).
+        req = state.approval_queue.get(identifier)
+        if req is None:
+            pending = [r for r in state.approval_queue.by_job(identifier)
+                       if r.state == ApprovalState.PENDING]
+            if pending:
+                req = pending[0]
+        if req is None:
+            raise HTTPException(status_code=404, detail="unknown request")
+        try:
+            req = state.approval_queue.transition(
+                req.request_id, verb_to_state[decision],
+                reviewer=reviewer, notes=notes,
+            )
+        except InvalidTransition as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        state.bus.publish("approval", req.job_id,
+                          f"{req.company} → {decision} by {reviewer or 'anon'}")
+        return {"ok": True, "request": req.to_dict()}
 
     @app.websocket("/ws/stream")
     async def stream(ws: WebSocket) -> None:
