@@ -63,12 +63,21 @@ class TraceStore:
 # ------------------------------------------------------------- thought bus
 
 class ThoughtBus:
-    """Async fan-out for reasoning thoughts. Backs the WebSocket stream."""
+    """Async fan-out for reasoning thoughts. Backs the WebSocket stream.
+
+    ``publish`` may be called from a worker thread (orchestrator runs via
+    ``asyncio.to_thread``).  Call ``set_loop`` once at server startup so
+    cross-thread publishes are routed safely via ``call_soon_threadsafe``.
+    """
 
     def __init__(self) -> None:
         self._subscribers: list[asyncio.Queue[dict]] = []
         self._history: list[dict] = []
         self._max_history = 500
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
 
     def publish(self, agent: str, task_id: str, thought: str) -> None:
         payload = {"agent": agent, "task_id": task_id, "thought": redact(thought)}
@@ -77,8 +86,11 @@ class ThoughtBus:
             self._history = self._history[-self._max_history:]
         for q in list(self._subscribers):
             try:
-                q.put_nowait(payload)
-            except asyncio.QueueFull:
+                if self._loop is not None and self._loop.is_running():
+                    self._loop.call_soon_threadsafe(q.put_nowait, payload)
+                else:
+                    q.put_nowait(payload)
+            except Exception:
                 # Drop slow subscribers rather than block the agent.
                 pass
 

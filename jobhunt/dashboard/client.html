@@ -5,216 +5,817 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>JobHunt</title>
   <style>
+    /* ---- design tokens -------------------------------------------------- */
     :root {
       --bg: #0b0d11;
       --panel: #141821;
+      --panel2: #1a1f2e;
       --border: #232838;
       --fg: #e7e9ee;
       --muted: #8b93a7;
       --accent: #6ea8fe;
+      --accent2: #a78bfa;
       --good: #4ade80;
       --bad: #f87171;
       --warn: #fbbf24;
     }
     [data-theme="light"] {
-      --bg: #f7f7f9;
+      --bg: #f3f4f8;
       --panel: #ffffff;
-      --border: #e3e6ec;
+      --panel2: #f7f8fc;
+      --border: #dde1ea;
       --fg: #1b1d22;
       --muted: #5c6473;
       --accent: #2563eb;
+      --accent2: #7c3aed;
     }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
-      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-        Roboto, "Helvetica Neue", Arial, sans-serif; }
-    header { display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 16px; border-bottom: 1px solid var(--border);
-      position: sticky; top: 0; background: var(--bg); z-index: 5; }
-    header h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
-    header .actions button { background: transparent; color: var(--fg);
-      border: 1px solid var(--border); padding: 6px 10px; border-radius: 8px;
-      cursor: pointer; font: inherit; }
-    header .actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    main { display: grid; gap: 12px; padding: 12px;
-      grid-template-columns: 1fr; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+
+    /* ---- header --------------------------------------------------------- */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: var(--bg); z-index: 10;
+    }
+    header h1 { font-size: 15px; font-weight: 700; letter-spacing: 0.03em; }
+    .header-right { display: flex; gap: 8px; align-items: center; }
+    .badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
+      border: 1px solid var(--border); color: var(--muted);
+    }
+    .badge.running { color: var(--warn); border-color: var(--warn); animation: pulse 1.5s infinite; }
+    .badge.complete { color: var(--good); border-color: var(--good); }
+    .badge.failed { color: var(--bad); border-color: var(--bad); }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+    .btn-ghost {
+      background: transparent; color: var(--fg); border: 1px solid var(--border);
+      padding: 5px 10px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px;
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ---- wizard ---------------------------------------------------------- */
+    #wizard {
+      min-height: calc(100vh - 44px);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 32px 16px 64px;
+    }
+    .wizard-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 16px; width: 100%; max-width: 560px; overflow: hidden;
+    }
+    .wizard-progress {
+      display: flex; border-bottom: 1px solid var(--border);
+    }
+    .w-step {
+      flex: 1; padding: 12px 8px; text-align: center; font-size: 12px;
+      color: var(--muted); border-bottom: 2px solid transparent; cursor: default;
+    }
+    .w-step.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .w-step.done { color: var(--good); border-bottom-color: var(--good); }
+    .wizard-body { padding: 28px 28px 24px; }
+    .wizard-body h2 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+    .wizard-body p { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+    .step-panel { display: none; }
+    .step-panel.active { display: block; }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+      margin-bottom: 6px; }
+    .form-group input[type="text"],
+    .form-group input[type="email"],
+    .form-group input[type="number"],
+    .form-group textarea,
+    .form-group select {
+      width: 100%; padding: 9px 12px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px; color: var(--fg);
+      font: inherit; font-size: 13px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+      border-color: var(--accent);
+    }
+    .form-group textarea { resize: vertical; min-height: 140px; }
+
+    /* chip inputs */
+    .chip-input {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 8px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; min-height: 44px; cursor: text;
+    }
+    .chip-input:focus-within { border-color: var(--accent); }
+    .chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--panel2); border: 1px solid var(--border);
+      padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    }
+    .chip .chip-remove {
+      cursor: pointer; color: var(--muted); font-size: 14px; line-height: 1;
+      border: none; background: none; padding: 0; display: flex;
+    }
+    .chip.skill { border-color: var(--accent2); color: var(--accent2); }
+    .chip-input input {
+      border: none; background: transparent; color: var(--fg);
+      font: inherit; font-size: 13px; outline: none; min-width: 80px; flex: 1;
+    }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* toggle */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0;
+    }
+    .toggle-row label { font-size: 13px; }
+    .toggle {
+      position: relative; width: 40px; height: 22px; cursor: pointer;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute; inset: 0; background: var(--border);
+      border-radius: 999px; transition: background 0.2s;
+    }
+    .toggle input:checked + .toggle-track { background: var(--accent); }
+    .toggle-thumb {
+      position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+      background: white; border-radius: 50%; transition: transform 0.2s;
+    }
+    .toggle input:checked ~ .toggle-thumb { transform: translateX(18px); }
+
+    /* wizard footer */
+    .wizard-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 28px; border-top: 1px solid var(--border);
+      background: var(--panel2);
+    }
+    .btn-primary {
+      background: var(--accent); color: #0b0d11; border: none;
+      padding: 9px 22px; border-radius: 8px; cursor: pointer; font: inherit;
+      font-size: 13px; font-weight: 700; transition: opacity 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-secondary {
+      background: transparent; color: var(--muted); border: 1px solid var(--border);
+      padding: 9px 18px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px;
+    }
+    .btn-secondary:hover { border-color: var(--fg); color: var(--fg); }
+
+    /* review step */
+    .review-block {
+      background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+    }
+    .review-block h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--muted); margin-bottom: 8px; }
+    .review-block .rv { font-size: 13px; color: var(--fg); margin-bottom: 3px; }
+    .launch-btn {
+      width: 100%; padding: 14px; background: var(--accent); color: #0b0d11;
+      border: none; border-radius: 10px; cursor: pointer; font: inherit;
+      font-size: 15px; font-weight: 700; margin-top: 8px;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .launch-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .launch-btn:active { transform: translateY(0); }
+
+    /* skills extracted panel */
+    .extracted-box {
+      background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px; margin-top: 10px; display: none;
+    }
+    .extracted-box.visible { display: block; }
+    .extracted-box .et { font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--muted); margin-bottom: 8px; }
+
+    /* ---- main dashboard ------------------------------------------------- */
+    #dashboard { display: none; flex-direction: column; }
+    #dashboard.visible { display: flex; }
+
+    .dash-grid {
+      display: grid; gap: 12px; padding: 12px;
+      grid-template-columns: 1fr;
+    }
     @media (min-width: 900px) {
-      main { grid-template-columns: 320px 1fr 320px;
-        grid-template-areas: "plan kanban stream"; }
-      .plan { grid-area: plan; }
+      .dash-grid {
+        grid-template-columns: 280px 1fr 280px;
+        grid-template-areas: "left-col kanban right-col";
+      }
+      .left-col { grid-area: left-col; display: flex; flex-direction: column; gap: 12px; }
       .kanban { grid-area: kanban; }
-      .stream { grid-area: stream; }
+      .right-col { grid-area: right-col; display: flex; flex-direction: column; gap: 12px; }
     }
-    .panel { background: var(--panel); border: 1px solid var(--border);
-      border-radius: 12px; padding: 12px; }
-    .panel h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase;
-      letter-spacing: 0.08em; color: var(--muted); }
-    .step { border: 1px solid var(--border); border-radius: 8px;
-      padding: 8px; margin-bottom: 6px; }
-    .step .agent { font-weight: 600; }
-    .step .status { font-size: 11px; padding: 2px 6px; border-radius: 999px;
-      border: 1px solid var(--border); margin-left: 8px; color: var(--muted); }
-    .step.done .status { color: var(--good); border-color: var(--good); }
-    .step.failed .status { color: var(--bad); border-color: var(--bad); }
-    .step.running .status { color: var(--warn); border-color: var(--warn); }
+
+    .panel {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px;
+    }
+    .panel-title {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); margin-bottom: 10px; font-weight: 600;
+    }
+
+    /* plan steps */
+    .plan-step {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 8px 0; border-bottom: 1px solid var(--border);
+    }
+    .plan-step:last-child { border-bottom: none; }
+    .step-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0; margin-top: 5px;
+      background: var(--border);
+    }
+    .step-dot.done { background: var(--good); }
+    .step-dot.running { background: var(--warn); animation: pulse 1s infinite; }
+    .step-dot.failed { background: var(--bad); }
+    .step-info .step-agent { font-size: 13px; font-weight: 600; }
+    .step-info .step-action { font-size: 11px; color: var(--muted); }
+
+    /* kanban */
     .kanban-cols { display: grid; gap: 8px;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
-    .col h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); }
-    .card { border: 1px solid var(--border); border-radius: 8px;
-      padding: 8px; margin-bottom: 6px; }
-    .card .meta { color: var(--muted); font-size: 12px; }
-    .stream ul { list-style: none; margin: 0; padding: 0; max-height: 70vh;
-      overflow-y: auto; }
-    .stream li { border-bottom: 1px solid var(--border); padding: 6px 0;
-      font-size: 12px; }
-    .stream li .who { color: var(--accent); font-weight: 600; margin-right: 6px; }
-    footer { padding: 12px 16px; color: var(--muted); font-size: 12px;
-      text-align: center; }
-    button.approve { background: var(--good); color: #0b0d11; border: none;
-      padding: 4px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
-    button.reject { background: var(--bad); color: #0b0d11; border: none;
-      padding: 4px 10px; border-radius: 6px; cursor: pointer; font: inherit;
-      margin-left: 4px; }
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+    .k-col h3 { font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--muted); margin-bottom: 8px; }
+    .job-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 9px; margin-bottom: 6px; background: var(--panel2);
+    }
+    .job-card .jt { font-size: 13px; font-weight: 600; line-height: 1.3; }
+    .job-card .jm { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .job-card .jtags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px;
+      background: var(--panel); border: 1px solid var(--border); }
+    .tag.remote { color: var(--good); border-color: var(--good); }
+    .job-card a { color: var(--accent); text-decoration: none; font-size: 11px; }
+
+    /* thought stream */
+    .stream-list { list-style: none; max-height: 320px; overflow-y: auto; }
+    .stream-list li {
+      padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12px;
+    }
+    .stream-list li:last-child { border-bottom: none; }
+    .sw { color: var(--accent); font-weight: 600; margin-right: 5px; }
+
+    /* approvals */
+    .approval-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px; margin-bottom: 8px; background: var(--panel2);
+    }
+    .approval-card .ac-title { font-weight: 600; font-size: 13px; }
+    .approval-card .ac-co { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+    .approval-card .ac-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+    button.approve {
+      background: var(--good); color: #0b0d11; border: none;
+      padding: 4px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px;
+    }
+    button.reject {
+      background: var(--bad); color: #0b0d11; border: none;
+      padding: 4px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px;
+      margin-left: 0;
+    }
+    button.edit {
+      background: transparent; color: var(--warn); border: 1px solid var(--warn);
+      padding: 4px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px;
+    }
+
+    /* empty states */
+    .empty {
+      color: var(--muted); font-size: 12px; padding: 12px 0; text-align: center;
+    }
+
+    /* loading spinners inline */
+    .spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    footer { padding: 12px 16px; color: var(--muted); font-size: 11px;
+      text-align: center; border-top: 1px solid var(--border); }
   </style>
 </head>
 <body>
   <header>
     <h1>JobHunt</h1>
-    <div class="actions">
-      <button id="theme" aria-label="toggle theme">Theme</button>
-      <button id="refresh" aria-label="refresh">Refresh</button>
+    <div class="header-right">
+      <span id="hunt-badge" class="badge">idle</span>
+      <button class="btn-ghost" id="btn-theme">Theme</button>
+      <button class="btn-ghost" id="btn-refresh" style="display:none">Refresh</button>
     </div>
   </header>
-  <main>
-    <section class="panel plan" aria-label="Planning studio">
-      <h2>Plan</h2>
-      <div id="plan">Loading…</div>
-    </section>
-    <section class="panel approvals" aria-label="Pending approvals">
-      <h2>Awaiting your approval</h2>
-      <div id="approvals">Loading…</div>
-    </section>
-    <section class="panel kanban" aria-label="Application pipeline">
-      <h2>Pipeline</h2>
-      <div id="kanban" class="kanban-cols"></div>
-    </section>
-    <section class="panel stream" aria-label="Live agent thought stream">
-      <h2>Thought stream</h2>
-      <ul id="stream"></ul>
-    </section>
-  </main>
-  <footer>Multi-agent job hunting platform — see ARCHITECTURE.md.</footer>
+
+  <!-- ===================== ONBOARDING WIZARD ===================== -->
+  <div id="wizard">
+    <div class="wizard-card">
+      <div class="wizard-progress">
+        <div class="w-step active" id="wp-1">1 · You</div>
+        <div class="w-step" id="wp-2">2 · Resume</div>
+        <div class="w-step" id="wp-3">3 · Preferences</div>
+        <div class="w-step" id="wp-4">4 · Launch</div>
+      </div>
+      <div class="wizard-body">
+
+        <!-- Step 1: Basic info -->
+        <div class="step-panel active" id="step-1">
+          <h2>Let's get started</h2>
+          <p>Tell us who you are and what kind of role you're hunting for.</p>
+          <div class="form-group">
+            <label>Full name</label>
+            <input type="text" id="f-name" placeholder="Ada Lovelace" />
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="f-email" placeholder="ada@example.com" />
+          </div>
+          <div class="form-group">
+            <label>Target roles <span class="hint" style="text-transform:none;letter-spacing:0">(press Enter to add)</span></label>
+            <div class="chip-input" id="roles-input">
+              <input type="text" id="roles-text" placeholder="e.g. backend engineer" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Preferred locations <span class="hint" style="text-transform:none;letter-spacing:0">(press Enter to add)</span></label>
+            <div class="chip-input" id="locs-input">
+              <input type="text" id="locs-text" placeholder="e.g. Remote, San Francisco" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Resume -->
+        <div class="step-panel" id="step-2">
+          <h2>Your background</h2>
+          <p>Paste your current resume text. We'll extract skills automatically — this is just a reference, not what we submit.</p>
+          <div class="form-group">
+            <label>Resume text</label>
+            <textarea id="f-resume" placeholder="Paste your resume here…"></textarea>
+          </div>
+          <button class="btn-secondary" id="btn-extract" style="margin-bottom:12px">
+            Extract skills from resume
+          </button>
+          <div class="extracted-box" id="extracted-box">
+            <div class="et">Skills extracted from your resume</div>
+            <div class="chip-input" id="skills-extracted"></div>
+            <p class="hint" style="margin-top:8px">You can add or remove skills — these train the matching engine.</p>
+          </div>
+        </div>
+
+        <!-- Step 3: Preferences -->
+        <div class="step-panel" id="step-3">
+          <h2>Preferences</h2>
+          <p>Fine-tune the hunt. All optional — sensible defaults apply.</p>
+          <div class="form-group">
+            <label>Minimum salary (USD / year)</label>
+            <input type="number" id="f-salary" placeholder="e.g. 150000" step="5000" />
+          </div>
+          <div class="toggle-row">
+            <label>Open to remote roles</label>
+            <label class="toggle">
+              <input type="checkbox" id="f-remote" checked />
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+          <div class="form-group" style="margin-top:14px">
+            <label>Weekly application target</label>
+            <input type="number" id="f-weekly" placeholder="10" min="1" max="50" value="10" />
+          </div>
+          <div class="form-group">
+            <label>Skills <span class="hint" style="text-transform:none;letter-spacing:0">(press Enter to add)</span></label>
+            <div class="chip-input" id="skills-input">
+              <input type="text" id="skills-text" placeholder="e.g. python, redis, kubernetes" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Companies to avoid <span class="hint" style="text-transform:none;letter-spacing:0">(press Enter to add)</span></label>
+            <div class="chip-input" id="veto-input">
+              <input type="text" id="veto-text" placeholder="e.g. Fabrikam" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: Review + launch -->
+        <div class="step-panel" id="step-4">
+          <h2>Ready to hunt</h2>
+          <p>Review your setup and hit Start Hunting — the agents will take it from here.</p>
+          <div id="review-summary"></div>
+          <button class="launch-btn" id="btn-launch">🚀 Start Hunting</button>
+        </div>
+
+      </div><!-- /wizard-body -->
+      <div class="wizard-footer">
+        <button class="btn-secondary" id="btn-back" style="visibility:hidden">Back</button>
+        <button class="btn-primary" id="btn-next">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== MAIN DASHBOARD ===================== -->
+  <div id="dashboard">
+    <div class="dash-grid">
+      <div class="left-col">
+        <section class="panel" aria-label="Execution plan">
+          <div class="panel-title">Plan</div>
+          <div id="plan-body"><div class="empty">Waiting for plan…</div></div>
+        </section>
+        <section class="panel" aria-label="Pending approvals">
+          <div class="panel-title">Awaiting your approval</div>
+          <div id="approvals-body"><div class="empty">Nothing yet.</div></div>
+        </section>
+      </div>
+
+      <section class="panel kanban" aria-label="Job pipeline">
+        <div class="panel-title">Pipeline</div>
+        <div id="kanban-body" class="kanban-cols"></div>
+      </section>
+
+      <div class="right-col">
+        <section class="panel" aria-label="Live thought stream">
+          <div class="panel-title">
+            <span id="stream-spinner" class="spinner"></span>Agent thoughts
+          </div>
+          <ul class="stream-list" id="stream-list"></ul>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <footer>Multi-agent job hunting platform — <a href="ARCHITECTURE.md" style="color:var(--muted)">ARCHITECTURE.md</a></footer>
 
   <script>
-    const $ = (id) => document.getElementById(id);
+  'use strict';
 
-    document.getElementById("theme").addEventListener("click", () => {
-      const html = document.documentElement;
-      html.dataset.theme = html.dataset.theme === "dark" ? "light" : "dark";
+  // ── state ──────────────────────────────────────────────────────────────────
+  const state = {
+    currentStep: 1,
+    name: '', email: '',
+    targetRoles: [], locations: [],
+    skills: [], vetoCompanies: [],
+    resumeText: '',
+    minSalary: null, remoteOk: true, weeklyTarget: 10,
+    huntStatus: 'idle',
+  };
+
+  // ── theme ──────────────────────────────────────────────────────────────────
+  document.getElementById('btn-theme').addEventListener('click', () => {
+    const h = document.documentElement;
+    h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark';
+  });
+
+  // ── chip input helper ──────────────────────────────────────────────────────
+  function makeChipInput(containerId, textId, arr, cls = '') {
+    const container = document.getElementById(containerId);
+    const textInput = document.getElementById(textId);
+
+    function renderChips() {
+      container.querySelectorAll('.chip').forEach(c => c.remove());
+      arr.forEach((val, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip' + (cls ? ' ' + cls : '');
+        chip.innerHTML = `${val}<button class="chip-remove" data-i="${i}" aria-label="remove">×</button>`;
+        container.insertBefore(chip, textInput);
+      });
+    }
+
+    container.addEventListener('click', e => {
+      if (e.target.dataset.i !== undefined) {
+        arr.splice(Number(e.target.dataset.i), 1);
+        renderChips();
+      } else {
+        textInput.focus();
+      }
     });
-    document.getElementById("refresh").addEventListener("click", refresh);
 
-    async function refresh() {
-      await Promise.all([loadPlan(), loadJobs(), loadApprovals()]);
-    }
-    async function loadApprovals() {
-      const r = await fetch("/api/approvals?state_filter=pending").then((r) => r.json());
-      const root = $("approvals"); root.innerHTML = "";
-      if (!r.approvals.length) {
-        root.textContent = "Nothing waiting for you right now.";
-        root.style.color = "var(--muted)";
-        return;
-      }
-      for (const a of r.approvals) {
-        const card = document.createElement("div");
-        card.className = "card";
-        card.innerHTML = `<div><strong>${a.title}</strong></div>
-          <div class="meta">${a.company}</div>
-          <div class="meta">request ${a.request_id.slice(0, 8)}…</div>
-          <div>
-            <button class="approve" data-id="${a.request_id}">Approve</button>
-            <button class="reject" data-id="${a.request_id}">Reject</button>
-            <button class="edit" data-id="${a.request_id}">Request edits</button>
-          </div>`;
-        root.appendChild(card);
-      }
-      root.querySelectorAll("button.approve").forEach((b) =>
-        b.addEventListener("click", () => approve(b.dataset.id, "approve")));
-      root.querySelectorAll("button.reject").forEach((b) =>
-        b.addEventListener("click", () => approve(b.dataset.id, "reject")));
-      root.querySelectorAll("button.edit").forEach((b) =>
-        b.addEventListener("click", () => approve(b.dataset.id, "edit")));
-    }
-    async function loadPlan() {
-      const r = await fetch("/api/plan").then((r) => r.json());
-      const root = $("plan");
-      if (!r.plan) { root.textContent = "(no plan yet)"; return; }
-      root.innerHTML = "";
-      for (const m of r.plan.milestones) {
-        const li = document.createElement("div");
-        li.textContent = "• " + m;
-        li.style.color = "var(--muted)";
-        li.style.fontSize = "12px";
-        root.appendChild(li);
-      }
-      for (const s of r.plan.steps) {
-        const div = document.createElement("div");
-        div.className = "step " + s.status;
-        div.innerHTML = `<span class="agent">${s.agent}</span> — ${s.action}
-          <span class="status">${s.status}</span>`;
-        root.appendChild(div);
-      }
-    }
-    async function loadJobs() {
-      const r = await fetch("/api/jobs").then((r) => r.json());
-      const cols = { Saved: [], Applied: [], Assessment: [], Interview: [], Offer: [], Closed: [] };
-      for (const j of r.jobs) {
-        const c = j.status || "Saved";
-        (cols[c] || cols.Saved).push(j);
-      }
-      const root = $("kanban"); root.innerHTML = "";
-      for (const [name, items] of Object.entries(cols)) {
-        const col = document.createElement("div"); col.className = "col";
-        const h = document.createElement("h3"); h.textContent = `${name} (${items.length})`;
-        col.appendChild(h);
-        for (const j of items) {
-          const card = document.createElement("div"); card.className = "card";
-          card.innerHTML = `<div><strong>${j.title}</strong></div>
-            <div class="meta">${j.company} • ${j.location}</div>
-            <div class="meta">relevance ${(j.relevance_score ?? 0).toFixed(2)}</div>
-            <div>
-              <button class="approve" data-id="${j.job_id}">Approve</button>
-              <button class="reject" data-id="${j.job_id}">Reject</button>
-            </div>`;
-          col.appendChild(card);
+    textInput.addEventListener('keydown', e => {
+      if ((e.key === 'Enter' || e.key === ',') && textInput.value.trim()) {
+        e.preventDefault();
+        const val = textInput.value.trim().replace(/,$/, '');
+        if (val && !arr.includes(val)) {
+          arr.push(val);
+          renderChips();
         }
-        root.appendChild(col);
+        textInput.value = '';
+      } else if (e.key === 'Backspace' && !textInput.value && arr.length) {
+        arr.pop();
+        renderChips();
       }
-      root.querySelectorAll("button.approve").forEach((b) =>
-        b.addEventListener("click", () => approve(b.dataset.id, "approve")));
-      root.querySelectorAll("button.reject").forEach((b) =>
-        b.addEventListener("click", () => approve(b.dataset.id, "reject")));
+    });
+
+    return renderChips;
+  }
+
+  const renderRoles = makeChipInput('roles-input', 'roles-text', state.targetRoles);
+  const renderLocs  = makeChipInput('locs-input', 'locs-text', state.locations);
+  const renderSkills = makeChipInput('skills-input', 'skills-text', state.skills, 'skill');
+  const renderVeto  = makeChipInput('veto-input', 'veto-text', state.vetoCompanies);
+
+  // ── resume skill extraction ────────────────────────────────────────────────
+  document.getElementById('btn-extract').addEventListener('click', async () => {
+    const text = document.getElementById('f-resume').value.trim();
+    if (!text) return;
+    const btn = document.getElementById('btn-extract');
+    btn.disabled = true; btn.textContent = 'Extracting…';
+    try {
+      const r = await api('POST', '/api/onboarding/resume', { text });
+      const box = document.getElementById('extracted-box');
+      const container = document.getElementById('skills-extracted');
+      container.innerHTML = '';
+      (r.skills || []).forEach(s => {
+        if (!state.skills.includes(s)) state.skills.push(s);
+        const chip = document.createElement('span');
+        chip.className = 'chip skill';
+        chip.textContent = s;
+        container.appendChild(chip);
+      });
+      renderSkills();
+      box.classList.add('visible');
+      btn.textContent = `✓ ${r.skills.length} skills extracted`;
+    } catch (e) {
+      btn.textContent = 'Extraction failed';
+    } finally {
+      btn.disabled = false;
     }
-    async function approve(identifier, decision) {
-      await fetch(`/api/approve/${encodeURIComponent(identifier)}?decision=${decision}`,
-        { method: "POST" });
-      await loadApprovals();
+  });
+
+  // ── wizard navigation ──────────────────────────────────────────────────────
+  const STEPS = 4;
+  const btnNext = document.getElementById('btn-next');
+  const btnBack = document.getElementById('btn-back');
+
+  function showStep(n) {
+    for (let i = 1; i <= STEPS; i++) {
+      document.getElementById(`step-${i}`).classList.toggle('active', i === n);
+      const wp = document.getElementById(`wp-${i}`);
+      if (i < n) { wp.className = 'w-step done'; }
+      else if (i === n) { wp.className = 'w-step active'; }
+      else { wp.className = 'w-step'; }
     }
-    function openStream() {
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${proto}://${location.host}/ws/stream`);
-      ws.onmessage = (ev) => {
-        const { agent, thought } = JSON.parse(ev.data);
-        const ul = $("stream");
-        const li = document.createElement("li");
-        li.innerHTML = `<span class="who">${agent}</span>${thought}`;
-        ul.insertBefore(li, ul.firstChild);
-        while (ul.children.length > 200) ul.removeChild(ul.lastChild);
-      };
-      ws.onclose = () => setTimeout(openStream, 1000);
+    btnBack.style.visibility = n > 1 ? 'visible' : 'hidden';
+    btnNext.style.display = n < STEPS ? 'block' : 'none';
+    if (n === STEPS) buildReview();
+    state.currentStep = n;
+  }
+
+  function validateStep(n) {
+    if (n === 1) {
+      const name = document.getElementById('f-name').value.trim();
+      const email = document.getElementById('f-email').value.trim();
+      if (!name) { alert('Please enter your name.'); return false; }
+      if (!email.includes('@')) { alert('Please enter a valid email.'); return false; }
+      if (!state.targetRoles.length) { alert('Add at least one target role.'); return false; }
+      if (!state.locations.length) { alert('Add at least one location (or "Remote").'); return false; }
+      state.name = name; state.email = email;
     }
-    refresh();
-    openStream();
+    if (n === 3) {
+      state.minSalary = parseInt(document.getElementById('f-salary').value) || null;
+      state.remoteOk = document.getElementById('f-remote').checked;
+      state.weeklyTarget = parseInt(document.getElementById('f-weekly').value) || 10;
+    }
+    return true;
+  }
+
+  btnNext.addEventListener('click', () => {
+    if (!validateStep(state.currentStep)) return;
+    if (state.currentStep < STEPS) showStep(state.currentStep + 1);
+  });
+  btnBack.addEventListener('click', () => {
+    if (state.currentStep > 1) showStep(state.currentStep - 1);
+  });
+
+  function buildReview() {
+    const root = document.getElementById('review-summary');
+    root.innerHTML = '';
+    function block(title, items) {
+      const d = document.createElement('div');
+      d.className = 'review-block';
+      d.innerHTML = `<h4>${title}</h4>` +
+        items.map(v => `<div class="rv">${v}</div>`).join('');
+      root.appendChild(d);
+    }
+    block('Who you are', [
+      document.getElementById('f-name').value,
+      document.getElementById('f-email').value,
+    ]);
+    block('Target roles', state.targetRoles.length ? state.targetRoles : ['(none)']);
+    block('Locations', state.locations.length ? state.locations : ['(none)']);
+    const prefs = [];
+    if (state.minSalary) prefs.push(`Min salary: $${state.minSalary.toLocaleString()}`);
+    prefs.push(`Remote ok: ${document.getElementById('f-remote').checked ? 'Yes' : 'No'}`);
+    prefs.push(`Weekly target: ${document.getElementById('f-weekly').value} applications`);
+    block('Preferences', prefs);
+    if (state.skills.length) block('Skills', [`${state.skills.length} skills identified`]);
+  }
+
+  // ── launch hunt ────────────────────────────────────────────────────────────
+  document.getElementById('btn-launch').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-launch');
+    btn.disabled = true;
+    btn.textContent = 'Saving profile…';
+
+    const name  = document.getElementById('f-name').value.trim();
+    const email = document.getElementById('f-email').value.trim();
+    state.name = name; state.email = email;
+    state.minSalary = parseInt(document.getElementById('f-salary').value) || null;
+    state.remoteOk  = document.getElementById('f-remote').checked;
+    state.weeklyTarget = parseInt(document.getElementById('f-weekly').value) || 10;
+
+    try {
+      await api('POST', '/api/onboarding/profile', {
+        name:         state.name,
+        email:        state.email,
+        target_roles: state.targetRoles,
+        locations:    state.locations,
+        min_salary:   state.minSalary,
+        remote_ok:    state.remoteOk,
+        skills:       state.skills,
+        veto_companies: state.vetoCompanies,
+        weekly_target: state.weeklyTarget,
+      });
+
+      const resumeText = document.getElementById('f-resume').value.trim();
+      if (resumeText) {
+        await api('POST', '/api/onboarding/resume', { text: resumeText });
+      }
+
+      btn.textContent = 'Starting hunt…';
+      await api('POST', '/api/hunt/start', {});
+
+      // Show dashboard
+      document.getElementById('wizard').style.display = 'none';
+      document.getElementById('btn-refresh').style.display = '';
+      document.getElementById('dashboard').classList.add('visible');
+      updateHuntBadge('running');
+      openStream();
+      startPolling();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = '🚀 Start Hunting';
+      alert('Error: ' + (err.message || err));
+    }
+  });
+
+  // ── API helper ─────────────────────────────────────────────────────────────
+  async function api(method, path, body) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch(path, opts);
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.detail || r.statusText);
+    }
+    return r.json();
+  }
+
+  // ── dashboard renderers ────────────────────────────────────────────────────
+  async function refreshDashboard() {
+    await Promise.all([renderPlan(), renderJobs(), renderApprovals(), checkStatus()]);
+  }
+
+  document.getElementById('btn-refresh').addEventListener('click', refreshDashboard);
+
+  async function checkStatus() {
+    const s = await api('GET', '/api/status');
+    updateHuntBadge(s.hunt_status);
+    if (s.hunt_status === 'complete' || s.hunt_status === 'failed') {
+      clearInterval(pollTimer);
+      document.getElementById('stream-spinner').style.display = 'none';
+    }
+  }
+
+  function updateHuntBadge(status) {
+    const b = document.getElementById('hunt-badge');
+    b.textContent = status;
+    b.className = 'badge ' + status;
+  }
+
+  async function renderPlan() {
+    const root = document.getElementById('plan-body');
+    const { plan } = await api('GET', '/api/plan');
+    if (!plan) { root.innerHTML = '<div class="empty">Waiting for plan…</div>'; return; }
+    root.innerHTML = '';
+    for (const s of plan.steps) {
+      const el = document.createElement('div');
+      el.className = 'plan-step';
+      el.innerHTML = `<div class="step-dot ${s.status}"></div>
+        <div class="step-info">
+          <div class="step-agent">${s.agent}</div>
+          <div class="step-action">${s.action}</div>
+        </div>`;
+      root.appendChild(el);
+    }
+  }
+
+  async function renderJobs() {
+    const root = document.getElementById('kanban-body');
+    const { jobs } = await api('GET', '/api/jobs');
+    const cols = { Saved: [], Applied: [], Assessment: [], Interview: [], Offer: [], Closed: [] };
+    for (const j of jobs) (cols[j.status] || cols.Saved).push(j);
+
+    root.innerHTML = '';
+    for (const [name, items] of Object.entries(cols)) {
+      if (!items.length && name !== 'Saved') continue;
+      const col = document.createElement('div');
+      col.className = 'k-col';
+      col.innerHTML = `<h3>${name} <span style="color:var(--fg)">${items.length}</span></h3>`;
+      for (const j of items) {
+        const card = document.createElement('div');
+        card.className = 'job-card';
+        const sal = j.salary_min
+          ? `$${(j.salary_min/1000).toFixed(0)}k${j.salary_max ? '–'+Math.round(j.salary_max/1000)+'k' : '+'}`
+          : '';
+        card.innerHTML = `
+          <div class="jt">${j.title}</div>
+          <div class="jm">${j.company} · ${j.location}</div>
+          ${sal ? `<div class="jm">${sal}</div>` : ''}
+          <div class="jtags">
+            ${j.remote ? '<span class="tag remote">Remote</span>' : ''}
+            <span class="tag">${(j.relevance_score||0).toFixed(2)} match</span>
+            <span class="tag">${j.source}</span>
+          </div>
+          ${j.url ? `<a href="${j.url}" target="_blank" rel="noopener">View posting ↗</a>` : ''}`;
+        col.appendChild(card);
+      }
+      root.appendChild(col);
+    }
+    if (!jobs.length) root.innerHTML = '<div class="empty">Discovering jobs…</div>';
+  }
+
+  async function renderApprovals() {
+    const root = document.getElementById('approvals-body');
+    const { approvals } = await api('GET', '/api/approvals?state_filter=pending');
+    if (!approvals.length) {
+      root.innerHTML = '<div class="empty">Nothing waiting for you right now.</div>';
+      return;
+    }
+    root.innerHTML = '';
+    for (const a of approvals) {
+      const card = document.createElement('div');
+      card.className = 'approval-card';
+      card.innerHTML = `
+        <div class="ac-title">${a.title}</div>
+        <div class="ac-co">${a.company} · req ${a.request_id.slice(0,8)}…</div>
+        <div class="ac-btns">
+          <button class="approve" data-id="${a.request_id}">Approve</button>
+          <button class="reject"  data-id="${a.request_id}">Reject</button>
+          <button class="edit"    data-id="${a.request_id}">Request edits</button>
+        </div>`;
+      root.appendChild(card);
+    }
+    root.querySelectorAll('.approve').forEach(b =>
+      b.addEventListener('click', () => doApprove(b.dataset.id, 'approve')));
+    root.querySelectorAll('.reject').forEach(b =>
+      b.addEventListener('click', () => doApprove(b.dataset.id, 'reject')));
+    root.querySelectorAll('.edit').forEach(b =>
+      b.addEventListener('click', () => doApprove(b.dataset.id, 'edit')));
+  }
+
+  async function doApprove(id, decision) {
+    await api('POST', `/api/approve/${encodeURIComponent(id)}?decision=${decision}`);
+    await renderApprovals();
+  }
+
+  // ── thought stream ─────────────────────────────────────────────────────────
+  function openStream() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/ws/stream`);
+    ws.onmessage = ev => {
+      const { agent, thought } = JSON.parse(ev.data);
+      const ul = document.getElementById('stream-list');
+      const li = document.createElement('li');
+      li.innerHTML = `<span class="sw">${agent}</span>${thought}`;
+      ul.insertBefore(li, ul.firstChild);
+      while (ul.children.length > 200) ul.removeChild(ul.lastChild);
+    };
+    ws.onclose = () => setTimeout(openStream, 2000);
+  }
+
+  // ── polling during hunt ────────────────────────────────────────────────────
+  let pollTimer = null;
+  function startPolling() {
+    pollTimer = setInterval(refreshDashboard, 3000);
+  }
+
+  // ── init ───────────────────────────────────────────────────────────────────
+  (async () => {
+    const s = await api('GET', '/api/status').catch(() => ({ hunt_status: 'idle', has_profile: false }));
+    updateHuntBadge(s.hunt_status);
+
+    if (s.hunt_status !== 'idle') {
+      // Resume already started — skip wizard, show dashboard
+      document.getElementById('wizard').style.display = 'none';
+      document.getElementById('btn-refresh').style.display = '';
+      document.getElementById('dashboard').classList.add('visible');
+      openStream();
+      if (s.hunt_status === 'running') startPolling();
+      else refreshDashboard();
+    }
+  })();
   </script>
 </body>
 </html>

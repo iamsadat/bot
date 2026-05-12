@@ -114,6 +114,31 @@ parsing recorded HTTP responses.
 
 ---
 
+## Phase 2.5 — Onboarding + Live Pipeline  ·  ✅ shipped
+
+- [x] Multi-step onboarding wizard in the dashboard (4 steps):
+      Basic info → Resume paste → Preferences → Review + launch.
+- [x] Chip-input UI for roles, locations, skills, vetoed companies.
+- [x] `POST /api/onboarding/profile` — validates and persists UserProfile.
+- [x] `POST /api/onboarding/resume` — parses pasted resume text via TF-IDF
+      vocabulary; extracts skills + job titles + years of experience;
+      merges into active profile.
+- [x] `POST /api/hunt/start` — fires background orchestrator task
+      (``asyncio.to_thread`` so the event loop stays responsive).
+- [x] `GET /api/status` — hunt lifecycle (idle / running / complete / failed).
+- [x] Thread-safe ThoughtBus: ``set_loop`` + ``call_soon_threadsafe`` so
+      agent thoughts published from a worker thread reach WebSocket subscribers.
+- [x] Background runner hydrates DashboardState (jobs, applications, approval
+      queue) as each orchestrator stage completes.
+- [x] Dashboard auto-resumes to live view on page reload if hunt already
+      running (polls `/api/status` on init).
+- [x] `jobhunt/onboarding.py` — resume parser + profile builder helpers.
+      8 tests.
+- [x] Dashboard API tests expanded to 23 tests covering all new endpoints.
+- [x] Total: 132 tests, all passing.
+
+---
+
 ## Phase 3 — Submission + Tracking
 
 - [ ] Greenhouse / Lever auto-apply via official endpoints.
@@ -152,7 +177,11 @@ parsing recorded HTTP responses.
 
 ## Recent commits (most recent first)
 
-**Phase 2 — Resume safety pipeline** (in flight):
+**Phase 2.5 — Onboarding + live pipeline** (in flight):
+- 4-step onboarding wizard, resume skill extraction, background orchestrator,
+  thread-safe ThoughtBus, 132 tests passing.
+
+**Phase 2 — Resume safety pipeline**:
 - README, peer critique, approval workflow, dashboard UI integration
 - `268e051` Phase 2: JD parser (TF-IDF) + templated resume engine + PDF/DOCX renderers
 
