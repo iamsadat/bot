@@ -5,7 +5,7 @@ click>=8.1
 matplotlib>=3.7
 
 # jobhunt (multi-agent job hunting platform) — core is stdlib-only; these
-# are needed only for the dashboard server, persistence, queues, and the test suite.
+# are needed only for the dashboard server, persistence, queues, storage, and the test suite.
 fastapi>=0.110
 uvicorn>=0.27
 pytest>=8.0
@@ -13,3 +13,4 @@ sqlalchemy>=2.0
 alembic>=1.13
 psycopg2-binary>=2.9  # optional: Postgres driver (SQLite used in dev/tests)
 redis>=5.0  # optional: Redis client (FakeRedisClient available for offline)
+boto3>=1.26  # optional: S3 client (FakeS3Client available for offline)

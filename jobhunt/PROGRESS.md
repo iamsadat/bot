@@ -70,7 +70,7 @@ parsing recorded HTTP responses.
 
 ---
 
-## Phase 1.5 — Persistence  ·  🚧 in progress (core done)
+## Phase 1.5 — Persistence  ·  ✅ shipped
 
 - [x] SQLAlchemy ORM models for all tables (User, Plan, PlanStep, Company,
       JobPosting, Application, TailoredDocument, ReasoningTrace, ToolCall).
@@ -78,12 +78,15 @@ parsing recorded HTTP responses.
       embedding columns).
 - [x] Postgres-backed TraceStore replacing in-memory implementation;
       supports both SQLite (dev/tests) and Postgres (prod).
+- [x] Redis client abstraction (RedisClient + FakeRedisClient) for queues,
+      pub/sub, caching. 11 integration tests validating all operations.
+- [x] S3 client abstraction (S3Client + FakeS3Client) for artifact storage
+      (resumes, cover letters). 11 integration tests with mock.
 - [x] Placeholder embeddings module with vector similarity helper
-      (Phase 2: Anthropic embedding API).
-- [x] 6 integration tests + 6 embedding tests validating ORM and persistence.
-- [ ] Redis for queues and the thought-stream pub/sub.
-- [ ] S3 (or MinIO) for resume/cover-letter artifacts.
+      (Phase 2: Anthropic embedding API). 6 tests validating cosine similarity.
+- [x] Total 63 tests passing: 41 core + 6 DB + 6 embeddings + 11 Redis + 11 S3.
 - [ ] pgvector extension on Postgres (upgrade from JSON columns in Phase 2).
+- [ ] Human-in-the-loop UI for approving/rejecting tailored documents before submission.
 
 ---
 
