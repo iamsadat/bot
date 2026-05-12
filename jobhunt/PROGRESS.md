@@ -1,0 +1,138 @@
+# JobHunt — progress tracker
+
+Living log of what's done, what's in flight, and what's next. The
+roadmap is anchored to the phases in `ARCHITECTURE.md` §6.
+
+Legend: `[x]` done · `[~]` in progress · `[ ]` not started
+
+---
+
+## Phase 0 — Foundation  ·  ✅ shipped
+
+- [x] Architecture doc with system diagram, per-agent reasoning
+      pipelines, tech-stack rationale and 5-phase roadmap.
+- [x] Typed data models (User, Plan, JobPosting, Company, Application,
+      ReasoningTrace, ToolCall) — stdlib dataclasses, swap to Pydantic
+      + SQLAlchemy in Phase 1.5.
+- [x] BaseAgent contract: `deliberate → act → critique → decide` with
+      bounded refinement, mandatory ReasoningTrace, PII redaction.
+- [x] Tool wrapper: retry with exponential backoff, per-tool circuit
+      breaker, typed `(result, degraded)` fallback.
+- [x] Append-only TraceStore + async ThoughtBus (powers the dashboard
+      thought stream).
+- [x] Strategy & Planning Agent — produces typed execution graph from
+      UserProfile.
+- [x] Job Discovery Agent — dedupe by `(company,title,location)`
+      fingerprint, cosine relevance, ghost-job scoring.
+- [x] Pluggable `JobSource` adapter protocol + offline FixtureSource.
+- [x] Company Vetting Agent (heuristic) with explainable scorecards.
+- [x] Resume Architect Agent — JD keyword extraction, evidence mapping
+      (every bullet must cite a graph node), no-hallucination critique.
+- [x] Application Submission Agent — ATS routing
+      (Greenhouse/Lever/Ashby/Workday/iCIMS/manual).
+- [x] Progress Tracking Agent — email classifier, pipeline state
+      transitions.
+- [x] Continuous Improvement Meta-Agent — observes cycle, emits tuning
+      suggestions.
+- [x] Orchestrator — plan-and-execute walk with re-plan on empty
+      discovery.
+- [x] FastAPI dashboard skeleton + mobile-first HTML client with
+      WebSocket thought stream, Kanban, one-click approve/reject.
+- [x] CLI: `python -m jobhunt {demo,serve}`.
+- [x] 22 unit/agent tests, all green.
+
+---
+
+## Phase 1 — Real ATS adapters  ·  ✅ shipped (core)
+
+Goal: real jobs flowing through the pipeline. Tests stay offline by
+parsing recorded HTTP responses.
+
+- [x] `HTTPClient` abstraction (urllib-based, injectable for tests).
+- [x] Greenhouse public-board adapter
+      (`boards-api.greenhouse.io/v1/boards/<token>/jobs?content=true`)
+      with HTML-to-text JD stripping.
+- [x] Lever public-postings adapter
+      (`api.lever.co/v0/postings/<company>?mode=json`) — handles ms
+      timestamps and `categories.location`.
+- [x] Ashby job-board adapter
+      (`api.ashbyhq.com/posting-api/job-board/<company>`) — parses
+      `compensationTierSummary` into a salary band.
+- [x] Shared `passes_local_filters` helper — keeps role/location
+      semantics identical across FixtureSource and real adapters.
+- [x] Recorded JSON fixtures per source for offline tests.
+- [x] Demo CLI: `python -m jobhunt demo --live-ats --greenhouse acme
+      --lever northwind --ashby contoso`.
+- [ ] Adapter-level rate limiting + polite backoff per source.
+- [ ] Indeed RSS adapter (lower priority — fewer high-signal jobs).
+- [ ] LinkedIn adapter — defer; ToS-sensitive, needs the human-assist
+      path rather than scraping.
+
+---
+
+## Phase 1.5 — Persistence
+
+- [ ] Replace `TraceStore` in-memory list with Postgres
+      (`reasoning_traces` partitioned by day).
+- [ ] SQLAlchemy + Alembic migrations for User, JobPosting, Company,
+      Application, Document tables.
+- [ ] pgvector for JD embeddings + user skill vectors.
+- [ ] Redis for queues and the thought-stream pub/sub.
+- [ ] S3 (or MinIO) for resume/cover-letter artifacts.
+
+---
+
+## Phase 2 — Resume safety pipeline
+
+- [ ] Skill-graph editor on the dashboard.
+- [ ] Real JD parser (HTML stripper + ATS keyword extractor; cross-check
+      TF-IDF and LLM extraction).
+- [ ] Templated resume engine + LLM in slot-fill mode (Anthropic SDK,
+      Sonnet 4.6 for body, Opus 4.7 for critique).
+- [ ] WeasyPrint PDF + python-docx renderers.
+- [ ] Inter-agent peer critique: Vetting Agent reviews tailored resume
+      against the company culture vector.
+- [ ] Human one-click approval UI on the dashboard (already stubbed).
+
+---
+
+## Phase 3 — Submission + Tracking
+
+- [ ] Greenhouse / Lever auto-apply via official endpoints.
+- [ ] Playwright auto-fill with one-click assist fallback.
+- [ ] Gmail/IMAP watcher; Calendar API integration.
+- [ ] Realtime Kanban updates (already on the wire; need DB persistence
+      to survive restarts).
+
+---
+
+## Phase 4 — Vetting + Meta-agent
+
+- [ ] Glassdoor / Crunchbase / News / Layoffs.fyi enrichers.
+- [ ] Weighted RiskRewardScorecard with user-tunable weights.
+- [ ] Action log → meta-agent → prompt/parameter A/B with rollback.
+
+---
+
+## Phase 5 — Hardening
+
+- [ ] OpenTelemetry tracing across services.
+- [ ] HashiCorp Vault for OAuth/IMAP tokens.
+- [ ] k8s manifests + autoscaling + SLOs.
+- [ ] Pen test + GDPR audit (export/delete endpoints).
+
+---
+
+## Cross-cutting / always on
+
+- [ ] CI workflow (`pytest` + `ruff` + `mypy`).
+- [ ] Test coverage ≥ 80 % per module; ≥ 90 % on resume agent.
+- [ ] Structured logging with the PII redactor on every sink.
+- [ ] Containerise each agent service for prod.
+
+---
+
+## Recent commits (most recent first)
+
+(Will be filled in as we go; see `git log --oneline` for the source of
+truth.)

@@ -2,8 +2,10 @@
 
 Commands:
 
-* ``demo``  — run a full plan→discover→vet→tailor→submit cycle against
-  the fixture sources and print the reasoning stream.
+* ``demo``  — run a full plan→discover→vet→tailor→submit cycle. By
+  default the demo runs offline against fixture sources; pass
+  ``--live-ats`` to hit the real Greenhouse / Lever / Ashby public APIs
+  for one example company per source.
 * ``serve`` — start the FastAPI dashboard (requires ``fastapi`` and
   ``uvicorn``).
 """
@@ -14,7 +16,12 @@ import argparse
 import json
 import sys
 
-from jobhunt.adapters import FixtureSource
+from jobhunt.adapters import (
+    AshbySource,
+    FixtureSource,
+    GreenhouseSource,
+    LeverSource,
+)
 from jobhunt.agents import Orchestrator
 from jobhunt.agents.orchestrator import OrchestratorInputs
 from jobhunt.dashboard.server import DashboardState
@@ -86,15 +93,39 @@ def _print_demo(state: DashboardState, output) -> None:
         print(f"  [{t.agent}] confidence={t.confidence:.2f} — {t.decision}")
 
 
-def cmd_demo(_args) -> int:
-    store = TraceStore()
-    bus = ThoughtBus()
-    sources = [
-        FixtureSource(name="greenhouse", only_sources=["greenhouse", "ashby", "lever"]),
+def _build_sources(live_ats: bool, greenhouse: list[str], lever: list[str],
+                   ashby: list[str]):
+    if live_ats:
+        sources = []
+        if greenhouse:
+            sources.append(GreenhouseSource(board_tokens=greenhouse))
+        if lever:
+            sources.append(LeverSource(companies=lever))
+        if ashby:
+            sources.append(AshbySource(companies=ashby))
+        if not sources:
+            print("--live-ats requires at least one of --greenhouse / "
+                  "--lever / --ashby", file=sys.stderr)
+            raise SystemExit(2)
+        return sources
+    return [
+        FixtureSource(name="greenhouse",
+                      only_sources=["greenhouse", "ashby", "lever"]),
         FixtureSource(name="linkedin", only_sources=["linkedin"]),
         FixtureSource(name="indeed", only_sources=["indeed"]),
         FixtureSource(name="company-rss", only_sources=["company-rss"]),
     ]
+
+
+def cmd_demo(args) -> int:
+    store = TraceStore()
+    bus = ThoughtBus()
+    sources = _build_sources(
+        live_ats=args.live_ats,
+        greenhouse=args.greenhouse or [],
+        lever=args.lever or [],
+        ashby=args.ashby or [],
+    )
     orch = Orchestrator(store, bus)
     profile = _demo_profile()
     result = orch.run(
@@ -127,7 +158,16 @@ def cmd_serve(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jobhunt")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("demo", help="run a full cycle against fixture sources")
+    p_demo = sub.add_parser("demo", help="run a full cycle")
+    p_demo.add_argument("--live-ats", action="store_true",
+                        help="hit real Greenhouse/Lever/Ashby APIs")
+    p_demo.add_argument("--greenhouse", action="append",
+                        metavar="BOARD_TOKEN",
+                        help="Greenhouse board token (repeatable)")
+    p_demo.add_argument("--lever", action="append", metavar="COMPANY",
+                        help="Lever company slug (repeatable)")
+    p_demo.add_argument("--ashby", action="append", metavar="COMPANY",
+                        help="Ashby company slug (repeatable)")
     p_serve = sub.add_parser("serve", help="run the dashboard")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", default=8765, type=int)

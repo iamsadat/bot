@@ -1,0 +1,47 @@
+{
+  "jobs": [
+    {
+      "id": 4012345,
+      "internal_job_id": 100001,
+      "title": "Senior Backend Engineer",
+      "updated_at": "2026-05-09T13:22:00-04:00",
+      "requisition_id": "REQ-1024",
+      "location": {"name": "Remote - United States"},
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4012345",
+      "metadata": [
+        {"name": "Department", "value": "Engineering"},
+        {"name": "Employment Type", "value": "Full-time"}
+      ],
+      "content": "<p>Acme is hiring a Senior Backend Engineer to build distributed Python services on Kubernetes. You will own services backed by PostgreSQL and Redis, design high-throughput APIs with FastAPI, and contribute to our observability stack (OpenTelemetry).</p><ul><li>5+ years building production backend systems</li><li>Strong Python; Go a plus</li><li>Comfortable with distributed systems and on-call rotations</li></ul>"
+    },
+    {
+      "id": 4012346,
+      "internal_job_id": 100002,
+      "title": "Staff Software Engineer, Platform",
+      "updated_at": "2026-05-08T09:10:00-04:00",
+      "requisition_id": "REQ-1025",
+      "location": {"name": "San Francisco, CA"},
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4012346",
+      "metadata": [
+        {"name": "Department", "value": "Platform"},
+        {"name": "Employment Type", "value": "Full-time"}
+      ],
+      "content": "<p>The Platform team is hiring a Staff Engineer. We run on Kubernetes, Python, PostgreSQL with pgvector, and a Celery task queue. You'll lead architecture for our agent orchestration framework (LangGraph), mentor senior engineers, and own platform reliability.</p>"
+    },
+    {
+      "id": 4012347,
+      "internal_job_id": 100003,
+      "title": "Senior Frontend Engineer",
+      "updated_at": "2026-05-07T18:00:00-04:00",
+      "requisition_id": "REQ-1026",
+      "location": {"name": "New York, NY"},
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4012347",
+      "metadata": [
+        {"name": "Department", "value": "Frontend"},
+        {"name": "Employment Type", "value": "Full-time"}
+      ],
+      "content": "<p>We are hiring a Senior Frontend Engineer to lead our React + Next.js dashboard work. Strong TypeScript, Tailwind, and accessibility (WCAG 2.1 AA) background required.</p>"
+    }
+  ],
+  "meta": {"total": 3}
+}
