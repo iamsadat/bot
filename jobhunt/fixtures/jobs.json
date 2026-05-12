@@ -1,0 +1,80 @@
+[
+  {
+    "source": "greenhouse",
+    "source_id": "gh-001",
+    "url": "https://boards.greenhouse.io/acme/jobs/gh-001",
+    "title": "Senior Backend Engineer",
+    "company": "Acme Robotics",
+    "location": "Remote (US)",
+    "remote": true,
+    "salary_min": 170000,
+    "salary_max": 210000,
+    "posted_days_ago": 3,
+    "jd_text": "We're hiring a Senior Backend Engineer to build distributed Python services. You should know Python, PostgreSQL, Redis, Kubernetes, and have experience designing high-throughput APIs. Familiarity with LLM tool use is a plus."
+  },
+  {
+    "source": "lever",
+    "source_id": "lv-002",
+    "url": "https://jobs.lever.co/northwind/lv-002",
+    "title": "Staff Software Engineer, Platform",
+    "company": "Northwind Labs",
+    "location": "San Francisco, CA",
+    "remote": false,
+    "salary_min": 220000,
+    "salary_max": 260000,
+    "posted_days_ago": 5,
+    "jd_text": "Northwind is looking for a Staff Engineer to lead our platform team. Python, distributed systems, observability (OpenTelemetry), Kubernetes. Bonus: agent orchestration frameworks (LangGraph, CrewAI)."
+  },
+  {
+    "source": "ashby",
+    "source_id": "as-003",
+    "url": "https://jobs.ashbyhq.com/contoso/as-003",
+    "title": "Senior Software Engineer",
+    "company": "Contoso AI",
+    "location": "New York, NY",
+    "remote": true,
+    "salary_min": 180000,
+    "salary_max": 220000,
+    "posted_days_ago": 2,
+    "jd_text": "Build LLM-powered agent systems. Python, FastAPI, vector databases (pgvector, Qdrant), Postgres, Redis. You will design tool-use loops and self-critique pipelines."
+  },
+  {
+    "source": "indeed",
+    "source_id": "in-004",
+    "url": "https://indeed.example/in-004",
+    "title": "Backend Developer",
+    "company": "Fabrikam",
+    "location": "Austin, TX",
+    "remote": false,
+    "salary_min": 110000,
+    "salary_max": 140000,
+    "posted_days_ago": 180,
+    "jd_text": "Backend developer needed. Java, Spring. (Reposted weekly for 6 months.)"
+  },
+  {
+    "source": "linkedin",
+    "source_id": "li-005",
+    "url": "https://www.linkedin.com/jobs/view/li-005",
+    "title": "Senior Backend Engineer",
+    "company": "Acme Robotics",
+    "location": "Remote (US)",
+    "remote": true,
+    "salary_min": 170000,
+    "salary_max": 210000,
+    "posted_days_ago": 3,
+    "jd_text": "Same role as Greenhouse listing — to exercise dedupe."
+  },
+  {
+    "source": "company-rss",
+    "source_id": "co-006",
+    "url": "https://wayne.example/careers/co-006",
+    "title": "Engineering Manager, Backend",
+    "company": "Wayne Enterprises",
+    "location": "Remote",
+    "remote": true,
+    "salary_min": 230000,
+    "salary_max": 280000,
+    "posted_days_ago": 7,
+    "jd_text": "EM role. Manage a team of 6 backend engineers. Strong Python background, distributed systems, mentoring, on-call leadership."
+  }
+]
