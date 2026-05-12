@@ -14,6 +14,7 @@ from jobhunt.agents.resume import ResumeArchitectAgent
 from jobhunt.agents.submission import SubmissionAgent
 from jobhunt.agents.tracking import TrackingAgent
 from jobhunt.agents.improvement import ImprovementAgent
+from jobhunt.agents.peer_critique import PeerCritiqueAgent
 
 __all__ = [
     "AgentResult",
@@ -26,4 +27,5 @@ __all__ = [
     "SubmissionAgent",
     "TrackingAgent",
     "ImprovementAgent",
+    "PeerCritiqueAgent",
 ]

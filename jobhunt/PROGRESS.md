@@ -90,17 +90,27 @@ parsing recorded HTTP responses.
 
 ---
 
-## Phase 2 — Resume safety pipeline
+## Phase 2 — Resume safety pipeline  ·  ✅ shipped (core)
 
-- [ ] Skill-graph editor on the dashboard.
-- [ ] Real JD parser (HTML stripper + ATS keyword extractor; cross-check
-      TF-IDF and LLM extraction).
-- [ ] Templated resume engine + LLM in slot-fill mode (Anthropic SDK,
-      Sonnet 4.6 for body, Opus 4.7 for critique).
-- [ ] WeasyPrint PDF + python-docx renderers.
-- [ ] Inter-agent peer critique: Vetting Agent reviews tailored resume
-      against the company culture vector.
-- [ ] Human one-click approval UI on the dashboard (already stubbed).
+- [x] Real JD parser (`jobhunt/jd_parser.py`): HTML strip, TF-IDF +
+      frequency union, ATS categorisation, section splitter. 9 tests.
+- [x] Templated resume engine (`jobhunt/resume_template.py`) with
+      slot-fill API. Every bullet has an `evidence_id`; LLM tone-rewrite
+      callback is best-effort and can't detach a bullet from evidence.
+- [x] WeasyPrint PDF + python-docx renderers
+      (`jobhunt/resume_renderer.py`). Text + HTML always available; PDF
+      and DOCX raise `RendererUnavailable` when system deps missing.
+- [x] Inter-agent peer critique (`jobhunt/agents/peer_critique.py`).
+      Culture-alignment, keyword density, evidence diversity → verdict
+      `ship | hold | rework` with surfaced flags. 7 tests.
+- [x] Human one-click approval workflow (`jobhunt/approval.py`).
+      `ApprovalQueue` state machine, Redis pub/sub fan-out, dashboard
+      `/api/approvals` + `/api/approve/{id}` endpoints. 20 tests
+      (12 unit + 8 HTTP).
+- [x] Dashboard client.html "Awaiting your approval" panel with
+      approve / reject / request-edits buttons.
+- [ ] Skill-graph editor on the dashboard (deferred — needs onboarding flow).
+- [ ] Anthropic SDK integration for LLM body + critique (Sonnet 4.6 + Opus 4.7).
 
 ---
 
@@ -141,6 +151,10 @@ parsing recorded HTTP responses.
 ---
 
 ## Recent commits (most recent first)
+
+**Phase 2 — Resume safety pipeline** (in flight):
+- README, peer critique, approval workflow, dashboard UI integration
+- `268e051` Phase 2: JD parser (TF-IDF) + templated resume engine + PDF/DOCX renderers
 
 **Phase 1.5 — Persistence layer** (4 commits):
 - `d3312fc` Add S3 client abstraction for artifact storage (Phase 1.5 complete)

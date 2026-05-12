@@ -90,6 +90,10 @@
       <h2>Plan</h2>
       <div id="plan">Loading…</div>
     </section>
+    <section class="panel approvals" aria-label="Pending approvals">
+      <h2>Awaiting your approval</h2>
+      <div id="approvals">Loading…</div>
+    </section>
     <section class="panel kanban" aria-label="Application pipeline">
       <h2>Pipeline</h2>
       <div id="kanban" class="kanban-cols"></div>
@@ -111,7 +115,35 @@
     document.getElementById("refresh").addEventListener("click", refresh);
 
     async function refresh() {
-      await Promise.all([loadPlan(), loadJobs()]);
+      await Promise.all([loadPlan(), loadJobs(), loadApprovals()]);
+    }
+    async function loadApprovals() {
+      const r = await fetch("/api/approvals?state_filter=pending").then((r) => r.json());
+      const root = $("approvals"); root.innerHTML = "";
+      if (!r.approvals.length) {
+        root.textContent = "Nothing waiting for you right now.";
+        root.style.color = "var(--muted)";
+        return;
+      }
+      for (const a of r.approvals) {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `<div><strong>${a.title}</strong></div>
+          <div class="meta">${a.company}</div>
+          <div class="meta">request ${a.request_id.slice(0, 8)}…</div>
+          <div>
+            <button class="approve" data-id="${a.request_id}">Approve</button>
+            <button class="reject" data-id="${a.request_id}">Reject</button>
+            <button class="edit" data-id="${a.request_id}">Request edits</button>
+          </div>`;
+        root.appendChild(card);
+      }
+      root.querySelectorAll("button.approve").forEach((b) =>
+        b.addEventListener("click", () => approve(b.dataset.id, "approve")));
+      root.querySelectorAll("button.reject").forEach((b) =>
+        b.addEventListener("click", () => approve(b.dataset.id, "reject")));
+      root.querySelectorAll("button.edit").forEach((b) =>
+        b.addEventListener("click", () => approve(b.dataset.id, "edit")));
     }
     async function loadPlan() {
       const r = await fetch("/api/plan").then((r) => r.json());
@@ -163,9 +195,10 @@
       root.querySelectorAll("button.reject").forEach((b) =>
         b.addEventListener("click", () => approve(b.dataset.id, "reject")));
     }
-    async function approve(jobId, decision) {
-      await fetch(`/api/approve/${encodeURIComponent(jobId)}?decision=${decision}`,
+    async function approve(identifier, decision) {
+      await fetch(`/api/approve/${encodeURIComponent(identifier)}?decision=${decision}`,
         { method: "POST" });
+      await loadApprovals();
     }
     function openStream() {
       const proto = location.protocol === "https:" ? "wss" : "ws";
