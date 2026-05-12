@@ -70,15 +70,20 @@ parsing recorded HTTP responses.
 
 ---
 
-## Phase 1.5 — Persistence
+## Phase 1.5 — Persistence  ·  🚧 in progress (core done)
 
-- [ ] Replace `TraceStore` in-memory list with Postgres
-      (`reasoning_traces` partitioned by day).
-- [ ] SQLAlchemy + Alembic migrations for User, JobPosting, Company,
-      Application, Document tables.
-- [ ] pgvector for JD embeddings + user skill vectors.
+- [x] SQLAlchemy ORM models for all tables (User, Plan, PlanStep, Company,
+      JobPosting, Application, TailoredDocument, ReasoningTrace, ToolCall).
+- [x] Alembic migration framework with 2 migrations (initial schema +
+      embedding columns).
+- [x] Postgres-backed TraceStore replacing in-memory implementation;
+      supports both SQLite (dev/tests) and Postgres (prod).
+- [x] Placeholder embeddings module with vector similarity helper
+      (Phase 2: Anthropic embedding API).
+- [x] 6 integration tests + 6 embedding tests validating ORM and persistence.
 - [ ] Redis for queues and the thought-stream pub/sub.
 - [ ] S3 (or MinIO) for resume/cover-letter artifacts.
+- [ ] pgvector extension on Postgres (upgrade from JSON columns in Phase 2).
 
 ---
 

@@ -47,6 +47,8 @@ class User(Base):
     experiences = Column(JSON, nullable=False, default=[])
     veto_companies = Column(JSON, nullable=False, default=[])
     weekly_target = Column(Integer, default=10)
+    skills_embedding = Column(JSON, nullable=True)  # Phase 2: pgvector vector type for Postgres
+    skills_embedding_model = Column(String(100), nullable=True)  # e.g., "text-embed-3-large"
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -135,6 +137,8 @@ class JobPosting(Base):
     ghost_score = Column(Float, default=0.0)
     fingerprint = Column(String(16), nullable=False, unique=True)
     raw = Column(JSON, nullable=False, default={})
+    jd_embedding = Column(JSON, nullable=True)  # Phase 2: pgvector vector type for Postgres
+    jd_embedding_model = Column(String(100), nullable=True)  # e.g., "text-embed-3-large"
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     company_obj = relationship("Company", back_populates="job_postings")
