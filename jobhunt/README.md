@@ -5,6 +5,18 @@ that plan, discover, vet, tailor, submit, track, and continuously improve a
 job hunt. Every decision is recorded as an inspectable
 **ReasoningTrace** and streamed to a mobile-first dashboard via WebSockets.
 
+## What's new in this drop
+
+* **Indeed RSS adapter** (`jobhunt/adapters/indeed.py`) — fourth job source, with polite token-bucket rate limiting (`jobhunt/rate_limit.py` + `RateLimitedHTTPClient`).
+* **Anthropic SDK integration** (`jobhunt/llm/`) — optional dep; `AnthropicLLMClient` uses Sonnet 4.6 for tone rewrites and Opus 4.7 for peer critique; `FakeLLMClient` keeps the full suite offline; PII is redacted before every API call.
+* **Auto-submit** for Greenhouse + Lever (`jobhunt/submitters/`) — `SubmissionAgent` calls real posting endpoints when `auto_submit_approved=True`; `SubmissionPlan` gains `submitted` + `submission_id` fields.
+* **Inbox watcher** (`jobhunt/inbox/`) — IMAP4_SSL source, confidence-scored email classifier, Calendly/Zoom/datetime calendar-hint extractor (`FakeInboxSource` for offline tests).
+* **Vetting enrichers** (`jobhunt/enrichers/`) — Glassdoor / Crunchbase / News / Layoffs heuristic enrichers + user-tunable weighted scorecard on `VettingAgent`.
+* **A/B experiment framework** (`jobhunt/ab.py`) — deterministic bucket assignment, winner promotion, rollback; wired into the Continuous-Improvement Meta-Agent.
+* **Structured logging + CI** — PII-redacting log module (`jobhunt/log.py`) and GitHub Actions workflow (`.github/workflows/ci.yml`).
+
+---
+
 It is designed to be:
 
 * **Safety-first** — every résumé bullet must be backed by an
@@ -20,8 +32,8 @@ It is designed to be:
   adapters for real Greenhouse/Lever/Ashby APIs, the placeholder
   embedder for Anthropic's embedding API. The interfaces don't change.
 * **Offline-by-default for tests** — every external dependency
-  (Postgres, Redis, S3, ATS APIs, LLM) ships with a `Fake*` companion
-  so the 82+ tests run with zero network access.
+  (Postgres, Redis, S3, ATS APIs, LLM, inbox) ships with a `Fake*` companion
+  so the ~180 tests run with zero network access.
 
 ---
 
@@ -147,11 +159,12 @@ draft from leaving the agent.
 | Phase | Status | Highlights |
 | ----- | ------ | ---------- |
 | 0 — Foundation | ✅ shipped | 7 agents, Orchestrator, FastAPI dashboard, CLI, 22 tests |
-| 1 — ATS adapters | ✅ shipped | Greenhouse/Lever/Ashby with offline fixtures, shared `passes_local_filters` |
+| 1 — ATS adapters | ✅ shipped | Greenhouse/Lever/Ashby + Indeed adapters, rate limiting, offline fixtures |
 | 1.5 — Persistence | ✅ shipped | SQLAlchemy + Alembic, Postgres TraceStore, Redis & S3 clients (real + fake) |
-| 2 — Resume safety | 🚧 in flight | TF-IDF JD parser, slot-fill template engine, PDF/DOCX renderers |
-| 3 — Submission + Tracking | not started | Auto-apply, Playwright fallback, Gmail watcher |
-| 4 — Vetting + Meta-agent | not started | Glassdoor/Crunchbase/Layoffs.fyi enrichers, A/B with rollback |
+| 2 — Resume safety | ✅ shipped | TF-IDF JD parser, slot-fill template, PDF/DOCX renderers, Anthropic LLM integration |
+| 2.5/2.6 — Onboarding + UI | ✅ shipped | Live pipeline, premium UI, SQLite persistence, 158 tests |
+| 3 — Submission + Tracking | 🟡 partial | Greenhouse/Lever auto-submit, IMAP inbox watcher; Playwright + Calendar API deferred |
+| 4 — Vetting + Meta-agent | 🟡 partial | Glassdoor/Crunchbase/News/Layoffs enrichers, weighted scorecard, A/B framework |
 | 5 — Hardening | not started | OpenTelemetry, Vault, k8s manifests, GDPR audit |
 
 See `jobhunt/PROGRESS.md` for the full living checklist.
