@@ -7,22 +7,36 @@ turns this into an online learning loop with A/B testing and rollback.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from jobhunt.agents.base import BaseAgent
 from jobhunt.models import JobHuntPlan, ReasoningTrace
+
+if TYPE_CHECKING:
+    from jobhunt.ab import ExperimentRegistry
 
 
 @dataclass
 class ImprovementInputs:
     plan: JobHuntPlan
     results: dict[str, Any]
+    # Phase 4 additions — backward-compatible (default None / empty list)
+    action_log: list[dict] = field(default_factory=list)
+    """Past cycle records.
+
+    Each entry:  {cycle_id, plan_version, suggestions, applied: list[str],
+                  outcome_score: float}
+    """
+    experiments: "ExperimentRegistry | None" = None
+    """Optional experiment registry for A/B tracking and rollback."""
 
 
 @dataclass
 class ImprovementOutput:
     suggestions: list[dict]
+    cycle_record: dict = field(default_factory=dict)
+    """Snapshot of this cycle appended to the action log."""
 
 
 class ImprovementAgent(BaseAgent[ImprovementInputs, ImprovementOutput]):
@@ -84,7 +98,41 @@ class ImprovementAgent(BaseAgent[ImprovementInputs, ImprovementOutput]):
                     }
                 )
 
-        return ImprovementOutput(suggestions=suggestions)
+        # Phase 4: A/B experiment integration (only when registry is supplied)
+        if inputs.experiments is not None:
+            for exp in inputs.experiments.all():
+                if exp.should_rollback():
+                    suggestions.append(
+                        {
+                            "target": exp.target,
+                            "change": f"rollback experiment '{exp.name}' to control",
+                            "reason": (
+                                "non-control variant success_rate fell below "
+                                f"{exp.rollback_threshold:.0%} of control's rate"
+                            ),
+                        }
+                    )
+                winner = exp.winner()
+                if winner is not None:
+                    suggestions.append(
+                        {
+                            "target": exp.target,
+                            "change": f"promote_winner '{winner.name}' for experiment '{exp.name}'",
+                            "reason": (
+                                f"variant '{winner.name}' outperforms control by ≥10% "
+                                f"(rate={winner.success_rate:.2f})"
+                            ),
+                        }
+                    )
+
+        # Build cycle snapshot
+        cycle_record: dict = {
+            "cycle_id": inputs.plan.plan_id,
+            "plan_version": inputs.plan.version,
+            "suggestions": list(suggestions),
+        }
+
+        return ImprovementOutput(suggestions=suggestions, cycle_record=cycle_record)
 
     def critique(
         self,
