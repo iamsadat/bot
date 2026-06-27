@@ -1,0 +1,19 @@
+# One-click backend deploy to Render (https://render.com).
+# In the Render dashboard: New → Blueprint → point at this repo. Render reads
+# this file and provisions the service. No code changes required.
+#
+# Or use the deploy button in the README. The static tracker/demo/app are
+# served separately by GitHub Pages (see .github/workflows/pages.yml).
+services:
+  - type: web
+    name: jobhunt-dashboard
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/status
+    envVars:
+      - key: JOBHUNT_DB_PATH
+        value: /tmp/jobhunt.db
+      # Optional: set ANTHROPIC_API_KEY to enable real LLM tailoring.
+      # - key: ANTHROPIC_API_KEY
+      #   sync: false

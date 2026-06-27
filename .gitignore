@@ -13,3 +13,9 @@ reports/
 jobhunt/demo/_vid/
 jobhunt/demo/frames/
 jobhunt/demo/*.webm
+
+# local dashboard db
+jobhunt.db
+*.db
+# tracker preview throwaways
+jobhunt/tracker/_preview_*.png
