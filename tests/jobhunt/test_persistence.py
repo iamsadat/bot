@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
 
-import pytest
 
 from jobhunt.approval import ApprovalQueue
 from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue

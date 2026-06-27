@@ -305,6 +305,11 @@ def create_app(state: DashboardState):
     def sample_app():
         return _serve("site/app.html", "text/html; charset=utf-8")
 
+    @app.get("/walkthrough")
+    @app.get("/site/walkthrough.html")
+    def walkthrough_page():
+        return _serve("site/walkthrough.html", "text/html; charset=utf-8")
+
     # ------------------------------------------------------------------ status
 
     @app.get("/api/status")

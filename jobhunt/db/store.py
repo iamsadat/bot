@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import cast
 
 from sqlalchemy.orm import Session
-from sqlalchemy import select, and_
 
 from jobhunt.db.models import ReasoningTrace as TraceModel, ToolCall as ToolCallModel
 from jobhunt.models import ReasoningTrace, ToolCall

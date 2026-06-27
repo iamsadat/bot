@@ -6,7 +6,6 @@ splitting. All offline — no network, no LLM calls.
 
 from __future__ import annotations
 
-import pytest
 
 from jobhunt.jd_parser import (
     html_to_text,

@@ -49,8 +49,8 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/jobhunt/ -q
 
-      - name: Run ruff (non-blocking)
-        run: ruff check jobhunt tests || echo "ruff not configured"
+      - name: Run ruff (enforced on package)
+        run: ruff check jobhunt
 
-      - name: Run mypy (non-blocking)
-        run: mypy jobhunt || echo "mypy not configured"
+      - name: Run mypy (advisory)
+        run: mypy jobhunt || echo "mypy advisory — type coverage in progress"

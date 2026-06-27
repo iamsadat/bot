@@ -54,14 +54,36 @@ packages = [
     "jobhunt",
     "jobhunt.adapters",
     "jobhunt.agents",
+    "jobhunt.autofill",
     "jobhunt.dashboard",
     "jobhunt.db",
     "jobhunt.enrichers",
     "jobhunt.inbox",
+    "jobhunt.integrations",
     "jobhunt.llm",
     "jobhunt.submitters",
+    "jobhunt.vectorstore",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["jobhunt/demo", "jobhunt/site", "jobhunt/tracker", "jargon"]
+
+[tool.ruff.lint]
+# Pragmatic gate: real errors (pyflakes F) + a few high-signal rules.
+# Style-only rules stay off so CI is meaningful without churn.
+select = ["F", "E9", "B"]
+ignore = ["B008", "B904"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+# Scoped: the agent core. HTML/demo dirs are not Python packages.
+files = ["jobhunt"]
+exclude = "(jobhunt/demo|jobhunt/site|jobhunt/tracker)"

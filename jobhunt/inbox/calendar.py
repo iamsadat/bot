@@ -12,7 +12,7 @@ raw matched substrings are surfaced for the human (or dashboard) to act on.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # ---------------------------------------------------------------------------

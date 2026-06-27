@@ -8,9 +8,8 @@ import os
 import tempfile
 from typing import Any
 
-import pytest
 
-from jobhunt.log import FileSink, StructuredLogger, StdoutSink, redact
+from jobhunt.log import FileSink, StructuredLogger, redact
 
 
 # ======================================================================= redact

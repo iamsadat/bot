@@ -17,7 +17,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass
 
-from jobhunt.adapters.base import JobSource, SourceUnavailable
+from jobhunt.adapters.base import JobSource
 from jobhunt.agents.base import BaseAgent
 from jobhunt.models import (
     DiscoveryBatch,

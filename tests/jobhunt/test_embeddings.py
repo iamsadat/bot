@@ -4,7 +4,6 @@ These are placeholders for the embedding API integration coming in Phase 2.
 Current implementation returns zero vectors for all inputs.
 """
 
-import pytest
 from jobhunt.embeddings import embed_jd_text, embed_user_skills, cosine_similarity
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from jobhunt.onboarding import build_user_profile, parse_resume_text
 

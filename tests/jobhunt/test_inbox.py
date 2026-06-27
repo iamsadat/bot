@@ -10,9 +10,8 @@ import email.mime.multipart
 import email.mime.text
 import time
 from email.utils import formatdate
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 from jobhunt.inbox import (
     CalendarHint,
@@ -24,7 +23,6 @@ from jobhunt.inbox import (
     classify_message,
     extract_calendar,
 )
-from jobhunt.inbox.sources import _company_from_email as _cfe_direct
 from jobhunt.agents.tracking import TrackingAgent, TrackingInputs
 from jobhunt.models import Application, ApplicationStatus
 from jobhunt.trace import ThoughtBus, TraceStore

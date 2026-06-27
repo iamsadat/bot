@@ -16,7 +16,7 @@ fixed by the engine. The LLM is never trusted to invent facts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable
 
 from jobhunt.models import UserProfile, JobPosting
 
