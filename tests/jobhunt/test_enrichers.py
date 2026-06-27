@@ -22,7 +22,6 @@ from __future__ import annotations
 import time
 import uuid
 
-import pytest
 
 from jobhunt.enrichers import (
     CrunchbaseHeuristic,
@@ -36,7 +35,6 @@ from jobhunt.enrichers import (
 from jobhunt.models import (
     DiscoveryBatch,
     JobPosting,
-    RiskRewardScorecard,
     UserProfile,
 )
 from jobhunt.agents.vetting import VettingAgent, VettingInputs

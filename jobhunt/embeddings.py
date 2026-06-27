@@ -6,7 +6,6 @@ Production: Use Anthropic's embedding API or pgvector for similarity search.
 
 from __future__ import annotations
 
-from typing import Any
 
 
 def embed_jd_text(text: str) -> list[float]:
@@ -34,7 +33,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if not a or not b:
         return 0.0
 
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = sum(x * x for x in a) ** 0.5
     norm_b = sum(x * x for x in b) ** 0.5
 

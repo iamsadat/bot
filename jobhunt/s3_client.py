@@ -7,8 +7,6 @@ Provides abstraction over boto3 so the application can be tested offline
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from io import BytesIO
-from typing import Optional
 
 
 class BaseS3Client(ABC):

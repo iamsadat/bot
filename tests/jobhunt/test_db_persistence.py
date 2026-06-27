@@ -6,9 +6,9 @@ Uses in-memory SQLite for fast, offline testing.
 
 import pytest
 from sqlalchemy import create_engine as sa_create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
-from jobhunt.db.models import Base, User, ReasoningTrace as TraceModel, ToolCall
+from jobhunt.db.models import Base, User
 from jobhunt.db.store import PostgresTraceStore
 from jobhunt.models import ReasoningTrace, ToolCall as ToolCallModel
 

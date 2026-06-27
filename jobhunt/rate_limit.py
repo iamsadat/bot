@@ -10,7 +10,6 @@ run instantly.
 
 from __future__ import annotations
 
-import math
 import time as _time
 from typing import Callable
 

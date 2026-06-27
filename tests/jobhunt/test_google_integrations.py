@@ -7,7 +7,6 @@ runs with no real OAuth and no network access whatsoever.
 from __future__ import annotations
 
 import base64
-import time
 
 import pytest
 
@@ -23,12 +22,10 @@ from jobhunt.integrations import (
     StaticTokenProvider,
 )
 from jobhunt.integrations.gmail import (
-    GMAIL_API_BASE,
     _b64url_decode,
     _company_from_email,
     _extract_body_from_payload,
 )
-from jobhunt.integrations.gcal import CALENDAR_API_BASE
 
 
 # ---------------------------------------------------------------------------

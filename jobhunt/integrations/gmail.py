@@ -17,10 +17,9 @@ from __future__ import annotations
 import base64
 import binascii
 import re
-from dataclasses import dataclass
 
 from jobhunt.inbox.sources import InboxMessage, _company_from_email
-from jobhunt.integrations.google_auth import GoogleAPIError, TokenProvider, Transport
+from jobhunt.integrations.google_auth import TokenProvider, Transport
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 

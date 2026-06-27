@@ -7,17 +7,15 @@ offline.
 from __future__ import annotations
 
 import base64
-import json
 
 import pytest
 
 from jobhunt.agents.resume import TailoredDocument
-from jobhunt.agents.submission import SubmissionAgent, SubmissionInputs, SubmissionPlan
+from jobhunt.agents.submission import SubmissionAgent, SubmissionInputs
 from jobhunt.submitters import (
     FakePoster,
     GreenhouseSubmitter,
     LeverSubmitter,
-    SubmitResult,
     SubmitterRegistry,
 )
 

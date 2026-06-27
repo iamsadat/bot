@@ -6,7 +6,7 @@ import pytest
 
 from jobhunt.ab import Experiment, ExperimentRegistry, Variant
 from jobhunt.agents.improvement import ImprovementAgent, ImprovementInputs
-from jobhunt.models import JobHuntPlan, PlanStep
+from jobhunt.models import JobHuntPlan
 from jobhunt.trace import ThoughtBus, TraceStore
 
 

@@ -78,7 +78,7 @@ extend-exclude = ["jobhunt/demo", "jobhunt/site", "jobhunt/tracker", "jargon"]
 # Pragmatic gate: real errors (pyflakes F) + a few high-signal rules.
 # Style-only rules stay off so CI is meaningful without churn.
 select = ["F", "E9", "B"]
-ignore = ["B008"]
+ignore = ["B008", "B904"]
 
 [tool.mypy]
 python_version = "3.11"

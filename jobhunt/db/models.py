@@ -12,11 +12,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum as PyEnum
-from typing import Any
 
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, DateTime, Text, JSON, ForeignKey,
-    Index, Enum, TIMESTAMP, func,
+    Index, Enum, TIMESTAMP,
 )
 from sqlalchemy.orm import declarative_base, relationship
 

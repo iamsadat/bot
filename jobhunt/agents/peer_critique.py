@@ -81,7 +81,7 @@ def _alignment(culture_jd: dict[str, float], culture_resume: dict[str, float]) -
     keys = list(_CULTURE_LEXICON)
     a = [culture_jd.get(k, 0.0) for k in keys]
     b = [culture_resume.get(k, 0.0) for k in keys]
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = sum(x * x for x in a) ** 0.5
     nb = sum(y * y for y in b) ** 0.5
     if na == 0 or nb == 0:

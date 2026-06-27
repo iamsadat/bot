@@ -89,7 +89,7 @@ _STOP = frozenset({
     "did", "had", "was", "were", "been", "being", "their", "they", "them",
     "his", "her", "its", "him", "she", "he", "i", "me", "my", "mine",
     "ours", "yours", "self", "join", "looking", "seeking", "growth",
-    "great", "good", "best", "new", "able", "make", "via", "etc",
+    "great", "good", "best", "new", "able", "make", "via",
 })
 
 # Allow alphanumerics + +, -, # for techy names (c++, c#, etc).

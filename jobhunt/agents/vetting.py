@@ -22,7 +22,7 @@ from jobhunt.models import (
 )
 
 if TYPE_CHECKING:
-    from jobhunt.enrichers.base import Enricher
+    pass
 
 
 # Default weights used when caller does not supply custom weights.

@@ -14,7 +14,7 @@ import email.message
 import imaplib
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Protocol, runtime_checkable
 
