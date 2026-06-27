@@ -1000,35 +1000,42 @@ function animOrchestra(){
   }
 }
 
-/* ---- 3: Discovery — sources -> rate limiter -> filters -> vetting ---- */
+/* ---- 3: Discovery — sources -> rate limiter -> filters -> vetting (top-to-bottom funnel) ---- */
 function animDiscovery(){
   var g = document.getElementById('disc-svg');
   if (!g) return;
   var sources = [['Greenhouse','#7c5cff'],['Lever','#27d3e6'],['Ashby','#34e0a1'],['Indeed RSS','#ffc857'],['FixtureSource','#ff6b9d']];
-  var cardW = 142, cardH = 30, startX = 14, midX = 250, boxW = 150, centerY = 170;
+  var canvasW = 440;
+  var cardW = 80, cardH = 30, rowY = 16, gap = 4;
+  var n = sources.length;
+  var totalW = n * cardW + (n - 1) * gap;
+  var startX = (canvasW - totalW) / 2;
+  var funnelX = canvasW / 2;
   sources.forEach(function(s, i){
-    var y = 18 + i * 50;
-    var card = el('g', { class: 'node-chip', transform: 'translate(' + startX + ',' + y + ')' }, g);
-    el('rect', { x:0, y:0, width: cardW, height: cardH, rx: 9, fill: 'rgba(255,255,255,.045)', stroke: s[1], 'stroke-opacity':.5 }, card);
-    var t = el('text', { x: cardW/2, y: cardH/2 + 4, 'text-anchor':'middle', 'font-size':11, 'font-weight':700, fill:'#eaf0ff', 'font-family':"'JetBrains Mono', monospace" }, card); t.textContent = s[0];
+    var x = startX + i * (cardW + gap);
+    var card = el('g', { class: 'node-chip', transform: 'translate(' + x + ',' + rowY + ')' }, g);
+    el('rect', { x:0, y:0, width: cardW, height: cardH, rx: 8, fill: 'rgba(255,255,255,.045)', stroke: s[1], 'stroke-opacity':.6 }, card);
+    var t = el('text', { x: cardW/2, y: cardH/2 + 4, 'text-anchor':'middle', 'font-size':8.6, 'font-weight':700, fill:'#eaf0ff', 'font-family':"'JetBrains Mono', monospace" }, card); t.textContent = s[0];
     card.style.animationDelay = (i*90) + 'ms';
     requestAnimationFrame(function(){ card.classList.add('show'); });
-    addFlowPath(g, startX + cardW, y + cardH/2, midX, centerY - 24, s[1], 200 + i*90);
+    addFlowPath(g, x + cardW/2, rowY + cardH, funnelX, 110, s[1], 200 + i*90);
   });
-  // rate limiter box
-  var rl = el('g', { transform: 'translate(' + midX + ',' + (centerY - 24) + ')' }, g);
-  el('rect', { x:0,y:0,width:boxW,height:48,rx:12, fill:'rgba(255,200,87,.1)', stroke:'rgba(255,200,87,.4)' }, rl);
-  el('text', { x:boxW/2, y:21, 'text-anchor':'middle', 'font-size':10.5, fill:'#ffc857', 'font-weight':700, 'font-family':"'JetBrains Mono', monospace" }, rl).textContent = 'TOKEN BUCKET';
-  el('text', { x:boxW/2, y:35, 'text-anchor':'middle', 'font-size':9, fill:'#9aa6c0', 'font-family':"'JetBrains Mono', monospace" }, rl).textContent = 'rate limit';
-  addFlowPath(g, midX + boxW, centerY, midX + boxW + 36, centerY, '#34e0a1', 700);
-  // filters box
-  var flX = midX + boxW + 36, flY = centerY - 32;
-  var fl = el('g', { transform: 'translate(' + flX + ',' + flY + ')' }, g);
-  el('rect', { x:0,y:0,width:boxW,height:64,rx:12, fill:'rgba(52,224,161,.08)', stroke:'rgba(52,224,161,.35)' }, fl);
-  el('text', { x:boxW/2, y:22, 'text-anchor':'middle', 'font-size':10.5, fill:'#34e0a1', 'font-weight':700, 'font-family':"'JetBrains Mono', monospace" }, fl).textContent = 'LOCAL FILTERS';
-  el('text', { x:boxW/2, y:38, 'text-anchor':'middle', 'font-size':9, fill:'#9aa6c0', 'font-family':"'JetBrains Mono', monospace" }, fl).textContent = 'salary · location';
-  el('text', { x:boxW/2, y:51, 'text-anchor':'middle', 'font-size':9, fill:'#9aa6c0', 'font-family':"'JetBrains Mono', monospace" }, fl).textContent = 'remote · veto-co';
-  el('text', { x: flX + boxW/2, y: flY + 92, 'text-anchor':'middle', 'font-size':11, fill:'#9aa6c0', 'font-family':"'JetBrains Mono', monospace" }, g).textContent = '→ Vetting';
+  // rate limiter box (centered)
+  var boxW = 200;
+  var rl = el('g', { transform: 'translate(' + (funnelX - boxW/2) + ',110)' }, g);
+  el('rect', { x:0,y:0,width:boxW,height:50,rx:12, fill:'rgba(255,200,87,.1)', stroke:'rgba(255,200,87,.4)' }, rl);
+  el('text', { x:boxW/2, y:22, 'text-anchor':'middle', 'font-size':11, fill:'#ffc857', 'font-weight':700, 'font-family':"'JetBrains Mono', monospace" }, rl).textContent = 'TOKEN BUCKET';
+  el('text', { x:boxW/2, y:37, 'text-anchor':'middle', 'font-size':9.5, fill:'#9aa6c0', 'font-family':"'JetBrains Mono', monospace" }, rl).textContent = 'rate limit — polite to every API';
+  addFlowPath(g, funnelX, 160, funnelX, 192, '#34e0a1', 700);
+  // filters box (centered, below)
+  var flY = 192;
+  var fl = el('g', { transform: 'translate(' + (funnelX - boxW/2) + ',' + flY + ')' }, g);
+  el('rect', { x:0,y:0,width:boxW,height:72,rx:12, fill:'rgba(52,224,161,.08)', stroke:'rgba(52,224,161,.35)' }, fl);
+  el('text', { x:boxW/2, y:23, 'text-anchor':'middle', 'font-size':11, fill:'#34e0a1', 'font-weight':700, 'font-family':"'JetBrains Mono', monospace" }, fl).textContent = 'LOCAL FILTERS';
+  el('text', { x:boxW/2, y:40, 'text-anchor':'middle', 'font-size':9.5, fill:'#9aa6c0', 'font-family':"'JetBrains Mono', monospace" }, fl).textContent = 'salary · location · remote';
+  el('text', { x:boxW/2, y:55, 'text-anchor':'middle', 'font-size':9.5, fill:'#9aa6c0', 'font-family':"'JetBrains Mono', monospace" }, fl).textContent = 'veto-company list';
+  addFlowPath(g, funnelX, flY + 72, funnelX, flY + 100, '#27d3e6', 1000);
+  el('text', { x: funnelX, y: flY + 116, 'text-anchor':'middle', 'font-size':12, 'font-weight':700, fill:'#eaf0ff', 'font-family':"'JetBrains Mono', monospace" }, g).textContent = '→ Vetting';
 }
 
 /* ---- 4: Vetting — factor rings around a central score ---- */
