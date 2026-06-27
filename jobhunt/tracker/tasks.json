@@ -3,8 +3,9 @@
   "tagline": "A production-grade multi-agent platform that plans, discovers, vets, tailors, submits, and tracks job applications — reasoning deliberately at every step.",
   "updated": "2026-06-27",
   "branch": "claude/multi-agent-job-platform-OG9Az",
-  "tests": { "passing": 401, "failing": 0 },
+  "tests": { "passing": 509, "failing": 0 },
   "links": {
+    "walkthrough": "../site/walkthrough.html",
     "demo_video": "../demo/jobhunt-demo.mp4",
     "interactive_demo": "../demo/demo.html",
     "interactive_app": "../site/app.html",
@@ -75,13 +76,13 @@
       "id": "p3",
       "name": "Submission & Tracking",
       "blurb": "Automate the apply, then watch the inbox for replies.",
-      "status": "in_progress",
+      "status": "done",
       "tasks": [
         { "title": "Greenhouse / Lever auto-submit", "status": "done", "detail": "Real multipart / JSON submission, gated behind human approval." },
         { "title": "IMAP inbox watcher", "status": "done", "detail": "Confidence-scored classifier: reject / interview / assessment / offer." },
         { "title": "Calendar-hint extraction", "status": "done", "detail": "Regex pull of Calendly / Zoom / datetime hints from replies." },
         { "title": "Playwright autofill (Workday / iCIMS / generic)", "status": "done", "detail": "Driver-agnostic field mapper + registry, EEO/demographic questions always deferred to the human; 63 offline tests." },
-        { "title": "Gmail / Calendar OAuth", "status": "todo", "detail": "Replace IMAP-only inbox with first-class Gmail + Calendar APIs." }
+        { "title": "Gmail / Calendar OAuth", "status": "done", "detail": "GmailInboxSource (drop-in over Gmail REST) + Google Calendar client + OAuth token provider; 60 offline tests." }
       ]
     },
     {
@@ -94,7 +95,7 @@
         { "title": "Improvement meta-agent", "status": "done", "detail": "Surfaces rollbacks and promotes winning variants from the action log." },
         { "title": "Structured JSON logging", "status": "done", "detail": "Pluggable sinks with PII redaction baked in." },
         { "title": "Real paid enrichment APIs", "status": "todo", "detail": "Swap heuristics for live Glassdoor / Crunchbase / news feeds." },
-        { "title": "pgvector embeddings", "status": "todo", "detail": "Move embeddings from JSON columns to a real vector index." }
+        { "title": "pgvector embeddings", "status": "done", "detail": "Pluggable VectorStore: pgvector-backed (<=> ANN + jsonb filter) with an in-memory fallback; 48 offline tests." }
       ]
     },
     {
@@ -106,7 +107,7 @@
         { "title": "GitHub Actions CI", "status": "done", "detail": "pytest hard-blocking; ruff / mypy advisory." },
         { "title": "GitHub Pages deploy (tracker + demo + app)", "status": "done", "detail": "Workflow assembles + publishes the tracker, cinematic demo and interactive app to a mobile-accessible static site." },
         { "title": "Dockerfile + host deploy config", "status": "done", "detail": "Container + render.yaml + module-level ASGI app for one-click backend hosting." },
-        { "title": "mypy / ruff enforcement", "status": "todo", "detail": "Configs exist in CI but are non-blocking — make them gate." },
+        { "title": "ruff / mypy gating", "status": "done", "detail": "ruff config added and now hard-blocks CI on the package; mypy configured (advisory while type coverage grows)." },
         { "title": "OpenTelemetry tracing", "status": "todo", "detail": "Distributed traces across the agent pipeline." },
         { "title": "Vault-backed secrets", "status": "todo", "detail": "OAuth / IMAP tokens out of env and into a secret manager." },
         { "title": "k8s manifests + autoscaling + SLOs", "status": "todo", "detail": "Production runtime with horizontal scaling and service objectives." },
@@ -123,7 +124,8 @@
         { "title": "TradeBot parked in jargon/", "status": "done", "detail": "Unrelated project moved aside, history preserved, ready to dispose." },
         { "title": "Cinematic demo (HTML + MP4)", "status": "done", "detail": "8-scene animated 3D walkthrough, recorded to H.264." },
         { "title": "Demo wired into dashboard", "status": "done", "detail": "Watch-demo + tracker entry points from the app shell; /demo, /tracker, /app routes on the live server." },
-        { "title": "Single-source-of-truth progress tracker", "status": "done", "detail": "This page — animated, interactive, deployed for mobile, rendering live from tasks.json." }
+        { "title": "Single-source-of-truth progress tracker", "status": "done", "detail": "This page — animated, interactive, deployed for mobile, rendering live from tasks.json." },
+        { "title": "Interactive platform walkthrough", "status": "done", "detail": "14-section guided tour of every feature with animated diagrams; deployed and mobile-first." }
       ]
     }
   ]
