@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JobHunt — Cinematic Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* ───────────────────────────  DESIGN TOKENS  ─────────────────────────── */
+:root{
+  --bg0:#05060d; --bg1:#0a0d1c; --bg2:#0e1430;
+  --ink:#eef1ff; --muted:#9aa3c7; --faint:#5b638c;
+  --a1:#6d8bff;  --a2:#9b6bff;  --a3:#37e0c8; --a4:#ff7ad9; --a5:#ffd166;
+  --glass:rgba(255,255,255,.055);
+  --stroke:rgba(255,255,255,.10);
+  --shadow:0 30px 80px -20px rgba(0,0,0,.7);
+  --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --sans:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:#000; color:var(--ink); font-family:var(--sans);
+  display:grid; place-items:center; overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ───────────────────────────  STAGE (16:9)  ─────────────────────────── */
+.stage{
+  position:relative; width:min(100vw,177.78vh); aspect-ratio:16/9;
+  background:radial-gradient(120% 120% at 20% 0%,var(--bg2),var(--bg1) 45%,var(--bg0));
+  overflow:hidden; perspective:1500px; box-shadow:var(--shadow);
+  --camX:0deg; --camY:0deg; --camZ:0px; --camS:1;
+}
+/* animated gradient mesh */
+.mesh{position:absolute;inset:-20%;filter:blur(40px);opacity:.55;z-index:0}
+.mesh i{position:absolute;border-radius:50%;mix-blend-mode:screen;animation:drift 22s ease-in-out infinite}
+.mesh i:nth-child(1){width:46%;height:46%;left:2%;top:6%;background:radial-gradient(circle,var(--a1),transparent 65%);animation-delay:-2s}
+.mesh i:nth-child(2){width:40%;height:40%;right:4%;top:0%;background:radial-gradient(circle,var(--a2),transparent 65%);animation-delay:-7s}
+.mesh i:nth-child(3){width:50%;height:50%;left:25%;bottom:-12%;background:radial-gradient(circle,var(--a3),transparent 65%);animation-delay:-12s}
+.mesh i:nth-child(4){width:34%;height:34%;right:18%;bottom:-6%;background:radial-gradient(circle,var(--a4),transparent 65%);animation-delay:-4s}
+@keyframes drift{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(6%,-5%) scale(1.12)}66%{transform:translate(-5%,4%) scale(.92)}}
+/* grain + vignette */
+.grain{position:absolute;inset:0;z-index:6;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");}
+.vignette{position:absolute;inset:0;z-index:6;pointer-events:none;
+  background:radial-gradient(120% 100% at 50% 50%,transparent 55%,rgba(0,0,0,.55));}
+
+/* camera rig — scenes live inside, we move the rig for 3d transitions */
+.camera{position:absolute;inset:0;z-index:2;transform-style:preserve-3d;
+  transform:translateZ(var(--camZ)) rotateX(var(--camX)) rotateY(var(--camY)) scale(var(--camS));
+  transition:transform 1.1s cubic-bezier(.7,0,.2,1);}
+
+/* ───────────────────────────  SCENE SYSTEM  ─────────────────────────── */
+.scene{position:absolute;inset:0;display:grid;place-items:center;
+  opacity:0;visibility:hidden;transition:opacity .7s ease, transform .9s cubic-bezier(.6,0,.2,1);
+  transform:translateZ(-120px) scale(1.04);transform-style:preserve-3d;}
+.scene.is-active{opacity:1;visibility:visible;transform:translateZ(0) scale(1)}
+.scene.is-exit{opacity:0;transform:translateZ(120px) scale(.97)}
+
+.kicker{font:600 clamp(10px,1.1vw,15px)/1 var(--mono);letter-spacing:.42em;
+  text-transform:uppercase;color:var(--a3);margin-bottom:1.1em}
+.headline{font-weight:800;letter-spacing:-.03em;line-height:.98;
+  font-size:clamp(28px,6vw,84px);
+  background:linear-gradient(120deg,#fff 10%,var(--a1) 55%,var(--a2));
+  -webkit-background-clip:text;background-clip:text;color:transparent;}
+.sub{margin-top:1.1em;color:var(--muted);font-size:clamp(13px,1.6vw,22px);
+  font-weight:400;max-width:38ch;text-align:center;line-height:1.5}
+
+/* staged reveal helper */
+.rise{opacity:0;transform:translateY(26px)}
+.is-active .rise{animation:rise .9s cubic-bezier(.2,.7,.2,1) forwards}
+.is-active .d1{animation-delay:.15s}.is-active .d2{animation-delay:.35s}
+.is-active .d3{animation-delay:.55s}.is-active .d4{animation-delay:.75s}
+@keyframes rise{to{opacity:1;transform:none}}
+
+/* ───────────────────────────  S0 · LOGO  ─────────────────────────── */
+.brandwrap{display:flex;flex-direction:column;align-items:center;gap:.5em;transform-style:preserve-3d}
+.logo3d{display:flex;align-items:center;gap:.55em;transform-style:preserve-3d}
+.mark{width:clamp(54px,7vw,96px);height:clamp(54px,7vw,96px);border-radius:24px;position:relative;
+  background:linear-gradient(140deg,var(--a1),var(--a2) 60%,var(--a4));
+  box-shadow:0 20px 60px -10px rgba(109,139,255,.6),inset 0 0 0 1px rgba(255,255,255,.25);
+  transform:rotateY(0deg);}
+.is-active .mark{animation:spinMark 4.6s cubic-bezier(.5,0,.2,1) both, glowMark 3s ease-in-out infinite alternate}
+@keyframes spinMark{0%{transform:rotateY(-220deg) rotateX(30deg) scale(.4);opacity:0}55%{opacity:1}100%{transform:rotateY(0) rotateX(0) scale(1)}}
+@keyframes glowMark{to{box-shadow:0 24px 70px -8px rgba(155,107,255,.7),inset 0 0 0 1px rgba(255,255,255,.35)}}
+.mark::before{content:"";position:absolute;inset:24% 24% 24% 24%;border-radius:8px;
+  background:#0a0d1c;box-shadow:inset 0 0 0 3px rgba(255,255,255,.9)}
+.mark::after{content:"";position:absolute;left:50%;top:50%;width:34%;height:34%;
+  transform:translate(-30%,-30%) rotate(45deg);background:linear-gradient(var(--a3),transparent);border-radius:2px}
+.wordmark{font-weight:900;letter-spacing:-.04em;font-size:clamp(38px,8vw,108px);
+  background:linear-gradient(120deg,#fff,var(--a1) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* ───────────────────────────  S1 · AGENT CONSTELLATION  ─────────────── */
+.constellation{position:relative;width:min(78%,1000px);aspect-ratio:16/9;transform-style:preserve-3d}
+.constellation.spin{animation:orbit 26s linear infinite}
+@keyframes orbit{to{transform:rotateY(360deg)}}
+.node{position:absolute;width:clamp(78px,11vw,150px);left:50%;top:50%;transform-style:preserve-3d;
+  translate:-50% -50%}
+.node .chip{
+  background:linear-gradient(160deg,var(--glass),rgba(255,255,255,.02));
+  border:1px solid var(--stroke);border-radius:16px;padding:.7em .5em;text-align:center;
+  backdrop-filter:blur(14px) saturate(140%);box-shadow:0 16px 40px -16px rgba(0,0,0,.8);
+  transform:translateZ(40px);opacity:0;animation:popNode .7s cubic-bezier(.2,.8,.2,1) forwards}
+.node .ico{font-size:clamp(16px,2vw,26px);line-height:1}
+.node .nm{margin-top:.35em;font:600 clamp(8px,.92vw,12px)/1.15 var(--sans);color:var(--ink)}
+.node .ph{font:600 8px/1 var(--mono);color:var(--faint);letter-spacing:.18em;margin-top:.3em}
+@keyframes popNode{from{opacity:0;transform:translateZ(0) scale(.4)}to{opacity:1;transform:translateZ(40px) scale(1)}}
+.node.center .chip{background:linear-gradient(160deg,rgba(109,139,255,.4),rgba(155,107,255,.25));
+  border-color:rgba(155,107,255,.5);box-shadow:0 22px 60px -12px rgba(109,139,255,.7)}
+/* connector svg overlay */
+.wires{position:absolute;inset:0;overflow:visible;z-index:-1}
+.wires path{fill:none;stroke:url(#wireGrad);stroke-width:1.6;stroke-linecap:round;
+  stroke-dasharray:6 8;opacity:.5;
+  animation:flow 1.3s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.spark{fill:var(--a3);filter:drop-shadow(0 0 6px var(--a3))}
+
+/* ───────────────────────────  S2 · DISCOVERY  ─────────────────────────── */
+.disc{display:grid;grid-template-columns:1fr 1.3fr;gap:3%;width:84%;align-items:center}
+.sources{display:flex;flex-direction:column;gap:.7em}
+.src{display:flex;align-items:center;gap:.7em;padding:.7em 1em;border-radius:14px;
+  background:var(--glass);border:1px solid var(--stroke);backdrop-filter:blur(10px);
+  font-weight:600;font-size:clamp(11px,1.3vw,17px)}
+.src .dot{width:10px;height:10px;border-radius:50%;background:var(--faint)}
+.is-active .src .dot{animation:live 1.4s ease-in-out infinite}
+.src:nth-child(1) .dot{background:var(--a3)}.src:nth-child(2) .dot{background:var(--a1);animation-delay:.2s}
+.src:nth-child(3) .dot{background:var(--a4);animation-delay:.4s}.src:nth-child(4) .dot{background:var(--a5);animation-delay:.6s}
+@keyframes live{0%,100%{box-shadow:0 0 0 0 currentColor;opacity:1}50%{box-shadow:0 0 0 6px transparent;opacity:.5}}
+.feed{position:relative;height:min(46vh,360px);overflow:hidden;border-radius:18px;
+  border:1px solid var(--stroke);background:rgba(0,0,0,.25)}
+.jobcard{position:absolute;left:5%;right:5%;padding:.7em .9em;border-radius:12px;
+  background:linear-gradient(160deg,var(--glass),transparent);border:1px solid var(--stroke);
+  backdrop-filter:blur(8px);opacity:0}
+.jobcard .jt{font-weight:700;font-size:clamp(11px,1.2vw,15px)}
+.jobcard .jm{font:600 9px/1 var(--mono);color:var(--muted);margin-top:.35em;display:flex;gap:.6em}
+.jobcard .tag{color:var(--a3)}
+.is-active .jobcard{animation:slideJob 4.2s cubic-bezier(.4,0,.2,1) forwards}
+.is-active .jobcard.j2{animation-delay:.5s}.is-active .jobcard.j3{animation-delay:1s}
+.is-active .jobcard.j4{animation-delay:1.5s}.is-active .jobcard.j5{animation-delay:2s}
+@keyframes slideJob{0%{opacity:0;transform:translateY(110%) scale(.96)}
+  12%{opacity:1}88%{opacity:1}100%{opacity:1;transform:translateY(0) scale(1)}}
+
+/* ───────────────────────────  S3 · RESUME TAILOR  ─────────────────────── */
+.tailor{display:grid;grid-template-columns:1.1fr 1fr;gap:3%;width:82%;align-items:center}
+.paper{background:linear-gradient(180deg,#fbfcff,#eef1fb);color:#0a0d1c;border-radius:14px;
+  padding:1.3em 1.4em;box-shadow:var(--shadow);transform:rotateY(-14deg) rotateX(4deg);
+  transform-style:preserve-3d;font-size:clamp(9px,1vw,13px)}
+.paper h4{font-size:1.5em;margin-bottom:.2em}.paper .role{color:#5560a8;font-weight:700;margin-bottom:.7em}
+.paper .ln{height:.62em;background:#d7dcf0;border-radius:3px;margin:.45em 0;width:100%;transform-origin:left;transform:scaleX(0)}
+.paper .ln.s{width:62%}.paper .ln.m{width:84%}
+.is-active .paper .ln{animation:fillLn .5s ease forwards}
+.is-active .ln1{animation-delay:.3s}.is-active .ln2{animation-delay:.45s}.is-active .ln3{animation-delay:.6s}
+.is-active .ln4{animation-delay:.75s}.is-active .ln5{animation-delay:.9s}.is-active .ln6{animation-delay:1.05s}
+@keyframes fillLn{to{transform:scaleX(1)}}
+.kw{display:inline-block;background:#d8e0ff;color:#324; padding:.05em .4em;border-radius:5px;font-weight:700;transform:scale(0)}
+.is-active .kw{animation:popKw .4s cubic-bezier(.2,1.6,.4,1) forwards}
+.is-active .kw1{animation-delay:1.2s}.is-active .kw2{animation-delay:1.4s}.is-active .kw3{animation-delay:1.6s}
+@keyframes popKw{to{transform:scale(1)}}
+.evlist{display:flex;flex-direction:column;gap:.6em}
+.ev{display:flex;align-items:center;gap:.6em;font-size:clamp(10px,1.1vw,14px);opacity:0;transform:translateX(20px)}
+.ev .pill{font:700 8px/1 var(--mono);background:rgba(55,224,200,.15);color:var(--a3);
+  border:1px solid rgba(55,224,200,.4);padding:.4em .55em;border-radius:6px;white-space:nowrap}
+.is-active .ev{animation:rise .6s ease forwards}
+.is-active .ev1{animation-delay:1.3s}.is-active .ev2{animation-delay:1.55s}.is-active .ev3{animation-delay:1.8s}.is-active .ev4{animation-delay:2.05s}
+
+/* ───────────────────────────  S4 · CRITIQUE + APPROVE  ─────────────────── */
+.approve{display:grid;grid-template-columns:1fr 1fr;gap:4%;width:74%;align-items:center}
+.gauge{position:relative;width:min(30vh,260px);aspect-ratio:1;margin:auto}
+.gauge svg{transform:rotate(-90deg)}
+.gauge .track{stroke:rgba(255,255,255,.08)}
+.gauge .val{stroke:url(#gaugeGrad);stroke-linecap:round;stroke-dasharray:339;stroke-dashoffset:339}
+.is-active .gauge .val{animation:fillGauge 1.6s cubic-bezier(.5,0,.1,1) .3s forwards}
+@keyframes fillGauge{to{stroke-dashoffset:78}}  /* ~77% */
+.gauge .pct{position:absolute;inset:0;display:grid;place-items:center;flex-direction:column;text-align:center}
+.gauge .pct b{font:800 clamp(26px,3.4vw,48px)/1 var(--sans);
+  background:linear-gradient(120deg,var(--a3),var(--a1));-webkit-background-clip:text;background-clip:text;color:transparent}
+.gauge .pct span{font:600 9px/1 var(--mono);letter-spacing:.2em;color:var(--muted);text-transform:uppercase}
+.verdict{display:flex;flex-direction:column;gap:.8em}
+.vrow{display:flex;align-items:center;gap:.7em;font-size:clamp(11px,1.2vw,16px);opacity:0;transform:translateX(18px)}
+.vrow .ok{color:var(--a3);font-weight:800}
+.is-active .vrow{animation:rise .5s ease forwards}.is-active .v1{animation-delay:.8s}.is-active .v2{animation-delay:1s}.is-active .v3{animation-delay:1.2s}
+.stamp{margin-top:.4em;display:inline-flex;align-items:center;gap:.5em;align-self:flex-start;
+  padding:.5em .9em;border-radius:10px;font-weight:800;letter-spacing:.04em;
+  background:rgba(55,224,200,.16);border:1px solid rgba(55,224,200,.5);color:var(--a3);
+  opacity:0;transform:scale(.7) rotate(-6deg)}
+.is-active .stamp{animation:stampIn .6s cubic-bezier(.2,1.8,.3,1) 1.9s forwards}
+@keyframes stampIn{to{opacity:1;transform:scale(1) rotate(-4deg)}}
+
+/* ───────────────────────────  S5 · SUBMIT ROUTER  ─────────────────────── */
+.router{position:relative;width:78%;height:min(54vh,420px)}
+.hub{position:absolute;left:50%;top:50%;translate:-50% -50%;z-index:3;
+  width:clamp(90px,12vw,150px);aspect-ratio:1;border-radius:50%;display:grid;place-items:center;text-align:center;
+  background:radial-gradient(circle,rgba(155,107,255,.5),rgba(109,139,255,.2));
+  border:1px solid rgba(155,107,255,.5);box-shadow:0 0 60px -10px rgba(155,107,255,.7);
+  font-weight:800;font-size:clamp(10px,1.1vw,14px)}
+.is-active .hub{animation:pulseHub 2s ease-in-out infinite}
+@keyframes pulseHub{50%{box-shadow:0 0 90px -6px rgba(155,107,255,.9)}}
+.ats{position:absolute;padding:.6em .9em;border-radius:12px;font-weight:700;font-size:clamp(10px,1.1vw,14px);
+  background:var(--glass);border:1px solid var(--stroke);backdrop-filter:blur(10px);opacity:0;transform:scale(.6)}
+.ats .st{display:block;font:600 8px/1 var(--mono);color:var(--a3);margin-top:.4em;letter-spacing:.12em}
+.ats.a1{left:4%;top:14%}.ats.a2{right:4%;top:14%}.ats.a3{left:4%;bottom:14%}.ats.a4{right:4%;bottom:14%}
+.is-active .ats{animation:popKw .5s cubic-bezier(.2,1.5,.4,1) forwards}
+.is-active .ats.a1{animation-delay:.5s}.is-active .ats.a2{animation-delay:.7s}
+.is-active .ats.a3{animation-delay:.9s}.is-active .ats.a4{animation-delay:1.1s}
+
+/* ───────────────────────────  S6 · TRACKING KANBAN  ───────────────────── */
+.kanban{display:grid;grid-template-columns:repeat(4,1fr);gap:1.4%;width:86%;height:min(50vh,380px)}
+.col{background:rgba(255,255,255,.03);border:1px solid var(--stroke);border-radius:14px;padding:.7em .55em;display:flex;flex-direction:column;gap:.55em}
+.col h5{font:700 9px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:.3em}
+.kc{padding:.55em .65em;border-radius:9px;background:linear-gradient(160deg,var(--glass),transparent);
+  border:1px solid var(--stroke);font-weight:600;font-size:clamp(9px,1vw,13px)}
+.kc small{display:block;color:var(--faint);font:600 8px/1 var(--mono);margin-top:.35em}
+.kc.move{opacity:0;animation:rise .6s ease forwards}
+.is-active .kc.m1{animation-delay:.6s}.is-active .kc.m2{animation-delay:1s}.is-active .kc.m3{animation-delay:1.5s}
+.kc.glow{border-color:rgba(255,209,102,.6);box-shadow:0 0 26px -6px rgba(255,209,102,.6)}
+.is-active .kc.glow{animation:rise .6s ease 1.5s forwards, glowPulse 1.6s ease-in-out 2.1s infinite}
+@keyframes glowPulse{50%{box-shadow:0 0 38px -2px rgba(255,209,102,.85)}}
+
+/* ───────────────────────────  S7 · STATS + OUTRO  ─────────────────────── */
+.stats{display:flex;gap:clamp(18px,4vw,72px);margin-bottom:1.4em}
+.stat{text-align:center}
+.stat b{font:800 clamp(30px,5vw,72px)/1 var(--sans);font-variant-numeric:tabular-nums;
+  background:linear-gradient(120deg,#fff,var(--a3));-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat span{display:block;margin-top:.5em;font:600 10px/1 var(--mono);letter-spacing:.18em;
+  text-transform:uppercase;color:var(--muted)}
+.chips{display:flex;gap:.6em;flex-wrap:wrap;justify-content:center;margin-top:1.2em;max-width:46ch}
+.tagchip{font:600 11px/1 var(--mono);padding:.55em .8em;border-radius:999px;
+  background:var(--glass);border:1px solid var(--stroke);color:var(--muted)}
+
+/* ───────────────────────────  HUD / CONTROLS  ─────────────────────────── */
+.hud{position:absolute;left:0;right:0;bottom:0;z-index:8;display:flex;align-items:center;gap:14px;
+  padding:14px 20px;background:linear-gradient(transparent,rgba(0,0,0,.5));
+  font:600 11px/1 var(--mono);color:var(--muted);opacity:.0;transition:opacity .3s}
+.stage:hover .hud{opacity:1}
+.btn{cursor:pointer;width:30px;height:30px;display:grid;place-items:center;border-radius:8px;
+  background:var(--glass);border:1px solid var(--stroke);color:var(--ink);user-select:none}
+.btn:hover{background:rgba(255,255,255,.12)}
+.track-bar{flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;position:relative}
+.track-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:3px;
+  background:linear-gradient(90deg,var(--a1),var(--a3))}
+.scenelabel{min-width:15ch;color:var(--ink)}
+.ticks{position:absolute;inset:0;display:flex;pointer-events:none}
+.ticks i{flex:1;border-right:1px solid rgba(0,0,0,.4)}
+.brandtag{position:absolute;top:16px;left:20px;z-index:7;display:flex;align-items:center;gap:8px;
+  font:700 12px/1 var(--sans);letter-spacing:.02em;color:var(--ink);opacity:.85}
+.brandtag .m{width:18px;height:18px;border-radius:6px;background:linear-gradient(140deg,var(--a1),var(--a4))}
+.cue{position:absolute;top:16px;right:20px;z-index:7;font:600 10px/1 var(--mono);
+  letter-spacing:.16em;color:var(--faint);text-transform:uppercase}
+
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001s!important;transition-duration:.001s!important}}
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="mesh"><i></i><i></i><i></i><i></i></div>
+
+  <div class="brandtag"><span class="m"></span>JobHunt</div>
+  <div class="cue" id="cue">● REC-READY</div>
+
+  <div class="camera" id="camera">
+
+    <!-- S0 ────────────── LOGO ────────────── -->
+    <section class="scene" data-cam="0,0,0,1">
+      <div class="brandwrap">
+        <div class="logo3d">
+          <div class="mark"></div>
+          <div class="wordmark">JobHunt</div>
+        </div>
+        <div class="sub rise d2" style="margin-top:1.4em">Seven specialised agents that plan, discover, vet, tailor,<br>submit &amp; track your job hunt — end to end.</div>
+        <div class="kicker rise d3" style="margin-top:1.6em;color:var(--faint)">Autonomous · Explainable · Self-improving</div>
+      </div>
+    </section>
+
+    <!-- S1 ────────────── CONSTELLATION ────────────── -->
+    <section class="scene" data-cam="6,-10,-40,1">
+      <div style="position:absolute;top:9%;text-align:center;width:100%">
+        <div class="kicker rise d1">The Orchestra</div>
+        <div class="headline rise d2" style="font-size:clamp(22px,4vw,52px)">One orchestrator. Seven minds.</div>
+      </div>
+      <div class="constellation" id="constellation">
+        <svg class="wires" id="wires" viewBox="0 0 1000 562" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="wireGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#6d8bff"/><stop offset="1" stop-color="#37e0c8"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <!-- nodes injected by JS -->
+      </div>
+    </section>
+
+    <!-- S2 ────────────── DISCOVERY ────────────── -->
+    <section class="scene" data-cam="-4,8,-20,1">
+      <div style="position:absolute;top:8%;text-align:center;width:100%">
+        <div class="kicker rise d1" style="color:var(--a1)">Stage 02 · Discovery</div>
+        <div class="headline rise d2" style="font-size:clamp(22px,4vw,50px)">Live jobs, four sources, one stream</div>
+      </div>
+      <div class="disc">
+        <div class="sources">
+          <div class="src rise d1"><span class="dot"></span>Greenhouse</div>
+          <div class="src rise d2"><span class="dot"></span>Lever</div>
+          <div class="src rise d3"><span class="dot"></span>Ashby</div>
+          <div class="src rise d4"><span class="dot"></span>Indeed RSS</div>
+        </div>
+        <div class="feed">
+          <div class="jobcard j1" style="top:78%"><div class="jt">Senior Backend Engineer</div><div class="jm"><span>Stripe</span><span class="tag">96% match</span><span>Remote</span></div></div>
+          <div class="jobcard j2" style="top:60%"><div class="jt">Platform Engineer</div><div class="jm"><span>Vercel</span><span class="tag">91% match</span><span>Remote</span></div></div>
+          <div class="jobcard j3" style="top:42%"><div class="jt">Staff Software Engineer</div><div class="jm"><span>Netflix</span><span class="tag">88% match</span><span>Hybrid</span></div></div>
+          <div class="jobcard j4" style="top:24%"><div class="jt">Distributed Systems Eng</div><div class="jm"><span>Airtable</span><span class="tag">85% match</span><span>Remote</span></div></div>
+          <div class="jobcard j5" style="top:6%"><div class="jt">Backend Engineer, Payments</div><div class="jm"><span>Block</span><span class="tag">83% match</span><span>SF</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- S3 ────────────── TAILOR ────────────── -->
+    <section class="scene" data-cam="5,-6,-30,1">
+      <div style="position:absolute;top:7%;text-align:center;width:100%">
+        <div class="kicker rise d1" style="color:var(--a2)">Stage 04 · Resume Architect</div>
+        <div class="headline rise d2" style="font-size:clamp(22px,4vw,50px)">Every bullet cites real evidence</div>
+      </div>
+      <div class="tailor">
+        <div class="paper">
+          <h4>Ada Lovelace</h4>
+          <div class="role">Senior Backend Engineer → Stripe</div>
+          <div class="ln s ln1"></div><div class="ln m ln2"></div><div class="ln ln3"></div>
+          <div style="margin:.6em 0 .3em;font-weight:800">Experience</div>
+          <div class="ln m ln4"></div><div class="ln ln5"></div><div class="ln s ln6"></div>
+          <div style="margin-top:.7em">
+            <span class="kw kw1">Python</span> <span class="kw kw2">distributed systems</span> <span class="kw kw3">payments</span>
+          </div>
+        </div>
+        <div class="evlist">
+          <div class="ev ev1"><span class="pill">skill:0</span> Python — 8 yrs, high-throughput services</div>
+          <div class="ev ev2"><span class="pill">exp:1</span> Scaled ledger to 40k tps</div>
+          <div class="ev ev3"><span class="pill">skill:4</span> Kafka · event-sourcing</div>
+          <div class="ev ev4"><span class="pill">exp:2</span> Led payments reliability guild</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- S4 ────────────── CRITIQUE + APPROVE ────────────── -->
+    <section class="scene" data-cam="0,6,-15,1">
+      <div style="position:absolute;top:8%;text-align:center;width:100%">
+        <div class="kicker rise d1" style="color:var(--a3)">Stage 05 · Peer Critique → Human Approval</div>
+        <div class="headline rise d2" style="font-size:clamp(22px,4vw,50px)">Reviewed, scored, shipped</div>
+      </div>
+      <div class="approve">
+        <div class="gauge">
+          <svg viewBox="0 0 120 120" width="100%" height="100%">
+            <defs><linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#37e0c8"/><stop offset="1" stop-color="#6d8bff"/></linearGradient></defs>
+            <circle class="track" cx="60" cy="60" r="54" fill="none" stroke-width="10"/>
+            <circle class="val" cx="60" cy="60" r="54" fill="none" stroke-width="10"/>
+          </svg>
+          <div class="pct"><div><b>0.77</b><span>fit score</span></div></div>
+        </div>
+        <div class="verdict">
+          <div class="vrow v1"><span class="ok">✓</span> Culture alignment &nbsp;<b style="margin-left:auto">0.81</b></div>
+          <div class="vrow v2"><span class="ok">✓</span> ATS keyword density &nbsp;<b style="margin-left:auto">0.74</b></div>
+          <div class="vrow v3"><span class="ok">✓</span> Evidence diversity &nbsp;<b style="margin-left:auto">0.80</b></div>
+          <div class="stamp">⬢ VERDICT: SHIP → approved by you</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- S5 ────────────── SUBMIT ROUTER ────────────── -->
+    <section class="scene" data-cam="-6,0,-25,1">
+      <div style="position:absolute;top:7%;text-align:center;width:100%">
+        <div class="kicker rise d1" style="color:var(--a4)">Stage 06 · Submission Router</div>
+        <div class="headline rise d2" style="font-size:clamp(22px,4vw,50px)">Routed to the right ATS, automatically</div>
+      </div>
+      <div class="router">
+        <svg class="wires" id="routerWires" viewBox="0 0 1000 420" preserveAspectRatio="none" style="z-index:1"></svg>
+        <div class="hub">Submission<br>Agent</div>
+        <div class="ats a1">Greenhouse<span class="st">▸ API · 201 created</span></div>
+        <div class="ats a2">Lever<span class="st">▸ API · 201 created</span></div>
+        <div class="ats a3">Ashby<span class="st">▸ API · queued</span></div>
+        <div class="ats a4">Workday<span class="st">▸ auto-fill assist</span></div>
+      </div>
+    </section>
+
+    <!-- S6 ────────────── TRACKING ────────────── -->
+    <section class="scene" data-cam="4,-4,-18,1">
+      <div style="position:absolute;top:7%;text-align:center;width:100%">
+        <div class="kicker rise d1" style="color:var(--a5)">Stage 07 · Tracking &amp; Inbox</div>
+        <div class="headline rise d2" style="font-size:clamp(22px,4vw,50px)">Replies read · pipeline moves itself</div>
+      </div>
+      <div class="kanban">
+        <div class="col"><h5>Applied</h5>
+          <div class="kc">Block · Payments</div>
+          <div class="kc">Airtable · DS Eng</div></div>
+        <div class="col"><h5>Assessment</h5>
+          <div class="kc move m1">Vercel · Platform<small>take-home detected</small></div></div>
+        <div class="col"><h5>Interview</h5>
+          <div class="kc move glow">Stripe · Sr Backend<small>Calendly · Tue 2pm</small></div></div>
+        <div class="col"><h5>Offer</h5>
+          <div class="kc move m3">Netflix · Staff<small>offer letter parsed</small></div></div>
+      </div>
+    </section>
+
+    <!-- S7 ────────────── STATS / OUTRO ────────────── -->
+    <section class="scene" data-cam="0,0,0,1">
+      <div style="text-align:center;display:flex;flex-direction:column;align-items:center">
+        <div class="kicker rise d1">From cold start to interview</div>
+        <div class="stats">
+          <div class="stat rise d2"><b data-count="1284">0</b><span>jobs scanned</span></div>
+          <div class="stat rise d3"><b data-count="47">0</b><span>tailored</span></div>
+          <div class="stat rise d4"><b data-count="31">0</b><span>applied</span></div>
+        </div>
+        <div class="headline rise d3" style="font-size:clamp(24px,4.4vw,58px)">Your hunt, on autopilot.</div>
+        <div class="chips rise d4">
+          <span class="tagchip">7 agents</span><span class="tagchip">4 job sources</span>
+          <span class="tagchip">auto-submit</span><span class="tagchip">inbox watcher</span>
+          <span class="tagchip">A/B self-tuning</span><span class="tagchip">338 tests green</span>
+        </div>
+        <div class="sub rise d4" style="margin-top:1.4em;color:var(--faint)">python -m jobhunt serve&nbsp;&nbsp;·&nbsp;&nbsp;open the dashboard&nbsp;&nbsp;·&nbsp;&nbsp;press start</div>
+      </div>
+    </section>
+
+  </div><!-- /camera -->
+
+  <div class="vignette"></div>
+  <div class="grain"></div>
+
+  <div class="hud">
+    <div class="btn" id="play">❚❚</div>
+    <div class="btn" id="prev">⟨</div>
+    <div class="btn" id="next">⟩</div>
+    <div class="scenelabel" id="label">Intro</div>
+    <div class="track-bar"><div class="track-fill" id="fill"></div><div class="ticks" id="ticks"></div></div>
+    <div class="btn" id="replay">↺</div>
+  </div>
+</div>
+
+<script>
+/* ───────────────────────────  AGENT CONSTELLATION  ─────────────────────── */
+const AGENTS = [
+  {ico:'🧭',nm:'Strategy',ph:'PLAN'},
+  {ico:'🔭',nm:'Discovery',ph:'FIND'},
+  {ico:'🛡️',nm:'Vetting',ph:'SCORE'},
+  {ico:'✍️',nm:'Resume',ph:'TAILOR'},
+  {ico:'📮',nm:'Submission',ph:'APPLY'},
+  {ico:'📡',nm:'Tracking',ph:'TRACK'},
+  {ico:'♻️',nm:'Improve',ph:'TUNE'},
+];
+(function buildConstellation(){
+  const wrap = document.getElementById('constellation');
+  const wires = document.getElementById('wires');
+  const cx=500, cy=281, R=220, Ry=150;
+  // center orchestrator
+  const center={x:cx,y:cy};
+  const pts=[];
+  AGENTS.forEach((a,i)=>{
+    const ang = (-90 + i*(360/AGENTS.length)) * Math.PI/180;
+    const x = cx + Math.cos(ang)*R;
+    const y = cy + Math.sin(ang)*Ry;
+    pts.push({x,y});
+    // wire from center to node
+    const mx=(center.x+x)/2, my=(center.y+y)/2 - 30;
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d',`M${center.x},${center.y} Q${mx},${my} ${x},${y}`);
+    p.style.animationDelay=(i*0.12)+'s';
+    wires.appendChild(p);
+    // travelling spark
+    const s=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    s.setAttribute('r','3.4');s.setAttribute('class','spark');
+    const m=document.createElementNS('http://www.w3.org/2000/svg','animateMotion');
+    m.setAttribute('dur',(2.2+i*0.15)+'s');m.setAttribute('repeatCount','indefinite');
+    m.setAttribute('path',`M${center.x},${center.y} Q${mx},${my} ${x},${y}`);
+    s.appendChild(m);wires.appendChild(s);
+    // node chip
+    const n=document.createElement('div');
+    n.className='node';n.style.left=(x/1000*100)+'%';n.style.top=(y/562*100)+'%';
+    n.innerHTML=`<div class="chip" style="animation-delay:${0.2+i*0.1}s"><div class="ico">${a.ico}</div><div class="nm">${a.nm}</div><div class="ph">${a.ph}</div></div>`;
+    wrap.appendChild(n);
+  });
+  // orchestrator node
+  const o=document.createElement('div');
+  o.className='node center';o.style.left='50%';o.style.top='50%';
+  o.innerHTML=`<div class="chip" style="animation-delay:.05s"><div class="ico">⬢</div><div class="nm">Orchestrator</div><div class="ph">SUPERVISE</div></div>`;
+  wrap.appendChild(o);
+})();
+
+/* router wires (hub → 4 ATS corners) */
+(function buildRouter(){
+  const svg=document.getElementById('routerWires');
+  const hub={x:500,y:210};
+  const targets=[{x:130,y:70},{x:870,y:70},{x:130,y:350},{x:870,y:350}];
+  const grad='url(#wireGrad)';
+  // reuse gradient def from main wires by inlining one
+  const defs=document.createElementNS('http://www.w3.org/2000/svg','defs');
+  defs.innerHTML='<linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9b6bff"/><stop offset="1" stop-color="#ff7ad9"/></linearGradient>';
+  svg.appendChild(defs);
+  targets.forEach((t,i)=>{
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    const mx=(hub.x+t.x)/2, my=(hub.y+t.y)/2;
+    p.setAttribute('d',`M${hub.x},${hub.y} Q${mx},${my} ${t.x},${t.y}`);
+    p.setAttribute('fill','none');p.setAttribute('stroke','url(#rg)');
+    p.setAttribute('stroke-width','1.8');p.setAttribute('stroke-dasharray','5 7');
+    p.style.opacity='.55';p.style.animation=`flow 1.2s linear infinite`;p.style.animationDelay=(i*.1)+'s';
+    svg.appendChild(p);
+    const s=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    s.setAttribute('r','3.2');s.setAttribute('fill','#ff7ad9');
+    s.style.filter='drop-shadow(0 0 6px #ff7ad9)';
+    const m=document.createElementNS('http://www.w3.org/2000/svg','animateMotion');
+    m.setAttribute('dur',(1.6+i*.12)+'s');m.setAttribute('repeatCount','indefinite');
+    m.setAttribute('path',`M${hub.x},${hub.y} Q${mx},${my} ${t.x},${t.y}`);
+    s.appendChild(m);svg.appendChild(s);
+  });
+})();
+
+/* ───────────────────────────  SCENE DIRECTOR  ─────────────────────────── */
+const scenes=[...document.querySelectorAll('.scene')];
+const DUR=[4200,6200,5600,6200,5200,4800,5400,6600]; // ms per scene
+const LABELS=['Intro','The Orchestra','Discovery','Resume Architect','Critique & Approve','Submission','Tracking','The Payoff'];
+const camera=document.getElementById('camera');
+const stage=document.getElementById('stage');
+const fill=document.getElementById('fill');
+const label=document.getElementById('label');
+const cue=document.getElementById('cue');
+let idx=-1, t0=0, raf=0, paused=false, elapsed=0;
+
+// build ticks
+const ticks=document.getElementById('ticks');
+scenes.forEach(()=>ticks.appendChild(document.createElement('i')));
+
+function applyCam(scene){
+  const [x,y,z,s]=(scene.dataset.cam||'0,0,0,1').split(',').map(Number);
+  stage.style.setProperty('--camX',x+'deg');
+  stage.style.setProperty('--camY',y+'deg');
+  stage.style.setProperty('--camZ',z+'px');
+  stage.style.setProperty('--camS',s);
+}
+function setScene(i){
+  if(i===idx) return;
+  scenes.forEach((s,k)=>{
+    s.classList.toggle('is-active',k===i);
+    s.classList.toggle('is-exit',k<i);
+  });
+  applyCam(scenes[i]);
+  label.textContent=`${String(i+1).padStart(2,'0')} · ${LABELS[i]}`;
+  idx=i; t0=performance.now(); elapsed=0;
+  if(i===scenes.length-1) runCounters();
+}
+function runCounters(){
+  document.querySelectorAll('[data-count]').forEach(el=>{
+    const target=+el.dataset.count; const dur=1500; const start=performance.now();
+    (function tick(now){
+      const p=Math.min(1,(now-start)/dur);
+      const e=1-Math.pow(1-p,3);
+      el.textContent=Math.round(target*e).toLocaleString();
+      if(p<1) requestAnimationFrame(tick);
+    })(start);
+  });
+}
+function loop(now){
+  if(!paused){
+    elapsed=now-t0;
+    const segW=100/scenes.length;
+    fill.style.width=(idx*segW + Math.min(1,elapsed/DUR[idx])*segW)+'%';
+    if(elapsed>=DUR[idx]){
+      if(idx<scenes.length-1) setScene(idx+1);
+      else { paused=true; document.getElementById('play').textContent='▶'; cue.textContent='● COMPLETE'; }
+    }
+  }
+  raf=requestAnimationFrame(loop);
+}
+function play(){paused=false;document.getElementById('play').textContent='❚❚';cue.textContent='● PLAYING';if(idx>=scenes.length-1){setScene(0);}}
+function pause(){paused=true;document.getElementById('play').textContent='▶';cue.textContent='❚❚ PAUSED';}
+
+document.getElementById('play').onclick=()=>paused?play():pause();
+document.getElementById('next').onclick=()=>setScene(Math.min(scenes.length-1,idx+1));
+document.getElementById('prev').onclick=()=>setScene(Math.max(0,idx-1));
+document.getElementById('replay').onclick=()=>{setScene(0);play();};
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();paused?play():pause();}
+  if(e.code==='ArrowRight')setScene(Math.min(scenes.length-1,idx+1));
+  if(e.code==='ArrowLeft')setScene(Math.max(0,idx-1));
+  if(e.key==='r'||e.key==='R'){setScene(0);play();}
+});
+
+// kick off
+setScene(0);
+raf=requestAnimationFrame(loop);
+</script>
+</body>
+</html>

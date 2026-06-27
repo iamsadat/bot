@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobhunt"
+version = "0.4.0"
+description = "Production-grade multi-agent job hunting platform — plans, discovers, vets, tailors, submits, and tracks job applications with deliberate reasoning at every step."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "JobHunt" }]
+keywords = ["agents", "job-search", "automation", "ats", "llm", "multi-agent"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Office/Business",
+]
+
+# Core runtime is stdlib-only. The dependencies below are needed for the
+# dashboard server, persistence, and the test suite. Everything else is an
+# optional extra so the agent core stays import-light.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.39"]            # AnthropicLLMClient (Sonnet 4.6 / Opus 4.7)
+pdf = ["weasyprint>=60"]             # PDF resume rendering
+docx = ["python-docx>=1.1"]          # DOCX resume rendering
+postgres = ["psycopg2-binary>=2.9"]  # Postgres TraceStore (SQLite used in dev)
+redis = ["redis>=5.0"]               # queues / pub-sub (FakeRedisClient offline)
+s3 = ["boto3>=1.26"]                 # artifact storage (FakeS3Client offline)
+dev = ["pytest>=8.0", "httpx>=0.27"]
+all = [
+    "anthropic>=0.39", "weasyprint>=60", "python-docx>=1.1",
+    "psycopg2-binary>=2.9", "redis>=5.0", "boto3>=1.26",
+    "pytest>=8.0", "httpx>=0.27",
+]
+
+[project.scripts]
+jobhunt = "jobhunt.__main__:main"
+
+[project.urls]
+Architecture = "https://github.com/iamsadat/bot/blob/main/ARCHITECTURE.md"
+Progress = "https://github.com/iamsadat/bot/blob/main/jobhunt/PROGRESS.md"
+
+[tool.setuptools]
+packages = [
+    "jobhunt",
+    "jobhunt.adapters",
+    "jobhunt.agents",
+    "jobhunt.dashboard",
+    "jobhunt.db",
+    "jobhunt.enrichers",
+    "jobhunt.inbox",
+    "jobhunt.llm",
+    "jobhunt.submitters",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
