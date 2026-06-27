@@ -1,0 +1,1304 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>JobHunt — Interactive Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #08090f;
+  --bg-glow-1: #1e1b4b;
+  --bg-glow-2: #1a1730;
+  --panel: rgba(255,255,255,0.025);
+  --panel-strong: rgba(255,255,255,0.04);
+  --panel-hover: rgba(255,255,255,0.055);
+  --border: rgba(255,255,255,0.07);
+  --border-strong: rgba(255,255,255,0.12);
+  --border-accent: rgba(110,168,254,0.4);
+  --fg: #e7e9ee;
+  --fg-soft: #c7cbd5;
+  --muted: #8088a0;
+  --muted-2: #5e667a;
+  --accent: #6ea8fe;
+  --accent-2: #a78bfa;
+  --accent-grad: linear-gradient(135deg, #6ea8fe 0%, #a78bfa 100%);
+  --accent-grad-hover: linear-gradient(135deg, #82b6ff 0%, #b89dfb 100%);
+  --good: #22d3a8;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --info: #60a5fa;
+  --shadow-card: 0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 32px rgba(0,0,0,0.35);
+  --shadow-hover: 0 1px 0 rgba(255,255,255,0.08) inset, 0 12px 40px rgba(110,168,254,0.12), 0 4px 12px rgba(0,0,0,0.4);
+  --blur: blur(24px) saturate(140%);
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+* , *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  min-height: 100%;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 14px; line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.005em;
+}
+body { overflow-x: hidden; }
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -2;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 0%, var(--bg-glow-1) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 100%, var(--bg-glow-2) 0%, transparent 60%),
+    var(--bg);
+}
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: -1;
+  background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.012) 1px, transparent 0);
+  background-size: 24px 24px;
+  pointer-events: none;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); background-clip: padding-box; }
+.mono { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+.num { font-variant-numeric: tabular-nums; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font: inherit; cursor: pointer; }
+
+/* ════════ HEADER ════════ */
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; border-bottom: 1px solid var(--border);
+  background: rgba(8,9,15,0.65);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  position: sticky; top: 0; z-index: 80;
+  gap: 12px; flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.02em; font-size: 15px; }
+.brand-logo {
+  width: 28px; height: 28px; border-radius: 8px; background: var(--accent-grad);
+  display: grid; place-items: center; color: white; flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset, 0 6px 20px rgba(167,139,250,0.35);
+  animation: pulse-glow 4s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+  0%,100% { box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset, 0 6px 20px rgba(167,139,250,0.35); }
+  50%     { box-shadow: 0 0 0 1px rgba(255,255,255,0.1)  inset, 0 6px 28px rgba(110,168,254,0.5); }
+}
+.brand-logo svg { width: 14px; height: 14px; }
+.brand-name { background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.header-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.badge-demo {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 5px 10px; border-radius: 999px;
+  border: 1px solid rgba(251,191,36,0.4); color: var(--warn);
+  background: rgba(251,191,36,0.1);
+}
+.badge-demo::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warn);
+  box-shadow: 0 0 8px var(--warn); animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.link-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 600;
+  padding: 6px 11px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted);
+  background: var(--panel); transition: all 0.15s var(--ease);
+  text-decoration: none;
+}
+.link-pill:hover { color: var(--fg); border-color: var(--border-strong); background: var(--panel-hover); }
+
+.icon-btn {
+  width: 32px; height: 32px; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--muted);
+  cursor: pointer; transition: all 0.15s var(--ease); flex-shrink: 0;
+}
+.icon-btn:hover { color: var(--fg); border-color: var(--border-strong); background: var(--panel-hover); }
+.icon-btn svg { width: 15px; height: 15px; }
+
+/* ════════ BUTTONS ════════ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 16px; border-radius: 9px; border: 1px solid transparent;
+  font-size: 13px; font-weight: 600; letter-spacing: -0.01em;
+  transition: all 0.18s var(--ease); white-space: nowrap;
+}
+.btn-primary {
+  background: var(--accent-grad); color: white;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 6px 16px rgba(110,168,254,0.25);
+}
+.btn-primary:hover { background: var(--accent-grad-hover); transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset, 0 10px 28px rgba(110,168,254,0.4); }
+.btn-ghost { background: var(--panel); color: var(--fg-soft); border-color: var(--border); }
+.btn-ghost:hover { background: var(--panel-hover); color: var(--fg); border-color: var(--border-strong); }
+.btn-good { background: rgba(34,211,168,0.12); color: var(--good); border-color: rgba(34,211,168,0.3); }
+.btn-good:hover { background: rgba(34,211,168,0.2); }
+.btn-bad { background: rgba(248,113,113,0.1); color: var(--bad); border-color: rgba(248,113,113,0.3); }
+.btn-bad:hover { background: rgba(248,113,113,0.18); }
+.btn-warn { background: rgba(251,191,36,0.1); color: var(--warn); border-color: rgba(251,191,36,0.3); }
+.btn-warn:hover { background: rgba(251,191,36,0.18); }
+.btn-sm { padding: 5px 11px; font-size: 12px; border-radius: 7px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+main {
+  padding: 18px; max-width: 1480px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 18px;
+}
+
+/* ════════ STAT STRIP ════════ */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.stat {
+  padding: 16px 18px; border-radius: 14px;
+  background: var(--panel); border: 1px solid var(--border);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  position: relative; overflow: hidden; transition: all 0.25s var(--ease);
+}
+.stat:hover { background: var(--panel-hover); border-color: var(--border-strong); transform: translateY(-1px); }
+.stat::before {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(135deg, transparent 50%, rgba(110,168,254,0.04));
+  pointer-events: none;
+}
+.stat .sk { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+.stat .sv { font-size: 27px; font-weight: 700; letter-spacing: -0.025em; }
+.stat .sv.grad { background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stat .ss { font-size: 11px; color: var(--muted-2); margin-top: 2px; }
+
+/* ════════ PLAN STRIP ════════ */
+.plan-strip {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 16px 18px; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-card);
+}
+.plan-strip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.plan-strip-head .pt { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.plan-track { display: flex; gap: 0; overflow-x: auto; padding-bottom: 4px; }
+.plan-node {
+  flex: 1; min-width: 118px; display: flex; flex-direction: column; align-items: center;
+  text-align: center; position: relative; padding: 0 6px;
+}
+.plan-node .dot {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--panel-strong); border: 2px solid var(--border); color: var(--muted-2);
+  font-size: 11px; font-weight: 700; transition: all 0.4s var(--ease); margin-bottom: 8px;
+  position: relative; z-index: 2;
+}
+.plan-node .line {
+  position: absolute; top: 13px; left: 0; right: 0; height: 2px;
+  background: var(--border); z-index: 1;
+}
+.plan-node:first-child .line { left: 50%; }
+.plan-node:last-child .line { right: 50%; }
+.plan-node.done .dot { background: var(--good); border-color: var(--good); color: #06281f;
+  box-shadow: 0 0 0 4px rgba(34,211,168,0.15); }
+.plan-node.done .line { background: var(--good); opacity: 0.5; }
+.plan-node.active .dot { background: var(--warn); border-color: var(--warn); color: #2a1d02;
+  box-shadow: 0 0 0 5px rgba(251,191,36,0.2); animation: pulse-glow-step 1.5s ease-in-out infinite; }
+@keyframes pulse-glow-step {
+  0%,100% { box-shadow: 0 0 0 4px rgba(251,191,36,0.18); }
+  50%     { box-shadow: 0 0 0 9px rgba(251,191,36,0.28); }
+}
+.plan-node .pn-agent { font-size: 11.5px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg-soft); }
+.plan-node.done .pn-agent { color: var(--fg); }
+.plan-node .pn-action { font-size: 10px; color: var(--muted-2); margin-top: 2px; line-height: 1.3; max-width: 110px; }
+
+/* ════════ LAYOUT ════════ */
+.layout { display: grid; gap: 16px; grid-template-columns: 1fr; }
+@media (min-width: 1180px) { .layout { grid-template-columns: 320px 1fr 340px; align-items: start; } }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px;
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-card); min-width: 0;
+}
+.panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 8px; }
+.panel-head .pt { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.panel-head .pc { font-size: 11px; font-weight: 600; color: var(--muted-2); padding: 2px 8px; border-radius: 999px; background: var(--panel-strong); }
+
+/* ════════ NAV TABS (mobile) ════════ */
+.tabbar {
+  display: none; gap: 6px; overflow-x: auto; padding: 2px 0 4px;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.tabbar::-webkit-scrollbar { display: none; }
+.tabbar button {
+  flex-shrink: 0; padding: 8px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+  transition: all 0.18s var(--ease);
+}
+.tabbar button.active { background: var(--accent-grad); color: white; border-color: transparent; }
+@media (max-width: 880px) {
+  .tabbar { display: flex; }
+  .layout-section { display: none; }
+  .layout-section.show { display: block; }
+}
+
+/* ════════ KANBAN ════════ */
+.kanban-wrap { overflow-x: auto; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+.kanban-cols {
+  display: grid; gap: 12px; grid-template-columns: repeat(6, minmax(210px, 1fr));
+  min-width: 1320px;
+}
+@media (max-width: 880px) {
+  .kanban-cols { grid-auto-flow: column; grid-template-columns: none; min-width: 0; scroll-snap-type: x mandatory; }
+  .kanban-col { width: 78vw; scroll-snap-align: start; }
+}
+.kanban-col {
+  background: rgba(0,0,0,0.16); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px; min-height: 140px;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease);
+  display: flex; flex-direction: column;
+}
+.kanban-col.drag-over { background: rgba(110,168,254,0.07); border-color: var(--border-accent); }
+.kanban-col .kh {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); margin-bottom: 10px; padding: 0 2px;
+}
+.kanban-col .kc { background: var(--panel-strong); color: var(--fg-soft); padding: 1px 7px; border-radius: 999px; font-size: 10.5px; }
+.kanban-col .kdrop { flex: 1; display: flex; flex-direction: column; min-height: 60px; }
+
+.job-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 11px; margin-bottom: 8px; cursor: grab;
+  transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease), border-color 0.18s var(--ease), opacity 0.18s var(--ease);
+  position: relative; overflow: hidden; touch-action: none;
+}
+.job-card:hover { background: var(--panel-hover); border-color: var(--border-accent); transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.18); }
+.job-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--accent-grad); opacity: 0; transition: opacity 0.18s var(--ease);
+}
+.job-card:hover::before { opacity: 1; }
+.job-card.dragging { opacity: 0.35; cursor: grabbing; }
+.job-card.ghost-drag {
+  position: fixed; z-index: 999; pointer-events: none; width: 200px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.5); transform: scale(1.03) rotate(1deg);
+  border-color: var(--border-accent);
+}
+.job-card .jt { font-size: 13px; font-weight: 600; line-height: 1.35; letter-spacing: -0.01em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.job-card .jc { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.job-card .jtags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.tag {
+  font-size: 10px; padding: 2px 6px; border-radius: 5px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  color: var(--muted); font-weight: 500; letter-spacing: 0.02em;
+}
+.tag.remote { color: var(--good); border-color: rgba(34,211,168,0.3); background: rgba(34,211,168,0.08); }
+.tag.match { color: var(--accent); border-color: rgba(110,168,254,0.3); background: rgba(110,168,254,0.08); }
+.tag.salary { color: var(--accent-2); border-color: rgba(167,139,250,0.3); background: rgba(167,139,250,0.08); }
+.tag.ghost { color: var(--bad); border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.08); }
+.tag.ghost.low { color: var(--good); border-color: rgba(34,211,168,0.3); background: rgba(34,211,168,0.08); }
+.kanban-empty { text-align: center; padding: 18px 6px; color: var(--muted-2); font-size: 11.5px; }
+
+/* ════════ APPROVALS ════════ */
+.appr-card {
+  padding: 13px; background: var(--panel-strong); border: 1px solid var(--border);
+  border-radius: 12px; margin-bottom: 10px; transition: all 0.3s var(--ease);
+}
+.appr-card:hover { border-color: var(--border-accent); }
+.appr-card.leaving { opacity: 0; transform: translateX(40px) scale(0.92); }
+.appr-card .ah { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; gap: 8px; }
+.appr-card .at { font-size: 13.5px; font-weight: 600; line-height: 1.3; flex: 1; }
+.appr-card .ac { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.appr-card .acov { font-size: 11px; color: var(--muted-2); margin-bottom: 10px; }
+.appr-card .acov strong { color: var(--accent); }
+.appr-card .ab { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ════════ STREAM ════════ */
+.stream-controls { display: flex; align-items: center; gap: 6px; }
+.stream { max-height: 480px; overflow-y: auto; padding-right: 4px; list-style: none; }
+.stream li {
+  padding: 8px 0 10px 18px; position: relative; border-bottom: 1px solid var(--border);
+  font-size: 12.5px; line-height: 1.5; opacity: 0;
+}
+.stream li.shown { animation: stream-in 0.45s var(--ease) forwards; opacity: 1; }
+.stream li:last-child { border-bottom: none; }
+.stream li::before {
+  content: ''; position: absolute; left: 0; top: 12px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--agent-color, var(--accent)); box-shadow: 0 0 8px var(--agent-color, rgba(110,168,254,0.6));
+}
+@keyframes stream-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+.stream .sa { display: inline-block; font-weight: 700; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--agent-color, var(--accent)); margin-right: 8px; }
+.stream .st { color: var(--fg-soft); }
+.stream .stt { color: var(--muted-2); font-size: 10px; margin-left: 6px; }
+.typing-cursor { display: inline-block; width: 6px; height: 12px; background: var(--accent);
+  margin-left: 2px; vertical-align: middle; animation: blink 0.9s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ════════ DOCUMENT MODAL ════════ */
+.modal-back {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px); z-index: 90; opacity: 0; pointer-events: none;
+  transition: opacity 0.25s var(--ease);
+}
+.modal-back.show { opacity: 1; pointer-events: auto; }
+.modal {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 100%; max-width: 620px;
+  background: var(--bg); border-left: 1px solid var(--border);
+  box-shadow: -20px 0 60px rgba(0,0,0,0.5); z-index: 100; transform: translateX(100%);
+  transition: transform 0.35s var(--ease); display: flex; flex-direction: column; overflow: hidden;
+}
+.modal.show { transform: translateX(0); }
+@media (max-width: 680px) { .modal { max-width: 100%; } }
+.modal-head {
+  display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.modal-head h3 { font-size: 16.5px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; flex: 1; }
+.modal-head .ds { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.modal-body { flex: 1; overflow-y: auto; padding: 18px 20px; }
+.modal-section { margin-bottom: 22px; }
+.modal-section h4 { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin-bottom: 10px; }
+
+.coverage-wrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.ring-wrap { position: relative; width: 92px; height: 92px; flex-shrink: 0; }
+.ring-wrap svg { width: 92px; height: 92px; transform: rotate(-90deg); }
+.ring-bg { fill: none; stroke: var(--border); stroke-width: 8; }
+.ring-fg { fill: none; stroke-width: 8; stroke-linecap: round; stroke: var(--accent);
+  transition: stroke-dashoffset 1.1s cubic-bezier(0.4,0,0.2,1); }
+.ring-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ring-label .rv { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
+.ring-label .rl { font-size: 9px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.06em; }
+.coverage-meta { font-size: 12px; color: var(--muted); flex: 1; min-width: 140px; }
+.coverage-meta strong { color: var(--fg); }
+
+.kw-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.kw-chip { font-size: 11px; padding: 4px 9px; border-radius: 999px; font-weight: 500; border: 1px solid; }
+.kw-chip.matched { color: var(--good); border-color: rgba(34,211,168,0.3); background: rgba(34,211,168,0.1); }
+.kw-chip.missing { color: var(--warn); border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.08); }
+
+.bullets { display: flex; flex-direction: column; gap: 8px; }
+.bullet-item {
+  display: flex; gap: 8px; align-items: flex-start; padding: 9px 11px;
+  background: rgba(0,0,0,0.16); border: 1px solid var(--border); border-radius: 9px; font-size: 12.5px; line-height: 1.5;
+}
+[data-theme="light"] .bullet-item { background: rgba(255,255,255,0.7); }
+.bullet-item .bev {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--good);
+  background: rgba(34,211,168,0.12); border: 1px solid rgba(34,211,168,0.3);
+  padding: 3px 7px; border-radius: 999px; margin-top: 1px;
+}
+
+.resume-preview {
+  background: rgba(0,0,0,0.18); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px 18px; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  line-height: 1.55; white-space: pre-wrap; max-height: 320px; overflow-y: auto; color: var(--fg-soft);
+}
+
+.status-btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.status-btn {
+  padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  background: var(--panel-strong); color: var(--fg-soft); border: 1px solid var(--border); cursor: pointer;
+  transition: all 0.15s var(--ease);
+}
+.status-btn:hover { background: var(--panel-hover); border-color: var(--border-strong); }
+.status-btn.active { background: var(--accent-grad); color: white; border-color: transparent;
+  box-shadow: 0 4px 12px rgba(110,168,254,0.3); }
+
+/* ════════ MISC ════════ */
+.empty { text-align: center; padding: 22px 12px; color: var(--muted); font-size: 12.5px; }
+.empty-icon { font-size: 20px; margin-bottom: 6px; opacity: 0.4; display: block; }
+
+.toast-stack { position: fixed; bottom: 18px; right: 18px; z-index: 200; display: flex; flex-direction: column;
+  gap: 8px; pointer-events: none; max-width: calc(100vw - 36px); }
+.toast {
+  padding: 11px 16px; background: var(--panel); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,0.4);
+  font-size: 13px; color: var(--fg); animation: toast-in 0.3s var(--ease); max-width: 340px; pointer-events: auto;
+}
+.toast.good { border-color: rgba(34,211,168,0.35); }
+.toast.bad { border-color: rgba(248,113,113,0.35); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+footer { text-align: center; color: var(--muted-2); font-size: 11.5px; padding: 20px 16px 30px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+  <!-- ═════════════════════ HEADER ═════════════════════ -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 17l6-6 4 4 8-8"/>
+          <path d="M14 7h7v7"/>
+        </svg>
+      </div>
+      <span><span class="brand-name">JobHunt</span></span>
+      <span class="badge-demo">Demo mode — sample data</span>
+    </div>
+    <div class="header-right">
+      <a class="link-pill" href="../demo/demo.html" title="Cinematic demo">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l16 9-16 9V3z"/></svg>
+        Cinematic demo
+      </a>
+      <a class="link-pill" href="../tracker/index.html" title="Progress tracker">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Progress tracker
+      </a>
+      <button class="icon-btn" id="btn-theme" aria-label="toggle theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-reset" aria-label="reset demo" title="Reset demo data">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ═════════════════════ STAT STRIP ═════════════════════ -->
+    <div class="stat-row">
+      <div class="stat"><div class="sk">Jobs discovered</div><div class="sv num grad" id="s-jobs">0</div><div class="ss">across 10+ companies</div></div>
+      <div class="stat"><div class="sk">Applications</div><div class="sv num" id="s-applied">0</div><div class="ss">submitted &amp; tracked</div></div>
+      <div class="stat"><div class="sk">Approvals pending</div><div class="sv num" id="s-pending">0</div><div class="ss">awaiting your review</div></div>
+      <div class="stat"><div class="sk">Offers</div><div class="sv num" id="s-offers">0</div><div class="ss">in the pipeline</div></div>
+    </div>
+
+    <!-- ═════════════════════ PLAN STRIP ═════════════════════ -->
+    <div class="plan-strip">
+      <div class="plan-strip-head">
+        <span class="pt">Execution plan — 7-agent pipeline</span>
+        <span class="pc" id="plan-progress">0 / 7</span>
+      </div>
+      <div class="plan-track" id="plan-track"></div>
+    </div>
+
+    <!-- ═════════════════════ MOBILE TABS ═════════════════════ -->
+    <div class="tabbar" id="tabbar">
+      <button class="active" data-tab="board">Kanban</button>
+      <button data-tab="approvals">Approvals</button>
+      <button data-tab="stream">Thought stream</button>
+    </div>
+
+    <div class="layout">
+      <div class="col layout-section" id="section-approvals">
+        <section class="panel">
+          <div class="panel-head">
+            <span class="pt">Awaiting your approval</span>
+            <span class="pc" id="approvals-count">0</span>
+          </div>
+          <div id="approvals-body">
+            <div class="empty"><span class="empty-icon">✓</span>Nothing waiting for you.</div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel layout-section show" id="section-board">
+        <div class="panel-head">
+          <span class="pt">Pipeline</span>
+          <span class="pc">Drag cards · click to open</span>
+        </div>
+        <div class="kanban-wrap">
+          <div class="kanban-cols" id="kanban-body"></div>
+        </div>
+      </section>
+
+      <div class="col layout-section" id="section-stream">
+        <section class="panel">
+          <div class="panel-head">
+            <span class="pt">Live agent thoughts</span>
+            <div class="stream-controls">
+              <span class="pc" id="stream-count">0</span>
+              <button class="icon-btn" id="btn-stream-toggle" aria-label="play/pause stream" title="Play / pause">
+                <svg id="icon-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                <svg id="icon-play" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M7 4l13 8-13 8V4z"/></svg>
+              </button>
+            </div>
+          </div>
+          <ul class="stream" id="stream-list"></ul>
+        </section>
+      </div>
+    </div>
+
+    <footer>
+      Self-contained client-side demo · seeded sample data · resets via localStorage ·
+      Seven agents: Discovery → Vetting → Resume → PeerCritique → Submission → Tracking → Improvement
+    </footer>
+  </main>
+
+  <!-- ═════════════════════ DOCUMENT MODAL ═════════════════════ -->
+  <div class="modal-back" id="modal-back"></div>
+  <aside class="modal" id="modal">
+    <div class="modal-head">
+      <div style="flex:1;">
+        <h3 id="m-title">—</h3>
+        <div class="ds" id="m-sub">—</div>
+      </div>
+      <button class="icon-btn" id="m-close" aria-label="close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </aside>
+
+  <!-- ═════════════════════ TOASTS ═════════════════════ -->
+  <div class="toast-stack" id="toasts"></div>
+
+  <script>
+  'use strict';
+
+  /* ════════════════════════════════════════════════════════════
+     SEED DATA
+     ════════════════════════════════════════════════════════════ */
+  const SEED_JOBS = [
+    { job_id:'j-stripe-1', title:'Senior Backend Engineer, Payments Infra', company:'Stripe', location:'Remote (US)', url:'https://stripe.com/jobs/listing/senior-backend-engineer', source:'greenhouse', relevance_score:0.96, ghost_score:0.04, salary_min:185000, salary_max:240000, remote:true, status:'Interview', posted_at:'2026-06-14T09:00:00Z' },
+    { job_id:'j-vercel-1', title:'Staff Platform Engineer', company:'Vercel', location:'Remote', url:'https://vercel.com/careers/staff-platform-engineer', source:'ashby', relevance_score:0.93, ghost_score:0.07, salary_min:200000, salary_max:260000, remote:true, status:'Assessment', posted_at:'2026-06-12T09:00:00Z' },
+    { job_id:'j-anthropic-1', title:'Backend Engineer, Platform', company:'Anthropic', location:'San Francisco, CA', url:'https://anthropic.com/careers/backend-engineer-platform', source:'greenhouse', relevance_score:0.91, ghost_score:0.03, salary_min:210000, salary_max:280000, remote:false, status:'Applied', posted_at:'2026-06-18T09:00:00Z' },
+    { job_id:'j-ramp-1', title:'Senior Software Engineer, Core Infra', company:'Ramp', location:'New York, NY', url:'https://ramp.com/careers/senior-swe-core-infra', source:'greenhouse', relevance_score:0.88, ghost_score:0.10, salary_min:190000, salary_max:235000, remote:false, status:'Saved', posted_at:'2026-06-20T09:00:00Z' },
+    { job_id:'j-linear-1', title:'Staff Backend Engineer', company:'Linear', location:'Remote (NA/EU)', url:'https://linear.app/careers/staff-backend-engineer', source:'ashby', relevance_score:0.90, ghost_score:0.05, salary_min:195000, salary_max:250000, remote:true, status:'Saved', posted_at:'2026-06-21T09:00:00Z' },
+    { job_id:'j-notion-1', title:'Senior Backend Engineer, Sync', company:'Notion', location:'San Francisco, CA', url:'https://notion.so/careers/senior-backend-engineer-sync', source:'lever', relevance_score:0.85, ghost_score:0.06, salary_min:180000, salary_max:230000, remote:false, status:'Saved', posted_at:'2026-06-19T09:00:00Z' },
+    { job_id:'j-datadog-1', title:'Staff Engineer, Distributed Systems', company:'Datadog', location:'Remote (US)', url:'https://datadoghq.com/careers/staff-engineer-distributed-systems', source:'greenhouse', relevance_score:0.89, ghost_score:0.08, salary_min:205000, salary_max:265000, remote:true, status:'Offer', posted_at:'2026-06-08T09:00:00Z' },
+    { job_id:'j-render-1', title:'Backend Engineer, Platform Infra', company:'Render', location:'Remote', url:'https://render.com/careers/backend-engineer-platform-infra', source:'ashby', relevance_score:0.84, ghost_score:0.12, salary_min:170000, salary_max:215000, remote:true, status:'Saved', posted_at:'2026-06-22T09:00:00Z' },
+    { job_id:'j-flyio-1', title:'Senior Infrastructure Engineer', company:'Fly.io', location:'Remote', url:'https://fly.io/jobs/senior-infrastructure-engineer', source:'lever', relevance_score:0.82, ghost_score:0.22, salary_min:165000, salary_max:205000, remote:true, status:'Closed', posted_at:'2026-06-05T09:00:00Z' },
+    { job_id:'j-supabase-1', title:'Staff Backend Engineer, Database', company:'Supabase', location:'Remote', url:'https://supabase.com/careers/staff-backend-engineer-database', source:'ashby', relevance_score:0.87, ghost_score:0.09, salary_min:185000, salary_max:240000, remote:true, status:'Saved', posted_at:'2026-06-23T09:00:00Z' },
+    { job_id:'j-cloudflare-1', title:'Senior Backend Engineer, Workers', company:'Cloudflare', location:'Austin, TX', url:'https://cloudflare.com/careers/senior-backend-engineer-workers', source:'greenhouse', relevance_score:0.80, ghost_score:0.15, salary_min:175000, salary_max:225000, remote:false, status:'Saved', posted_at:'2026-06-17T09:00:00Z' },
+    { job_id:'j-rippling-1', title:'Staff Software Engineer, Payroll Platform', company:'Rippling', location:'San Francisco, CA', url:'https://rippling.com/careers/staff-swe-payroll-platform', source:'lever', relevance_score:0.78, ghost_score:0.31, salary_min:190000, salary_max:245000, remote:false, status:'Saved', posted_at:'2026-06-10T09:00:00Z' },
+  ];
+
+  const SEED_DOCUMENTS = {
+    'j-stripe-1': {
+      job_id:'j-stripe-1', company:'Stripe', title:'Senior Backend Engineer, Payments Infra',
+      url:'https://stripe.com/jobs/listing/senior-backend-engineer',
+      resume_text:
+`ALEX MORGAN
+Senior Backend Engineer · alex.morgan@email.com · github.com/amorgan
+
+SUMMARY
+Backend engineer with 7 years building high-throughput payments and ledger
+systems. Deep experience with idempotent APIs, distributed transactions,
+and on-call ownership of systems processing >$2B/yr in volume.
+
+EXPERIENCE
+Senior Backend Engineer — Increment Pay (2022–2026)
+- Designed an idempotency-key service handling 40k req/s with exactly-once
+  semantics, cutting duplicate-charge incidents to zero over 18 months.
+- Led migration of the ledger service from Postgres to a sharded
+  architecture, reducing p99 write latency from 480ms to 60ms.
+- Built a reconciliation pipeline reconciling 12M daily transactions
+  against bank settlement files with automatic drift alerting.
+- Mentored 4 engineers; ran the payments on-call rotation for 2 years
+  with a 99.99% uptime SLA.
+
+Backend Engineer — Lattice Systems (2019–2022)
+- Implemented webhook delivery infrastructure with retry/backoff and
+  signature verification, used by 300+ partner integrations.
+- Owned API gateway rate limiting using a token-bucket algorithm in Redis.
+
+SKILLS
+Go, Python, PostgreSQL, Kafka, Redis, gRPC, idempotency, distributed
+transactions, double-entry ledgers, observability (Datadog, OpenTelemetry)`,
+      cover_letter_text:
+`Dear Stripe Hiring Team,
+
+I'm applying for the Senior Backend Engineer, Payments Infra role. I've
+spent the last four years building idempotent, exactly-once payment
+systems at the scale Stripe operates at, including a ledger migration
+that cut write latency 8x while processing $2B+ annually.
+
+I'd love to bring that experience to Stripe's infra org — particularly
+around reconciliation correctness and distributed transaction safety.
+
+Best,
+Alex Morgan`,
+      keyword_coverage:0.92,
+      matched_keywords:['idempotency','distributed transactions','ledger','Postgres','Kafka','Redis','gRPC','on-call','reconciliation'],
+      missing_keywords:['Ruby','Sorbet'],
+      bullets:[
+        'Designed idempotency-key service handling 40k req/s with exactly-once semantics',
+        'Reduced p99 ledger write latency from 480ms to 60ms via sharded migration',
+        'Built reconciliation pipeline for 12M daily transactions with drift alerting',
+        'Ran payments on-call rotation for 2 years at 99.99% uptime',
+      ],
+    },
+    'j-vercel-1': {
+      job_id:'j-vercel-1', company:'Vercel', title:'Staff Platform Engineer',
+      url:'https://vercel.com/careers/staff-platform-engineer',
+      resume_text:
+`ALEX MORGAN
+Staff Platform Engineer · alex.morgan@email.com · github.com/amorgan
+
+SUMMARY
+Platform engineer focused on multi-tenant build systems, edge runtimes,
+and developer-facing infrastructure at scale.
+
+EXPERIENCE
+Senior Backend Engineer — Increment Pay (2022–2026)
+- Built an internal PaaS control plane orchestrating 2,000+ ephemeral
+  build containers/day across multi-region Kubernetes clusters.
+- Designed a deploy pipeline with atomic rollbacks and edge cache
+  invalidation propagating in under 400ms globally.
+- Owned the internal CLI and SDK consumed by 150+ engineers.
+
+Backend Engineer — Lattice Systems (2019–2022)
+- Built a serverless function runtime with cold-start under 80ms using
+  pre-warmed isolate pools.
+
+SKILLS
+TypeScript, Go, Kubernetes, edge runtimes, serverless, CDN cache
+invalidation, build systems, multi-tenancy, observability`,
+      cover_letter_text:
+`Dear Vercel Team,
+
+The Staff Platform Engineer role is squarely in my lane — I've spent
+the last two years building a PaaS control plane orchestrating
+thousands of daily ephemeral builds, plus a sub-400ms global cache
+invalidation pipeline.
+
+I'd welcome the chance to bring that to Vercel's edge platform.
+
+Best,
+Alex Morgan`,
+      keyword_coverage:0.78,
+      matched_keywords:['Kubernetes','edge runtime','serverless','CDN','multi-tenancy','build systems'],
+      missing_keywords:['Next.js','Rust','WASM','Turborepo'],
+      bullets:[
+        'Built internal PaaS orchestrating 2,000+ ephemeral build containers/day',
+        'Designed deploy pipeline with edge cache invalidation under 400ms globally',
+        'Owned internal CLI/SDK used by 150+ engineers',
+        'Built serverless runtime with sub-80ms cold starts via isolate pre-warming',
+      ],
+    },
+    'j-anthropic-1': {
+      job_id:'j-anthropic-1', company:'Anthropic', title:'Backend Engineer, Platform',
+      url:'https://anthropic.com/careers/backend-engineer-platform',
+      resume_text:
+`ALEX MORGAN
+Backend Engineer · alex.morgan@email.com · github.com/amorgan
+
+SUMMARY
+Backend engineer experienced in high-availability API platforms,
+rate limiting, and request routing for latency-sensitive workloads.
+
+EXPERIENCE
+Senior Backend Engineer — Increment Pay (2022–2026)
+- Built a global API gateway handling 60k req/s with per-tenant rate
+  limiting and graceful degradation under load.
+- Designed a request-routing layer with health-aware load balancing,
+  cutting P99 latency 35% during peak traffic.
+- Operated services across multi-region failover with <30s RTO.
+
+Backend Engineer — Lattice Systems (2019–2022)
+- Implemented streaming response infrastructure for long-running jobs
+  using Server-Sent Events and chunked transfer encoding.
+
+SKILLS
+Go, Python, Kubernetes, gRPC, rate limiting, load balancing, streaming
+APIs, multi-region failover, observability (Datadog, OpenTelemetry)`,
+      cover_letter_text:
+`Dear Anthropic Platform Team,
+
+I'm excited about the Backend Engineer, Platform role. I've built
+API gateways at 60k req/s with per-tenant rate limiting and
+multi-region failover under 30 seconds RTO — exactly the kind of
+reliability work that platform infra for an AI lab demands.
+
+Best,
+Alex Morgan`,
+      keyword_coverage:0.81,
+      matched_keywords:['API gateway','rate limiting','load balancing','Kubernetes','gRPC','multi-region','streaming'],
+      missing_keywords:['Rust','Bazel','Tritium'],
+      bullets:[
+        'Built global API gateway handling 60k req/s with per-tenant rate limiting',
+        'Cut P99 latency 35% during peak traffic via health-aware routing',
+        'Operated multi-region failover with under 30 second RTO',
+        'Implemented SSE streaming infrastructure for long-running jobs',
+      ],
+    },
+    'j-datadog-1': {
+      job_id:'j-datadog-1', company:'Datadog', title:'Staff Engineer, Distributed Systems',
+      url:'https://datadoghq.com/careers/staff-engineer-distributed-systems',
+      resume_text:
+`ALEX MORGAN
+Staff Engineer · alex.morgan@email.com · github.com/amorgan
+
+SUMMARY
+Staff-level backend engineer specializing in high-cardinality time
+series ingestion, distributed storage, and observability tooling.
+
+EXPERIENCE
+Senior Backend Engineer — Increment Pay (2022–2026)
+- Built a metrics ingestion pipeline handling 4M data points/sec with
+  a custom columnar storage format, cutting storage costs 45%.
+- Designed a distributed tracing backend supporting 200k spans/sec
+  with tail-based sampling.
+- Led the on-call observability guild; built internal SLO tooling
+  adopted org-wide.
+
+Backend Engineer — Lattice Systems (2019–2022)
+- Built a log aggregation system ingesting 1TB/day with query latency
+  under 2s for 30-day lookback windows.
+
+SKILLS
+Go, Rust, time series databases, distributed tracing, Kafka, columnar
+storage, observability, SLOs, Kubernetes`,
+      cover_letter_text:
+`Dear Datadog Team,
+
+I've spent my career building the exact systems Datadog runs in
+production — high-cardinality time series ingestion at millions of
+points per second, distributed tracing with tail-based sampling, and
+SLO tooling adopted org-wide. I'd love to bring that to the Staff
+Engineer, Distributed Systems role.
+
+Best,
+Alex Morgan`,
+      keyword_coverage:0.95,
+      matched_keywords:['time series','distributed tracing','Kafka','observability','SLOs','Kubernetes','columnar storage'],
+      missing_keywords:['Cassandra'],
+      bullets:[
+        'Built metrics ingestion pipeline handling 4M points/sec, cutting storage 45%',
+        'Designed distributed tracing backend supporting 200k spans/sec',
+        'Led observability guild; built SLO tooling adopted org-wide',
+        'Built log aggregation system ingesting 1TB/day with sub-2s query latency',
+      ],
+    },
+    'j-supabase-1': {
+      job_id:'j-supabase-1', company:'Supabase', title:'Staff Backend Engineer, Database',
+      url:'https://supabase.com/careers/staff-backend-engineer-database',
+      resume_text:
+`ALEX MORGAN
+Staff Backend Engineer · alex.morgan@email.com · github.com/amorgan
+
+SUMMARY
+Backend engineer with deep Postgres internals experience: replication,
+connection pooling, and extension development at scale.
+
+EXPERIENCE
+Senior Backend Engineer — Increment Pay (2022–2026)
+- Built a logical replication pipeline syncing 80 Postgres shards to a
+  read-optimized analytics cluster with <5s lag.
+- Wrote a custom Postgres extension for row-level encryption used by
+  all PCI-scoped tables.
+- Operated a PgBouncer fleet handling 200k concurrent connections.
+
+Backend Engineer — Lattice Systems (2019–2022)
+- Built a schema-migration framework with zero-downtime online DDL
+  for tables exceeding 500M rows.
+
+SKILLS
+PostgreSQL, logical replication, PgBouncer, Rust, C, row-level security,
+online schema migrations, Kubernetes`,
+      cover_letter_text:
+`Dear Supabase Team,
+
+The Staff Backend Engineer, Database role is a strong match — I've
+built logical replication pipelines across 80 Postgres shards, written
+custom Postgres extensions for row-level encryption, and run online
+schema migrations on 500M+ row tables without downtime.
+
+Best,
+Alex Morgan`,
+      keyword_coverage:0.88,
+      matched_keywords:['PostgreSQL','logical replication','PgBouncer','row-level security','schema migrations'],
+      missing_keywords:['pgvector','Elixir'],
+      bullets:[
+        'Built logical replication pipeline across 80 Postgres shards with <5s lag',
+        'Wrote custom Postgres extension for row-level encryption on PCI tables',
+        'Operated PgBouncer fleet handling 200k concurrent connections',
+        'Built zero-downtime schema-migration framework for 500M+ row tables',
+      ],
+    },
+  };
+
+  const SEED_APPROVALS = [
+    { request_id:'appr-1', job_id:'j-ramp-1', company:'Ramp', title:'Senior Software Engineer, Core Infra', state:'PENDING', coverage:0.74 },
+    { request_id:'appr-2', job_id:'j-linear-1', company:'Linear', title:'Staff Backend Engineer', state:'PENDING', coverage:0.83 },
+    { request_id:'appr-3', job_id:'j-notion-1', company:'Notion', title:'Senior Backend Engineer, Sync', state:'PENDING', coverage:0.69 },
+  ];
+
+  const PLAN_STEPS = [
+    { step_id:'p1', agent:'Orchestrator', action:'Build execution plan from profile + preferences', status:'done' },
+    { step_id:'p2', agent:'Discovery', action:'Crawl Greenhouse/Lever/Ashby boards for matching postings', status:'done' },
+    { step_id:'p3', agent:'Vetting', action:'Score relevance + ghost-listing risk per posting', status:'done' },
+    { step_id:'p4', agent:'Resume', action:'Tailor resume + cover letter per role, extract bullets', status:'done' },
+    { step_id:'p5', agent:'PeerCritique', action:'Cross-check tailored docs for evidence and tone', status:'done' },
+    { step_id:'p6', agent:'Submission', action:'Queue approved applications for submission', status:'active' },
+    { step_id:'p7', agent:'Tracking', action:'Watch inbox + ATS portals for status changes', status:'pending' },
+  ];
+
+  const AGENT_COLORS = {
+    Orchestrator:'#a78bfa', Discovery:'#6ea8fe', Vetting:'#fbbf24',
+    Resume:'#22d3a8', PeerCritique:'#f472b6', Submission:'#60a5fa',
+    Tracking:'#34d399', Improvement:'#f59e0b',
+  };
+
+  const SEED_THOUGHTS = [
+    { agent:'Orchestrator', message:'Plan built: 7 steps across discovery, vetting, tailoring, critique, submission, and tracking.' },
+    { agent:'Orchestrator', message:'Profile loaded — target roles: backend engineer, staff engineer. Locations: Remote, SF, NYC.' },
+    { agent:'Discovery', message:'Querying Greenhouse boards: stripe, anthropic, ramp, cloudflare, rippling…' },
+    { agent:'Discovery', message:'Querying Ashby boards: vercel, linear, render, supabase…' },
+    { agent:'Discovery', message:'Querying Lever boards: notion, fly-io…' },
+    { agent:'Discovery', message:'Found 12 candidate postings matching target roles and locations.' },
+    { agent:'Discovery', message:'Deduplicated 2 cross-posted listings (Stripe, Datadog) by canonical URL.' },
+    { agent:'Vetting', message:'Scoring relevance against skills: Go, Python, Postgres, Kafka, Kubernetes, distributed systems.' },
+    { agent:'Vetting', message:'Stripe — Senior Backend Engineer, Payments Infra: relevance 96%, ghost-score 4% (low risk).' },
+    { agent:'Vetting', message:'Rippling — Staff SWE, Payroll Platform: ghost-score 31% — stale posting, reposted 3x in 90 days. Flagging for caution.' },
+    { agent:'Vetting', message:'Fly.io — Senior Infrastructure Engineer: ghost-score 22% — hiring manager unresponsive on similar past roles.' },
+    { agent:'Vetting', message:'Vetting complete — 12 postings scored, sorted by relevance × inverse ghost-risk.' },
+    { agent:'Resume', message:'Tailoring resume for Stripe — emphasizing idempotency, ledger systems, reconciliation pipelines.' },
+    { agent:'Resume', message:'Tailoring resume for Datadog — emphasizing time-series ingestion and distributed tracing experience.' },
+    { agent:'Resume', message:'Tailoring resume for Vercel — emphasizing PaaS control plane and edge cache invalidation work.' },
+    { agent:'Resume', message:'Tailoring resume for Anthropic — emphasizing API gateway rate limiting and multi-region failover.' },
+    { agent:'Resume', message:'Tailoring resume for Supabase — emphasizing Postgres logical replication and extension development.' },
+    { agent:'Resume', message:'Tailoring resume for Ramp, Linear, and Notion — coverage running lower (69–83%), missing some niche keywords.' },
+    { agent:'PeerCritique', message:'Reviewing Stripe draft — every bullet traces to a verifiable resume line. Approved for submission queue.' },
+    { agent:'PeerCritique', message:'Reviewing Datadog draft — coverage 95%, strong evidence chain. Approved for submission queue.' },
+    { agent:'PeerCritique', message:'Reviewing Ramp draft — coverage only 74%, missing "fraud detection" and "card issuance" keywords. Flagging for human review before submission.' },
+    { agent:'PeerCritique', message:'Reviewing Notion draft — coverage 69%, weakest of the batch. Recommend human edit pass before approval.' },
+    { agent:'approval', message:'Tailored resume ready: Ramp — Senior Software Engineer, Core Infra (coverage 74%). Awaiting your approval.' },
+    { agent:'approval', message:'Tailored resume ready: Linear — Staff Backend Engineer (coverage 83%). Awaiting your approval.' },
+    { agent:'approval', message:'Tailored resume ready: Notion — Senior Backend Engineer, Sync (coverage 69%). Awaiting your approval.' },
+    { agent:'Submission', message:'Stripe application approved by user — submitting via Greenhouse application form.' },
+    { agent:'Submission', message:'Datadog application approved by user — submitted, confirmation received from ATS.' },
+    { agent:'Submission', message:'Anthropic application submitted via Greenhouse — confirmation email received.' },
+    { agent:'Tracking', message:'Stripe → Applied → Interview: recruiter screen scheduled for next Tuesday, 2pm.' },
+    { agent:'Tracking', message:'Datadog → Interview → Offer: hiring manager extended an offer this morning.' },
+    { agent:'Tracking', message:'Vercel → Applied → Assessment: take-home project link received, 5-day window.' },
+    { agent:'Tracking', message:'Fly.io → Applied → Closed: role was paused — recruiter confirmed via email.' },
+    { agent:'Improvement', message:'Noticed Ramp and Notion drafts under 80% coverage — updating tailoring prompt to weight domain-specific terms higher next cycle.' },
+  ];
+
+  /* ════════════════════════════════════════════════════════════
+     STATE + PERSISTENCE
+     ════════════════════════════════════════════════════════════ */
+  const LS_KEY = 'jobhunt_demo_v1';
+  const $ = (id) => document.getElementById(id);
+  const $$ = (q) => document.querySelectorAll(q);
+
+  function seedState() {
+    return {
+      jobs: SEED_JOBS.map(j => ({ ...j })),
+      approvals: SEED_APPROVALS.map(a => ({ ...a })),
+      streamSeen: 0,
+      theme: 'dark',
+    };
+  }
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return seedState();
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.jobs)) return seedState();
+      return parsed;
+    } catch { return seedState(); }
+  }
+  function saveState() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {}
+  }
+
+  let state = loadState();
+
+  /* ════════════════════════════════════════════════════════════
+     CONSTANTS + FORMAT HELPERS
+     ════════════════════════════════════════════════════════════ */
+  const STATUSES = ['Saved','Applied','Assessment','Interview','Offer','Closed'];
+  const ACTIVE_STATUSES = ['Applied','Assessment','Interview','Offer'];
+
+  const fmtSalary = (a,b) => {
+    if(!a && !b) return null;
+    const k = n => '$'+Math.round(n/1000)+'k';
+    return (a?k(a):'') + (a&&b?'–':'') + (b?k(b):'');
+  };
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  /* ════════════════════════════════════════════════════════════
+     STAT STRIP (animated count-ups)
+     ════════════════════════════════════════════════════════════ */
+  const easeOut = t => 1 - Math.pow(1 - t, 3);
+  function countUp(el, to){
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(reduce){ el.textContent = to; return; }
+    const from = parseInt(el.textContent,10) || 0, dur = 900, t0 = performance.now();
+    function step(now){
+      const p = Math.min(1,(now-t0)/dur);
+      el.textContent = Math.round(from + (to-from)*easeOut(p));
+      if(p<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  function renderStats(){
+    const jobs = state.jobs.length;
+    const applied = state.jobs.filter(j => ACTIVE_STATUSES.includes(j.status)).length;
+    const pending = state.approvals.filter(a => a.state==='PENDING').length;
+    const offers = state.jobs.filter(j => j.status==='Offer').length;
+    countUp($('s-jobs'), jobs);
+    countUp($('s-applied'), applied);
+    countUp($('s-pending'), pending);
+    countUp($('s-offers'), offers);
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     PLAN STRIP
+     ════════════════════════════════════════════════════════════ */
+  function renderPlan(){
+    const track = $('plan-track');
+    track.innerHTML = '';
+    let done = 0;
+    PLAN_STEPS.forEach((s,i) => {
+      if(s.status==='done') done++;
+      const node = document.createElement('div');
+      node.className = 'plan-node ' + s.status;
+      node.innerHTML =
+        `<div class="line"></div>`+
+        `<div class="dot">${s.status==='done' ? '✓' : (i+1)}</div>`+
+        `<div class="pn-agent">${esc(s.agent)}</div>`+
+        `<div class="pn-action">${esc(s.action)}</div>`;
+      track.appendChild(node);
+    });
+    $('plan-progress').textContent = `${done} / ${PLAN_STEPS.length}`;
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     KANBAN
+     ════════════════════════════════════════════════════════════ */
+  function jobCardHTML(j){
+    const sal = fmtSalary(j.salary_min, j.salary_max);
+    const ghostLow = j.ghost_score < 0.15;
+    const tags = [];
+    tags.push(`<span class="tag match">${Math.round(j.relevance_score*100)}% match</span>`);
+    tags.push(`<span class="tag ghost ${ghostLow?'low':''}">ghost ${Math.round(j.ghost_score*100)}%</span>`);
+    if(sal) tags.push(`<span class="tag salary">${sal}</span>`);
+    if(j.remote) tags.push(`<span class="tag remote">remote</span>`);
+    return `<div class="job-card" data-job="${j.job_id}" tabindex="0" role="button"
+        aria-label="${esc(j.company)} — ${esc(j.title)}">
+      <div class="jt">${esc(j.title)}</div>
+      <div class="jc">${esc(j.company)} · ${esc(j.location)}</div>
+      <div class="jtags">${tags.join('')}</div>
+    </div>`;
+  }
+  function renderKanban(){
+    const body = $('kanban-body');
+    body.innerHTML = '';
+    STATUSES.forEach(status => {
+      const jobs = state.jobs.filter(j => j.status===status);
+      const col = document.createElement('div');
+      col.className = 'kanban-col';
+      col.dataset.status = status;
+      col.innerHTML =
+        `<div class="kh"><span>${status}</span><span class="kc">${jobs.length}</span></div>`+
+        `<div class="kdrop">`+
+          (jobs.length ? jobs.map(jobCardHTML).join('')
+                       : `<div class="kanban-empty">—</div>`)+
+        `</div>`;
+      body.appendChild(col);
+    });
+    wireCards();
+  }
+
+  /* ───────── pointer-based drag & drop (mouse + touch) ───────── */
+  let drag = null;
+  function wireCards(){
+    $$('#kanban-body .job-card').forEach(card => {
+      card.addEventListener('pointerdown', onPointerDown);
+      card.addEventListener('keydown', e => {
+        if(e.key==='Enter' || e.key===' '){ e.preventDefault(); openDoc(card.dataset.job); }
+      });
+    });
+  }
+  function onPointerDown(e){
+    if(e.button && e.button!==0) return;
+    const card = e.currentTarget;
+    drag = { card, jobId: card.dataset.job, startX: e.clientX, startY: e.clientY,
+             ghost: null, moved: false, overCol: null };
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp, { once:true });
+  }
+  function onPointerMove(e){
+    if(!drag) return;
+    const dx = e.clientX-drag.startX, dy = e.clientY-drag.startY;
+    if(!drag.moved && Math.hypot(dx,dy) < 7) return;
+    if(!drag.moved){
+      drag.moved = true;
+      const r = drag.card.getBoundingClientRect();
+      drag.offX = drag.startX - r.left; drag.offY = drag.startY - r.top;
+      const g = drag.card.cloneNode(true);
+      g.classList.add('ghost-drag');
+      g.style.width = r.width+'px';
+      document.body.appendChild(g);
+      drag.ghost = g;
+      drag.card.classList.add('dragging');
+    }
+    drag.ghost.style.left = (e.clientX-drag.offX)+'px';
+    drag.ghost.style.top  = (e.clientY-drag.offY)+'px';
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const col = el && el.closest && el.closest('.kanban-col');
+    if(col !== drag.overCol){
+      if(drag.overCol) drag.overCol.classList.remove('drag-over');
+      drag.overCol = col;
+      if(col) col.classList.add('drag-over');
+    }
+  }
+  function onPointerUp(e){
+    document.removeEventListener('pointermove', onPointerMove);
+    if(!drag) return;
+    const d = drag; drag = null;
+    if(d.ghost) d.ghost.remove();
+    d.card.classList.remove('dragging');
+    if(d.overCol) d.overCol.classList.remove('drag-over');
+    if(!d.moved){ openDoc(d.jobId); return; }            // a tap, not a drag
+    if(d.overCol){
+      const newStatus = d.overCol.dataset.status;
+      setJobStatus(d.jobId, newStatus, true);
+    }
+  }
+  function setJobStatus(jobId, newStatus, fromDrag){
+    const j = state.jobs.find(x => x.job_id===jobId);
+    if(!j || j.status===newStatus) { if(fromDrag) renderKanban(); return; }
+    const old = j.status;
+    j.status = newStatus;
+    saveState();
+    renderKanban(); renderStats();
+    addThought('Tracking', `${j.company} → ${j.title}: ${old} → ${newStatus}.`);
+    toast(`${j.company}: ${old} → ${newStatus}`, 'good');
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     APPROVALS
+     ════════════════════════════════════════════════════════════ */
+  function renderApprovals(){
+    const pend = state.approvals.filter(a => a.state==='PENDING');
+    $('approvals-count').textContent = pend.length;
+    const body = $('approvals-body');
+    if(!pend.length){
+      body.innerHTML = `<div class="empty"><span class="empty-icon">✓</span>Nothing waiting for you.</div>`;
+      return;
+    }
+    body.innerHTML = pend.map(a => `
+      <div class="appr-card" data-appr="${a.request_id}">
+        <div class="ah"><div class="at">${esc(a.title)}</div></div>
+        <div class="ac">${esc(a.company)}</div>
+        <div class="acov">Keyword coverage <strong>${Math.round((a.coverage||0)*100)}%</strong></div>
+        <div class="ab">
+          <button class="status-btn" data-doc="${a.job_id}">Review</button>
+          <button class="status-btn active" data-approve="${a.request_id}">Approve</button>
+          <button class="status-btn" data-reject="${a.request_id}">Reject</button>
+        </div>
+      </div>`).join('');
+    body.querySelectorAll('[data-approve]').forEach(b =>
+      b.addEventListener('click', () => decide(b.dataset.approve, 'approve')));
+    body.querySelectorAll('[data-reject]').forEach(b =>
+      b.addEventListener('click', () => decide(b.dataset.reject, 'reject')));
+    body.querySelectorAll('[data-doc]').forEach(b =>
+      b.addEventListener('click', () => openDoc(b.dataset.doc)));
+  }
+  function decide(reqId, verb){
+    const a = state.approvals.find(x => x.request_id===reqId);
+    if(!a) return;
+    const cardEl = document.querySelector(`[data-appr="${reqId}"]`);
+    a.state = verb==='approve' ? 'APPROVED' : 'REJECTED';
+    if(verb==='approve'){
+      const j = state.jobs.find(x => x.job_id===a.job_id);
+      if(j && j.status==='Saved'){ j.status='Applied'; }
+      addThought('Submission', `${a.company} approved by you — queued for submission via ATS.`);
+      toast(`Approved ${a.company} — moved to Applied`, 'good');
+    } else {
+      addThought('approval', `${a.company} rejected by you — removed from the queue.`);
+      toast(`Rejected ${a.company}`, 'bad');
+    }
+    saveState();
+    const finish = () => { renderApprovals(); renderKanban(); renderStats(); };
+    if(cardEl){ cardEl.classList.add('leaving'); setTimeout(finish, 320); }
+    else finish();
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     DOCUMENT MODAL
+     ════════════════════════════════════════════════════════════ */
+  function openDoc(jobId){
+    const job = state.jobs.find(j => j.job_id===jobId);
+    const doc = SEED_DOCUMENTS[jobId];
+    if(!doc){
+      toast(`No tailored resume yet for ${job? job.company : 'this role'}`, '');
+      return;
+    }
+    $('m-title').textContent = `${doc.company} — ${doc.title}`;
+    $('m-sub').textContent = job ? `${job.location} · ${job.source} · status: ${job.status}` : doc.url;
+    const cov = Math.round((doc.keyword_coverage||0)*100);
+    const C = 2*Math.PI*40, off = C*(1-(doc.keyword_coverage||0));
+    const matched = (doc.matched_keywords||[]).map(k=>`<span class="kw-chip matched">${esc(k)}</span>`).join('');
+    const missing = (doc.missing_keywords||[]).map(k=>`<span class="kw-chip missing">${esc(k)}</span>`).join('');
+    const bullets = (doc.bullets||[]).map(b=>
+      `<div class="bullet-item"><span class="bev">✓ evidence</span><span>${esc(b)}</span></div>`).join('');
+    const statusBtns = STATUSES.map(s =>
+      `<button class="status-btn ${job&&job.status===s?'active':''}" data-set="${s}">${s}</button>`).join('');
+    $('modal-body').innerHTML = `
+      <div class="modal-section">
+        <h4>Keyword coverage</h4>
+        <div class="coverage-wrap">
+          <div class="ring-wrap">
+            <svg viewBox="0 0 92 92">
+              <circle class="ring-bg" cx="46" cy="46" r="40"/>
+              <circle class="ring-fg" cx="46" cy="46" r="40"
+                stroke-dasharray="${C}" stroke-dashoffset="${C}" data-off="${off}"
+                stroke="${cov>=85?'var(--good)':cov>=70?'var(--accent)':'var(--warn)'}"/>
+            </svg>
+            <div class="ring-label"><span class="rv">${cov}%</span><span class="rl">match</span></div>
+          </div>
+          <div class="coverage-meta">
+            <strong>${(doc.matched_keywords||[]).length}</strong> matched ·
+            <strong>${(doc.missing_keywords||[]).length}</strong> missing keywords.
+            ${cov>=85?'Strong evidence chain — ready to ship.':cov>=70?'Solid; a human glance recommended.':'Below target — edit before submitting.'}
+          </div>
+        </div>
+      </div>
+      <div class="modal-section"><h4>Matched keywords</h4><div class="kw-chips">${matched||'<span class="rl">none</span>'}</div></div>
+      <div class="modal-section"><h4>Missing keywords</h4><div class="kw-chips">${missing||'<span class="rl">none</span>'}</div></div>
+      <div class="modal-section"><h4>Evidence-cited bullets</h4><div class="bullets">${bullets}</div></div>
+      <div class="modal-section"><h4>Move to status</h4><div class="status-btn-row">${statusBtns}</div></div>
+      <div class="modal-section"><h4>Tailored resume</h4><div class="resume-preview">${esc(doc.resume_text)}</div></div>
+      <div class="modal-section"><h4>Cover letter</h4><div class="resume-preview">${esc(doc.cover_letter_text)}</div></div>`;
+    $('modal-body').querySelectorAll('[data-set]').forEach(b =>
+      b.addEventListener('click', () => { setJobStatus(jobId, b.dataset.set, false);
+        b.parentElement.querySelectorAll('.status-btn').forEach(x=>x.classList.remove('active'));
+        b.classList.add('active'); $('m-sub').textContent =
+          job ? `${job.location} · ${job.source} · status: ${b.dataset.set}` : doc.url; }));
+    $('modal-back').classList.add('show');
+    $('modal').classList.add('show');
+    // animate the ring after paint
+    requestAnimationFrame(() => { const fg = $('modal-body').querySelector('.ring-fg');
+      if(fg) fg.style.strokeDashoffset = fg.dataset.off; });
+  }
+  function closeModal(){ $('modal-back').classList.remove('show'); $('modal').classList.remove('show'); }
+
+  /* ════════════════════════════════════════════════════════════
+     THOUGHT STREAM (typewriter replay)
+     ════════════════════════════════════════════════════════════ */
+  let streamTimer = null, streamPlaying = true, streamIdx = 0;
+  function agentColor(a){ return AGENT_COLORS[a] || (a==='approval' ? '#fbbf24' : 'var(--accent)'); }
+  function appendThoughtLI(t, typed){
+    const list = $('stream-list');
+    const li = document.createElement('li');
+    li.style.setProperty('--agent-color', agentColor(t.agent));
+    const label = t.agent==='approval' ? 'APPROVAL' : t.agent;
+    li.innerHTML = `<span class="sa">${esc(label)}</span><span class="st"></span>`;
+    list.appendChild(li);
+    requestAnimationFrame(() => li.classList.add('shown'));
+    const target = li.querySelector('.st');
+    $('stream-count').textContent = list.children.length;
+    list.scrollTop = list.scrollHeight;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(!typed || reduce){ target.textContent = t.message; return Promise.resolve(); }
+    return new Promise(res => {
+      const cursor = document.createElement('span'); cursor.className='typing-cursor';
+      li.appendChild(cursor);
+      let i = 0; const txt = t.message;
+      const iv = setInterval(() => {
+        target.textContent = txt.slice(0, ++i);
+        list.scrollTop = list.scrollHeight;
+        if(i >= txt.length){ clearInterval(iv); cursor.remove(); res(); }
+      }, 14);
+    });
+  }
+  function scheduleNext(){
+    if(!streamPlaying || streamIdx >= SEED_THOUGHTS.length){ if(streamIdx>=SEED_THOUGHTS.length) updateToggleIcon(); return; }
+    appendThoughtLI(SEED_THOUGHTS[streamIdx++], true).then(() => {
+      state.streamSeen = streamIdx; saveState();
+      streamTimer = setTimeout(scheduleNext, 650);
+    });
+  }
+  function startStream(){
+    const list = $('stream-list'); list.innerHTML = '';
+    // instantly show already-seen, then live-type the rest
+    const seen = Math.min(state.streamSeen||0, SEED_THOUGHTS.length);
+    for(let i=0;i<seen;i++) appendThoughtLI(SEED_THOUGHTS[i], false);
+    streamIdx = seen;
+    streamPlaying = true; updateToggleIcon();
+    clearTimeout(streamTimer);
+    streamTimer = setTimeout(scheduleNext, 500);
+  }
+  function toggleStream(){
+    streamPlaying = !streamPlaying;
+    updateToggleIcon();
+    if(streamPlaying){ clearTimeout(streamTimer); streamTimer = setTimeout(scheduleNext, 150); }
+    else clearTimeout(streamTimer);
+  }
+  function updateToggleIcon(){
+    const playing = streamPlaying && streamIdx < SEED_THOUGHTS.length;
+    $('icon-pause').style.display = playing ? '' : 'none';
+    $('icon-play').style.display  = playing ? 'none' : '';
+  }
+  // thoughts produced by user interaction (always shown immediately)
+  function addThought(agent, message){ appendThoughtLI({agent, message}, false); }
+
+  /* ════════════════════════════════════════════════════════════
+     TOASTS · THEME · TABS · RESET
+     ════════════════════════════════════════════════════════════ */
+  function toast(msg, kind){
+    const t = document.createElement('div');
+    t.className = 'toast ' + (kind||'');
+    t.textContent = msg;
+    $('toasts').appendChild(t);
+    setTimeout(() => { t.style.opacity='0'; t.style.transform='translateY(8px)';
+      setTimeout(()=>t.remove(), 280); }, 2600);
+  }
+  function applyTheme(){ document.documentElement.setAttribute('data-theme', state.theme || 'dark'); }
+  function toggleTheme(){ state.theme = (state.theme==='dark') ? 'light' : 'dark'; saveState(); applyTheme(); }
+  function resetDemo(){
+    localStorage.removeItem(LS_KEY);
+    state = seedState();
+    saveState();
+    renderAll();
+    startStream();
+    toast('Demo reset to seed data', 'good');
+  }
+  function setTab(tab){
+    $$('#tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
+    const map = { board:'section-board', approvals:'section-approvals', stream:'section-stream' };
+    Object.values(map).forEach(id => $(id).classList.remove('show'));
+    $(map[tab]).classList.add('show');
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     BOOT
+     ════════════════════════════════════════════════════════════ */
+  function renderAll(){ renderStats(); renderPlan(); renderKanban(); renderApprovals(); }
+  function boot(){
+    applyTheme();
+    renderAll();
+    startStream();
+    $('btn-theme').addEventListener('click', toggleTheme);
+    $('btn-reset').addEventListener('click', resetDemo);
+    $('btn-stream-toggle').addEventListener('click', toggleStream);
+    $('m-close').addEventListener('click', closeModal);
+    $('modal-back').addEventListener('click', closeModal);
+    $$('#tabbar button').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+    document.addEventListener('keydown', e => { if(e.key==='Escape') closeModal(); });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  </script>
+</body>
+</html>

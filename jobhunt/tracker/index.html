@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>JobHunt — Progress Tracker</title>
+<meta name="description" content="Single source of truth progress tracker for the JobHunt multi-agent platform." />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#07090d" />
+
+<!-- Optional Google Font — page is fully usable if this fails to load (offline / file://) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" onerror="this.disabled=true">
+
+<style>
+/* ════════════════════════════════════════  DESIGN TOKENS  ════════════════════════════════════════ */
+:root{
+  --bg0:#07090d; --bg1:#0a0e16; --bg2:#0d1220;
+  --ink:#eef1f8; --muted:#9aa3bd; --faint:#5d6480;
+  --violet:#8b6bff; --cyan:#37d8e0; --emerald:#34e0a1; --amber:#ffc857; --rose:#ff6b9d;
+  --grad: linear-gradient(120deg, var(--violet), var(--cyan) 52%, var(--emerald));
+  --glass: rgba(255,255,255,.045);
+  --glass-hi: rgba(255,255,255,.09);
+  --stroke: rgba(255,255,255,.09);
+  --stroke-hi: rgba(255,255,255,.18);
+  --shadow: 0 24px 70px -24px rgba(0,0,0,.65);
+  --r-lg: 22px; --r-md: 16px; --r-sm: 10px;
+  --mono:'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --sans:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --ease: cubic-bezier(.22,.85,.2,1);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+html{ -webkit-text-size-adjust:100%; }
+body{
+  background:var(--bg0); color:var(--ink); font-family:var(--sans);
+  min-height:100vh; overflow-x:hidden;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  line-height:1.5;
+}
+img,svg{display:block;max-width:100%}
+button{font-family:inherit}
+a{color:inherit}
+::selection{background:rgba(139,107,255,.35)}
+
+/* scrollbar (webkit) — purely cosmetic, no functional impact if unsupported */
+::-webkit-scrollbar{width:11px;height:11px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px;border:2px solid transparent}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.22)}
+
+/* ════════════════════════════════════════  BACKDROP  ════════════════════════════════════════ */
+.backdrop{
+  position:fixed; inset:0; z-index:-2; overflow:hidden;
+  background:
+    radial-gradient(120% 90% at 15% -10%, #161b33 0%, transparent 55%),
+    radial-gradient(100% 80% at 100% 0%, #0f2630 0%, transparent 55%),
+    radial-gradient(120% 100% at 50% 120%, #14102b 0%, transparent 60%),
+    var(--bg0);
+}
+.backdrop .blob{
+  position:absolute; border-radius:50%; filter:blur(70px); opacity:.45; mix-blend-mode:screen;
+  animation: drift 26s ease-in-out infinite;
+  will-change: transform;
+}
+.backdrop .blob.b1{ width:48vw; height:48vw; left:-10%; top:-12%; background:radial-gradient(circle,var(--violet),transparent 65%); animation-delay:-2s; }
+.backdrop .blob.b2{ width:42vw; height:42vw; right:-12%; top:6%; background:radial-gradient(circle,var(--cyan),transparent 65%); animation-delay:-9s; }
+.backdrop .blob.b3{ width:50vw; height:50vw; left:20%; bottom:-22%; background:radial-gradient(circle,var(--emerald),transparent 65%); animation-delay:-15s; }
+.backdrop .grain{
+  position:absolute; inset:0; opacity:.05; pointer-events:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+@keyframes drift{
+  0%,100%{ transform:translate(0,0) scale(1); }
+  33%{ transform:translate(4%,-4%) scale(1.08); }
+  66%{ transform:translate(-3%,3%) scale(.95); }
+}
+
+/* ════════════════════════════════════════  LAYOUT SHELL  ════════════════════════════════════════ */
+.wrap{ max-width:1180px; margin:0 auto; padding:0 20px; }
+@media (min-width:720px){ .wrap{ padding:0 32px; } }
+
+.skip-link{position:absolute;left:-999px;top:0}
+.skip-link:focus{left:8px;top:8px;z-index:999;background:var(--bg1);padding:8px 14px;border-radius:8px;color:var(--ink)}
+
+/* ════════════════════════════════════════  NAVBAR (sticky filter/search)  ════════════════════════════════════════ */
+.navbar{
+  position:sticky; top:0; z-index:50;
+  backdrop-filter: blur(18px) saturate(140%);
+  background:rgba(7,9,13,.62);
+  border-bottom:1px solid var(--stroke);
+  transition: box-shadow .3s var(--ease), background .3s var(--ease);
+}
+.navbar.is-scrolled{ box-shadow:0 14px 40px -20px rgba(0,0,0,.6); background:rgba(7,9,13,.82); }
+.navbar-inner{ display:flex; align-items:center; gap:14px; padding:12px 0; }
+.brand{ display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:-.02em; font-size:15px; white-space:nowrap; }
+.brand .dot{
+  width:10px; height:10px; border-radius:50%; background:var(--grad);
+  box-shadow:0 0 14px rgba(139,107,255,.7);
+  animation: pulseDot 2.4s ease-in-out infinite;
+}
+@keyframes pulseDot{ 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.55; transform:scale(.82); } }
+.nav-spacer{ flex:1 1 auto; }
+
+/* ════════════════════════════════════════  BUTTONS / CHIPS / PILLS  ════════════════════════════════════════ */
+.btn{
+  appearance:none; border:1px solid var(--stroke); background:var(--glass); color:var(--ink);
+  border-radius:999px; padding:9px 16px; font-size:13px; font-weight:600; cursor:pointer;
+  display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
+  transition: transform .18s var(--ease), background .18s var(--ease), border-color .18s var(--ease), box-shadow .18s var(--ease);
+  -webkit-tap-highlight-color:transparent;
+}
+.btn:hover{ background:var(--glass-hi); border-color:var(--stroke-hi); transform:translateY(-1px); }
+.btn:active{ transform:translateY(0) scale(.97); }
+.btn.is-active{
+  background:linear-gradient(120deg, rgba(139,107,255,.35), rgba(55,216,224,.30));
+  border-color:rgba(139,107,255,.55);
+  box-shadow:0 6px 22px -8px rgba(139,107,255,.55);
+}
+.btn:focus-visible, a:focus-visible, input:focus-visible{ outline:2px solid var(--cyan); outline-offset:2px; }
+
+.filterbar{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+.search{
+  position:relative; flex:0 1 220px; min-width:140px;
+}
+.search input{
+  width:100%; background:var(--glass); border:1px solid var(--stroke); color:var(--ink);
+  border-radius:999px; padding:9px 14px 9px 34px; font-size:13px; font-family:inherit;
+  transition:border-color .18s var(--ease), background .18s var(--ease);
+}
+.search input::placeholder{ color:var(--faint); }
+.search input:focus{ border-color:rgba(55,216,224,.55); background:var(--glass-hi); outline:none; }
+.search svg{ position:absolute; left:11px; top:50%; transform:translateY(-50%); width:14px; height:14px; color:var(--faint); pointer-events:none; }
+
+/* ════════════════════════════════════════  HERO  ════════════════════════════════════════ */
+.hero{ padding:64px 0 38px; position:relative; }
+.eyebrow{
+  font-family:var(--mono); font-size:11px; letter-spacing:.32em; text-transform:uppercase;
+  color:var(--cyan); display:flex; align-items:center; gap:10px; margin-bottom:18px;
+  opacity:0; animation: fadeUp .7s var(--ease) forwards; animation-delay:.05s;
+}
+.eyebrow::before{ content:""; width:22px; height:1px; background:var(--cyan); display:inline-block; }
+
+.title-row{ display:flex; flex-wrap:wrap; align-items:baseline; gap:16px 22px; }
+h1.proj{
+  font-size:clamp(40px,8vw,76px); font-weight:900; letter-spacing:-.03em; line-height:1;
+  margin:0; background-size:220% auto;
+  background-image:linear-gradient(110deg,#fff 18%, var(--violet) 42%, var(--cyan) 58%, var(--emerald) 78%, #fff 96%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation: sweep 7s linear infinite, fadeUp .8s var(--ease) forwards;
+  opacity:0;
+}
+@keyframes sweep{ 0%{ background-position:0% 50%; } 100%{ background-position:220% 50%; } }
+@keyframes fadeUp{ from{ opacity:0; transform:translateY(16px); } to{ opacity:1; transform:translateY(0); } }
+
+.tagline{
+  margin:18px 0 0; max-width:62ch; color:var(--muted); font-size:clamp(14.5px,2.1vw,18px); line-height:1.65;
+  opacity:0; animation: fadeUp .8s var(--ease) forwards; animation-delay:.12s;
+}
+
+.meta-row{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:26px;
+  opacity:0; animation: fadeUp .8s var(--ease) forwards; animation-delay:.2s; }
+
+.chip{
+  display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
+  padding:7px 13px; border-radius:999px; border:1px solid var(--stroke); background:var(--glass);
+  font-family:var(--mono); color:var(--muted);
+}
+.chip .ic{ width:13px; height:13px; flex:none; }
+.chip.branch{ color:var(--cyan); border-color:rgba(55,216,224,.3); }
+.chip.updated{ color:var(--emerald); border-color:rgba(52,224,161,.28); }
+
+/* TEST BADGE */
+.test-badge{
+  display:inline-flex; align-items:center; gap:12px; padding:10px 18px 10px 14px; border-radius:999px;
+  background:linear-gradient(120deg, rgba(52,224,161,.18), rgba(55,216,224,.12));
+  border:1px solid rgba(52,224,161,.35); box-shadow:0 10px 30px -12px rgba(52,224,161,.4);
+  position:relative; overflow:hidden;
+}
+.test-badge::after{
+  content:""; position:absolute; inset:0; background:linear-gradient(100deg,transparent 30%, rgba(255,255,255,.18) 50%, transparent 70%);
+  transform:translateX(-120%); animation: shimmer 3.2s ease-in-out infinite; animation-delay:1s;
+}
+@keyframes shimmer{ 0%{ transform:translateX(-120%); } 35%,100%{ transform:translateX(120%); } }
+.test-badge .tb-dot{ width:9px; height:9px; border-radius:50%; background:var(--emerald); box-shadow:0 0 10px var(--emerald); flex:none; }
+.test-badge .tb-num{ font-family:var(--mono); font-weight:800; font-size:15px; color:var(--ink); letter-spacing:-.01em; }
+.test-badge .tb-label{ font-size:11.5px; color:var(--muted); font-weight:600; }
+
+/* ════════════════════════════════════════  LINKS BAR  ════════════════════════════════════════ */
+.linkbar{ display:flex; flex-wrap:wrap; gap:10px; margin-top:28px;
+  opacity:0; animation: fadeUp .8s var(--ease) forwards; animation-delay:.28s; }
+.linkbtn{
+  display:inline-flex; align-items:center; gap:9px; padding:11px 18px; border-radius:14px;
+  background:var(--glass); border:1px solid var(--stroke); font-size:13.5px; font-weight:700;
+  text-decoration:none; color:var(--ink); transition:transform .2s var(--ease), border-color .2s var(--ease), background .2s var(--ease), box-shadow .2s var(--ease);
+}
+.linkbtn:hover{ transform:translateY(-3px); border-color:var(--stroke-hi); background:var(--glass-hi); box-shadow:0 14px 34px -16px rgba(139,107,255,.45); }
+.linkbtn .ic{ width:16px; height:16px; flex:none; }
+.linkbtn.primary{ background:linear-gradient(120deg, rgba(139,107,255,.28), rgba(55,216,224,.2)); border-color:rgba(139,107,255,.45); }
+
+/* ════════════════════════════════════════  STATS ROW  ════════════════════════════════════════ */
+.stats{
+  display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:46px 0 8px;
+}
+@media (max-width:880px){ .stats{ grid-template-columns:repeat(2,1fr); } }
+@media (max-width:480px){ .stats{ grid-template-columns:1fr 1fr; gap:10px; } }
+
+.stat-card{
+  background:var(--glass); border:1px solid var(--stroke); border-radius:var(--r-lg);
+  padding:20px 18px; display:flex; align-items:center; gap:14px;
+  box-shadow:var(--shadow); backdrop-filter:blur(10px) saturate(120%);
+  transition: transform .3s var(--ease), border-color .3s var(--ease);
+}
+.stat-card:hover{ transform:translateY(-4px); border-color:var(--stroke-hi); }
+.stat-ring{ flex:none; width:64px; height:64px; position:relative; }
+.stat-ring svg{ width:100%; height:100%; transform:rotate(-90deg); }
+.stat-ring circle{ fill:none; stroke-width:7; }
+.stat-ring .track{ stroke:rgba(255,255,255,.08); }
+.stat-ring .fill{ stroke-linecap:round; stroke-dasharray:0 999; transition:stroke-dasharray 1.4s var(--ease); }
+.stat-ring .pct{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-family:var(--mono); font-weight:700; font-size:12.5px; color:var(--ink);
+}
+.stat-num{ font-size:clamp(22px,4vw,30px); font-weight:800; letter-spacing:-.02em; line-height:1; font-family:var(--mono); }
+.stat-label{ font-size:11.5px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.06em; margin-top:5px; }
+.stat-card.s-total .fill{ stroke:var(--cyan); }
+.stat-card.s-done .fill{ stroke:var(--emerald); }
+.stat-card.s-prog .fill{ stroke:var(--amber); }
+.stat-card.s-todo .fill{ stroke:var(--faint); }
+
+/* ════════════════════════════════════════  OVERALL PROGRESS BAR  ════════════════════════════════════════ */
+.overall{
+  margin:30px 0 50px; background:var(--glass); border:1px solid var(--stroke); border-radius:var(--r-lg);
+  padding:22px 24px; box-shadow:var(--shadow);
+}
+.overall-head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+.overall-head h2{ margin:0; font-size:15px; font-weight:700; letter-spacing:-.01em; }
+.overall-head .ov-pct{ font-family:var(--mono); font-weight:800; font-size:22px; background-image:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.progress-track{ position:relative; height:14px; border-radius:999px; background:rgba(255,255,255,.06); overflow:hidden; border:1px solid var(--stroke); }
+.progress-fill{
+  position:absolute; inset:0; width:0%; border-radius:999px;
+  background:var(--grad); background-size:200% 100%;
+  box-shadow:0 0 18px rgba(139,107,255,.5);
+  transition:width 1.6s var(--ease);
+  animation: glide 5s linear infinite;
+}
+@keyframes glide{ 0%{ background-position:0% 0%; } 100%{ background-position:200% 0%; } }
+.progress-fill::after{
+  content:""; position:absolute; inset:0;
+  background:linear-gradient(100deg,transparent 30%, rgba(255,255,255,.4) 50%, transparent 70%);
+  transform:translateX(-120%); animation: shimmer 2.6s ease-in-out infinite; animation-delay:1.6s;
+}
+.overall-sub{ display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; font-size:12.5px; color:var(--muted); }
+.legend-dot{ display:inline-flex; align-items:center; gap:6px; }
+.legend-dot i{ width:8px; height:8px; border-radius:50%; display:inline-block; }
+.legend-dot.ld-done i{ background:var(--emerald); }
+.legend-dot.ld-prog i{ background:var(--amber); }
+.legend-dot.ld-todo i{ background:var(--faint); }
+
+/* ════════════════════════════════════════  SECTION HEADERS  ════════════════════════════════════════ */
+.section-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 18px; flex-wrap:wrap; }
+.section-head h2{ font-size:20px; font-weight:800; letter-spacing:-.01em; margin:0; }
+.section-head .hint{ font-size:12.5px; color:var(--faint); }
+
+/* ════════════════════════════════════════  REVEAL (scroll animation)  ════════════════════════════════════════ */
+.reveal{ opacity:0; transform:translateY(28px); transition:opacity .7s var(--ease), transform .7s var(--ease); }
+.reveal.in-view{ opacity:1; transform:translateY(0); }
+
+/* ════════════════════════════════════════  PHASE GRID  ════════════════════════════════════════ */
+.phases{ display:grid; grid-template-columns:repeat(2,1fr); gap:18px; margin-bottom:54px; }
+@media (max-width:860px){ .phases{ grid-template-columns:1fr; } }
+
+.phase{
+  background:linear-gradient(160deg, var(--glass), rgba(255,255,255,.015));
+  border:1px solid var(--stroke); border-radius:var(--r-lg); padding:22px 22px 18px;
+  box-shadow:var(--shadow); position:relative; overflow:hidden;
+  transition: transform .35s var(--ease), border-color .35s var(--ease), box-shadow .35s var(--ease);
+}
+.phase:hover{ transform:translateY(-5px); border-color:var(--stroke-hi); box-shadow:0 30px 80px -24px rgba(139,107,255,.35); }
+.phase::before{
+  content:""; position:absolute; inset:0; opacity:0; pointer-events:none;
+  background:radial-gradient(420px circle at var(--mx,50%) var(--my,0%), rgba(139,107,255,.10), transparent 60%);
+  transition:opacity .3s;
+}
+.phase:hover::before{ opacity:1; }
+
+.phase-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; cursor:pointer; }
+.phase-title{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.phase-title h3{ font-size:17px; font-weight:800; margin:0; letter-spacing:-.01em; }
+.phase-id{ font-family:var(--mono); font-size:10.5px; color:var(--faint); letter-spacing:.08em; text-transform:uppercase; }
+.phase-blurb{ margin:8px 0 0; color:var(--muted); font-size:13.5px; line-height:1.55; max-width:46ch; }
+
+.status-pill{
+  display:inline-flex; align-items:center; gap:6px; padding:5px 11px; border-radius:999px;
+  font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; flex:none;
+}
+.status-pill.done{ color:var(--emerald); background:rgba(52,224,161,.12); border:1px solid rgba(52,224,161,.3); }
+.status-pill.in_progress{ color:var(--amber); background:rgba(255,200,87,.12); border:1px solid rgba(255,200,87,.3); }
+.status-pill.todo{ color:var(--faint); background:rgba(255,255,255,.05); border:1px solid var(--stroke); }
+
+.phase-progress-row{ display:flex; align-items:center; gap:14px; margin-top:16px; }
+.phase-ring{ flex:none; width:44px; height:44px; position:relative; }
+.phase-ring svg{ width:100%; height:100%; transform:rotate(-90deg); }
+.phase-ring circle{ fill:none; stroke-width:5; }
+.phase-ring .track{ stroke:rgba(255,255,255,.08); }
+.phase-ring .fill{ stroke:url(#ringGrad); stroke-linecap:round; stroke-dasharray:0 999; transition:stroke-dasharray 1.3s var(--ease); }
+.phase-ring .pct{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:10px; font-weight:700; }
+.phase-bar-wrap{ flex:1 1 auto; }
+.phase-bar{ height:8px; border-radius:999px; background:rgba(255,255,255,.07); overflow:hidden; }
+.phase-bar > span{ display:block; height:100%; width:0%; border-radius:999px; background:var(--grad); transition:width 1.3s var(--ease); }
+.phase-count{ font-size:11.5px; color:var(--faint); margin-top:6px; font-family:var(--mono); }
+
+.task-toggle{
+  appearance:none; border:none; background:none; color:var(--faint); cursor:pointer; padding:6px;
+  display:inline-flex; transition:transform .3s var(--ease), color .3s var(--ease);
+  flex:none; margin-top:-2px;
+}
+.task-toggle svg{ width:18px; height:18px; }
+.phase.is-open .task-toggle{ transform:rotate(180deg); color:var(--cyan); }
+
+.tasklist{
+  list-style:none; margin:0; padding:0; overflow:hidden;
+  max-height:0; transition:max-height .45s var(--ease);
+}
+.phase.is-open .tasklist{ max-height:1400px; }
+.tasklist-inner{ padding-top:14px; border-top:1px solid var(--stroke); margin-top:16px; }
+
+.task-row{
+  display:flex; align-items:flex-start; gap:10px; padding:10px 4px; border-radius:10px;
+  cursor:pointer; transition:background .2s var(--ease), opacity .25s var(--ease), transform .25s var(--ease);
+  position:relative;
+}
+.task-row:hover{ background:rgba(255,255,255,.045); }
+.task-row.filtered-out{ display:none; }
+
+.task-chip{ flex:none; width:20px; height:20px; margin-top:1px; position:relative; display:flex; align-items:center; justify-content:center; }
+.task-chip .check{ width:20px;height:20px; border-radius:50%; background:rgba(52,224,161,.16); border:1px solid rgba(52,224,161,.45); display:flex; align-items:center; justify-content:center; }
+.task-chip .check svg{ width:11px; height:11px; color:var(--emerald); }
+.task-chip .pulse-wrap{ width:20px;height:20px; border-radius:50%; background:rgba(255,200,87,.14); border:1px solid rgba(255,200,87,.4); display:flex; align-items:center; justify-content:center; position:relative; }
+.task-chip .pulse-dot{ width:7px; height:7px; border-radius:50%; background:var(--amber); }
+.task-chip .pulse-ring{ position:absolute; inset:0; border-radius:50%; border:1.5px solid var(--amber); animation:pulseRing 1.8s ease-out infinite; }
+@keyframes pulseRing{ 0%{ transform:scale(.5); opacity:.9; } 100%{ transform:scale(1.7); opacity:0; } }
+.task-chip .todo-box{ width:14px; height:14px; border-radius:5px; border:1.5px solid var(--faint); margin:3px; }
+
+.task-body{ flex:1 1 auto; min-width:0; }
+.task-title{ font-size:14px; font-weight:600; line-height:1.4; }
+.task-title .hl{ background:rgba(255,200,87,.32); border-radius:3px; color:#fff; }
+.task-detail{
+  font-size:12.5px; color:var(--muted); margin-top:0; line-height:1.55; max-width:60ch;
+  max-height:0; opacity:0; overflow:hidden; transition:max-height .35s var(--ease), opacity .3s var(--ease), margin-top .35s var(--ease);
+}
+.task-row.is-expanded .task-detail{ max-height:120px; opacity:1; margin-top:6px; }
+.task-row .exp-caret{ flex:none; color:var(--faint); margin-top:3px; transition:transform .3s var(--ease); width:14px; height:14px; }
+.task-row.is-expanded .exp-caret{ transform:rotate(90deg); color:var(--cyan); }
+
+.task-row.done .task-title{ color:var(--ink); }
+.task-row.todo .task-title{ color:var(--muted); }
+
+/* ════════════════════════════════════════  EMPTY STATE  ════════════════════════════════════════ */
+.empty-state{
+  text-align:center; padding:60px 20px; color:var(--faint); display:none;
+}
+.empty-state.show{ display:block; }
+.empty-state .em-ic{ font-size:34px; margin-bottom:10px; }
+
+/* ════════════════════════════════════════  FOOTER  ════════════════════════════════════════ */
+.footer{ padding:40px 0 70px; border-top:1px solid var(--stroke); margin-top:30px; text-align:center; color:var(--faint); font-size:12.5px; }
+.footer .heart{ color:var(--rose); }
+
+/* ════════════════════════════════════════  REDUCED MOTION  ════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{
+    animation-duration:.001ms !important; animation-iteration-count:1 !important;
+    transition-duration:.001ms !important; scroll-behavior:auto !important;
+  }
+  h1.proj{ background-position:0% 50%; }
+}
+
+/* small screens fit & finish */
+@media (max-width:480px){
+  .hero{ padding:42px 0 28px; }
+  .stat-card{ padding:16px 12px; gap:10px; }
+  .stat-ring{ width:52px; height:52px; }
+  .phase{ padding:18px 16px 16px; }
+  .linkbtn{ flex:1 1 calc(50% - 5px); justify-content:center; }
+}
+</style>
+</head>
+<body>
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<div class="backdrop" aria-hidden="true">
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <div class="blob b3"></div>
+  <div class="grain"></div>
+</div>
+
+<!-- shared SVG defs (gradient used by phase rings) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b6bff"/>
+      <stop offset="55%" stop-color="#37d8e0"/>
+      <stop offset="100%" stop-color="#34e0a1"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<nav class="navbar" id="navbar">
+  <div class="wrap navbar-inner">
+    <div class="brand"><span class="dot" aria-hidden="true"></span> JobHunt Tracker</div>
+    <div class="nav-spacer"></div>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="searchInput" type="search" placeholder="Search tasks…" aria-label="Search tasks" />
+    </div>
+  </div>
+  <div class="wrap" style="padding-bottom:12px;">
+    <div class="filterbar" id="filterBar" role="group" aria-label="Filter tasks by status">
+      <button class="btn is-active" data-filter="all">All</button>
+      <button class="btn" data-filter="done">Done</button>
+      <button class="btn" data-filter="in_progress">In progress</button>
+      <button class="btn" data-filter="todo">To do</button>
+    </div>
+  </div>
+</nav>
+
+<main id="main" class="wrap">
+
+  <!-- ═══════════════════════════  HERO  ═══════════════════════════ -->
+  <section class="hero">
+    <div class="eyebrow">Single Source of Truth</div>
+    <div class="title-row">
+      <h1 class="proj" id="projTitle">JobHunt</h1>
+    </div>
+    <p class="tagline" id="projTagline">&nbsp;</p>
+
+    <div class="meta-row">
+      <span class="chip branch" id="branchChip">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        <span id="branchText">—</span>
+      </span>
+      <span class="chip updated" id="updatedChip">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Updated <span id="updatedText">—</span>
+      </span>
+      <span class="test-badge" id="testBadge">
+        <span class="tb-dot" aria-hidden="true"></span>
+        <span class="tb-num"><span id="testPassing">0</span> / <span id="testTotal">0</span></span>
+        <span class="tb-label">tests passing</span>
+      </span>
+    </div>
+
+    <div class="linkbar" id="linkBar"><!-- populated by JS --></div>
+  </section>
+
+  <!-- ═══════════════════════════  STATS  ═══════════════════════════ -->
+  <section class="stats reveal" id="statsSection" aria-label="Task statistics">
+    <div class="stat-card s-total">
+      <div class="stat-ring">
+        <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="27"/><circle class="fill" id="ringTotal" cx="32" cy="32" r="27" stroke="#37d8e0"/></svg>
+        <div class="pct" id="ringTotalLabel">—</div>
+      </div>
+      <div>
+        <div class="stat-num" id="statTotal">0</div>
+        <div class="stat-label">Total tasks</div>
+      </div>
+    </div>
+    <div class="stat-card s-done">
+      <div class="stat-ring">
+        <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="27"/><circle class="fill" id="ringDone" cx="32" cy="32" r="27" stroke="#34e0a1"/></svg>
+        <div class="pct" id="ringDoneLabel">0%</div>
+      </div>
+      <div>
+        <div class="stat-num" id="statDonePct">0%</div>
+        <div class="stat-label">Complete</div>
+      </div>
+    </div>
+    <div class="stat-card s-prog">
+      <div class="stat-ring">
+        <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="27"/><circle class="fill" id="ringProg" cx="32" cy="32" r="27" stroke="#ffc857"/></svg>
+        <div class="pct" id="ringProgLabel">—</div>
+      </div>
+      <div>
+        <div class="stat-num" id="statProg">0</div>
+        <div class="stat-label">In progress</div>
+      </div>
+    </div>
+    <div class="stat-card s-todo">
+      <div class="stat-ring">
+        <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="27"/><circle class="fill" id="ringTodo" cx="32" cy="32" r="27" stroke="#5d6480"/></svg>
+        <div class="pct" id="ringTodoLabel">—</div>
+      </div>
+      <div>
+        <div class="stat-num" id="statTodo">0</div>
+        <div class="stat-label">To do</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════  OVERALL PROGRESS  ═══════════════════════════ -->
+  <section class="overall reveal">
+    <div class="overall-head">
+      <h2>Overall completion</h2>
+      <span class="ov-pct" id="overallPct">0%</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="overallFill"></div>
+    </div>
+    <div class="overall-sub">
+      <span class="legend-dot ld-done"><i></i> <span id="legendDone">0 done</span></span>
+      <span class="legend-dot ld-prog"><i></i> <span id="legendProg">0 in progress</span></span>
+      <span class="legend-dot ld-todo"><i></i> <span id="legendTodo">0 to do</span></span>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════  PHASES  ═══════════════════════════ -->
+  <section aria-label="Phases">
+    <div class="section-head reveal">
+      <h2>Phases</h2>
+      <span class="hint">Click a phase to expand · click a task for details</span>
+    </div>
+    <div class="phases" id="phasesContainer"><!-- populated by JS --></div>
+    <div class="empty-state" id="emptyState">
+      <div class="em-ic">🔍</div>
+      <div>No tasks match your filters.</div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    Rendered live from <code>tasks.json</code> · built with <span class="heart">♥</span> for the JobHunt project
+  </footer>
+
+</main>
+
+<script>
+"use strict";
+
+/* ════════════════════════════════════════════════════════════════════════
+   FALLBACK DATA
+   Hardcoded snapshot of tasks.json, used only if the runtime fetch fails
+   (e.g. when this file is opened directly via file:// without a server).
+   The live fetch("./tasks.json") below always takes priority when it works,
+   so deployed pages on GitHub Pages stay in sync with the latest data.
+   ════════════════════════════════════════════════════════════════════════ */
+const FALLBACK_DATA = {"project":"JobHunt","tagline":"A production-grade multi-agent platform that plans, discovers, vets, tailors, submits, and tracks job applications — reasoning deliberately at every step.","updated":"2026-06-27","branch":"claude/multi-agent-job-platform-OG9Az","tests":{"passing":401,"failing":0},"links":{"demo_video":"../demo/jobhunt-demo.mp4","interactive_demo":"../demo/demo.html","interactive_app":"../site/app.html","repo":"https://github.com/iamsadat/bot"},"phases":[{"id":"p0","name":"Foundations","blurb":"The reasoning substrate every agent stands on.","status":"done","tasks":[{"title":"Orchestrator + 7 specialist agents","status":"done","detail":"Plan-and-execute state graph coordinating Discovery, Vetting, Resume, Peer-Critique, Submission, Tracking, Improvement."},{"title":"BaseAgent reasoning loop","status":"done","detail":"Bounded deliberate → act → critique → decide with quality thresholds and refinement."},{"title":"Append-only ReasoningTrace","status":"done","detail":"Every thought, tool call, self-critique and decision is auditable."},{"title":"ThoughtBus pub/sub","status":"done","detail":"Thread-safe live thought streaming to the dashboard over WebSocket."}]},{"id":"p1","name":"Discovery","blurb":"Pluggable job sources with polite, rate-limited fetching.","status":"done","tasks":[{"title":"JobSource protocol + adapters","status":"done","detail":"Greenhouse, Lever, Ashby public APIs, plus an offline FixtureSource."},{"title":"Indeed RSS connector","status":"done","detail":"stdlib-only RSS parsing into normalized postings."},{"title":"Local filters","status":"done","detail":"Salary, location, remote, veto-company gating before vetting."},{"title":"Token-bucket rate limiter","status":"done","detail":"Wraps any HTTP client to stay polite to upstream ATS APIs."}]},{"id":"p2","name":"Vetting & Tailoring","blurb":"Score every posting, then build an evidence-cited resume.","status":"done","tasks":[{"title":"Vetting scorecard","status":"done","detail":"Compensation, freshness, specificity and location-fit weighting."},{"title":"Enrichers + tunable weights","status":"done","detail":"Glassdoor / Crunchbase / News / Layoffs heuristics into a user-tunable weighted score."},{"title":"Evidence-cited resume builder","status":"done","detail":"Every bullet links to a real experience id — no hallucinated history."},{"title":"Peer-critique agent","status":"done","detail":"Culture-alignment cosine scoring and ship/no-ship verdict."},{"title":"JD parser + embeddings","status":"done","detail":"Keyword extraction and semantic matching for coverage scoring."}]},{"id":"p25","name":"Persistence & Dashboard","blurb":"A premium control surface with human-in-the-loop approval.","status":"done","tasks":[{"title":"SQLite / Postgres TraceStore","status":"done","detail":"Durable persistence of plans, jobs, applications, documents and traces."},{"title":"FastAPI dashboard + SPA","status":"done","detail":"Onboarding, live pipeline, Kanban, document viewer, trace stream."},{"title":"One-click approval workflow","status":"done","detail":"Nothing is submitted without an explicit human ship decision."},{"title":"Onboarding flow","status":"done","detail":"Profile, pasted-resume skill extraction, ATS handle capture."}]},{"id":"p45","name":"LLM Integration","blurb":"Optional real intelligence, fully offline by default.","status":"done","tasks":[{"title":"Optional Anthropic SDK client","status":"done","detail":"Lazy-imported — the whole system runs offline with no SDK installed."},{"title":"PII redaction","status":"done","detail":"Emails, phones, SSNs and cards masked before any log or LLM call."},{"title":"Resume / critique callbacks","status":"done","detail":"Pluggable LLM hooks for bullet rewriting and summaries."}]},{"id":"p3","name":"Submission & Tracking","blurb":"Automate the apply, then watch the inbox for replies.","status":"in_progress","tasks":[{"title":"Greenhouse / Lever auto-submit","status":"done","detail":"Real multipart / JSON submission, gated behind human approval."},{"title":"IMAP inbox watcher","status":"done","detail":"Confidence-scored classifier: reject / interview / assessment / offer."},{"title":"Calendar-hint extraction","status":"done","detail":"Regex pull of Calendly / Zoom / datetime hints from replies."},{"title":"Playwright autofill (Workday / iCIMS / generic)","status":"done","detail":"Driver-agnostic field mapper + registry, EEO/demographic questions always deferred to the human; 63 offline tests."},{"title":"Gmail / Calendar OAuth","status":"todo","detail":"Replace IMAP-only inbox with first-class Gmail + Calendar APIs."}]},{"id":"p4","name":"Intelligence & Experiments","blurb":"The system improves its own strategy over time.","status":"in_progress","tasks":[{"title":"A/B experiment framework","status":"done","detail":"Deterministic variant assignment with win / rollback significance logic."},{"title":"Improvement meta-agent","status":"done","detail":"Surfaces rollbacks and promotes winning variants from the action log."},{"title":"Structured JSON logging","status":"done","detail":"Pluggable sinks with PII redaction baked in."},{"title":"Real paid enrichment APIs","status":"todo","detail":"Swap heuristics for live Glassdoor / Crunchbase / news feeds."},{"title":"pgvector embeddings","status":"todo","detail":"Move embeddings from JSON columns to a real vector index."}]},{"id":"p5","name":"Hardening & Deploy","blurb":"From working build to operable service.","status":"in_progress","tasks":[{"title":"GitHub Actions CI","status":"done","detail":"pytest hard-blocking; ruff / mypy advisory."},{"title":"GitHub Pages deploy (tracker + demo + app)","status":"done","detail":"Workflow assembles + publishes the tracker, cinematic demo and interactive app to a mobile-accessible static site."},{"title":"Dockerfile + host deploy config","status":"done","detail":"Container + render.yaml + module-level ASGI app for one-click backend hosting."},{"title":"mypy / ruff enforcement","status":"todo","detail":"Configs exist in CI but are non-blocking — make them gate."},{"title":"OpenTelemetry tracing","status":"todo","detail":"Distributed traces across the agent pipeline."},{"title":"Vault-backed secrets","status":"todo","detail":"OAuth / IMAP tokens out of env and into a secret manager."},{"title":"k8s manifests + autoscaling + SLOs","status":"todo","detail":"Production runtime with horizontal scaling and service objectives."},{"title":"Pen test + GDPR audit","status":"todo","detail":"Security review and data-handling compliance pass."}]},{"id":"demo","name":"Demo & Repo","blurb":"Make it real, make it watchable.","status":"done","tasks":[{"title":"Repo restructured around JobHunt","status":"done","detail":"Root README + pyproject now describe JobHunt; packaging via extras."},{"title":"TradeBot parked in jargon/","status":"done","detail":"Unrelated project moved aside, history preserved, ready to dispose."},{"title":"Cinematic demo (HTML + MP4)","status":"done","detail":"8-scene animated 3D walkthrough, recorded to H.264."},{"title":"Demo wired into dashboard","status":"done","detail":"Watch-demo + tracker entry points from the app shell; /demo, /tracker, /app routes on the live server."},{"title":"Single-source-of-truth progress tracker","status":"done","detail":"This page — animated, interactive, deployed for mobile, rendering live from tasks.json."}]}]};
+
+/* ════════════════════════════════════════════════════════════════════════
+   STATE
+   ════════════════════════════════════════════════════════════════════════ */
+let DATA = null;
+let activeFilter = "all";
+let searchTerm = "";
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const STATUS_LABEL = { done: "Done", in_progress: "In progress", todo: "To do" };
+
+/* ════════════════════════════════════════════════════════════════════════
+   UTILITIES
+   ════════════════════════════════════════════════════════════════════════ */
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+function highlight(text, term){
+  const safe = escapeHtml(text);
+  if (!term) return safe;
+  try{
+    const re = new RegExp("(" + term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig");
+    return safe.replace(re, "<span class=\"hl\">$1</span>");
+  } catch(e){ return safe; }
+}
+
+function formatDate(iso){
+  if (!iso) return "—";
+  try{
+    const d = new Date(iso + "T00:00:00");
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString(undefined, { year:"numeric", month:"short", day:"numeric" });
+  } catch(e){ return iso; }
+}
+
+/* count-up animation using requestAnimationFrame */
+function countUp(el, target, opts){
+  opts = opts || {};
+  const duration = reduceMotion ? 1 : (opts.duration || 1400);
+  const suffix = opts.suffix || "";
+  const start = performance.now();
+  function tick(now){
+    const elapsed = now - start;
+    const t = Math.min(1, elapsed / duration);
+    const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+    const val = Math.round(target * eased);
+    el.textContent = val + suffix;
+    if (t < 1) requestAnimationFrame(tick);
+    else el.textContent = target + suffix;
+  }
+  requestAnimationFrame(tick);
+}
+
+/* animate an SVG ring's stroke-dasharray to represent a percentage */
+function animateRing(circle, pct, radius){
+  const r = radius || 27;
+  const circumference = 2 * Math.PI * r;
+  const target = Math.max(0, Math.min(100, pct));
+  // allow layout to settle, then trigger transition
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const dash = (target / 100) * circumference;
+      circle.style.strokeDasharray = dash.toFixed(2) + " " + circumference.toFixed(2);
+    });
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   COMPUTE STATS FROM DATA
+   ════════════════════════════════════════════════════════════════════════ */
+function computeStats(data){
+  let total = 0, done = 0, inProgress = 0, todo = 0;
+  data.phases.forEach(ph => {
+    ph.tasks.forEach(t => {
+      total++;
+      if (t.status === "done") done++;
+      else if (t.status === "in_progress") inProgress++;
+      else todo++;
+    });
+  });
+  const pctDone = total ? Math.round((done / total) * 100) : 0;
+  return { total, done, inProgress, todo, pctDone };
+}
+
+function phaseStats(phase){
+  let total = phase.tasks.length, done = 0;
+  phase.tasks.forEach(t => { if (t.status === "done") done++; });
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return { total, done, pct };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   LINK ICONS
+   ════════════════════════════════════════════════════════════════════════ */
+const LINK_META = {
+  demo_video:      { label: "Demo video",       primary:true,  icon: '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>' },
+  interactive_demo:{ label: "Interactive demo",  primary:false, icon: '<polygon points="5 3 19 12 5 21 5 3"/>' },
+  interactive_app: { label: "Interactive app",   primary:true,  icon: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>' },
+  repo:            { label: "Repo",              primary:false, icon: '<path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/>' }
+};
+
+function renderLinks(links){
+  const bar = document.getElementById("linkBar");
+  bar.innerHTML = "";
+  if (!links) return;
+  Object.keys(LINK_META).forEach(key => {
+    const url = links[key];
+    if (!url) return;
+    const meta = LINK_META[key];
+    const a = document.createElement("a");
+    a.href = url;
+    a.className = "linkbtn" + (meta.primary ? " primary" : "");
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.innerHTML = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + meta.icon + '</svg><span>' + escapeHtml(meta.label) + "</span>";
+    bar.appendChild(a);
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   TASK CHIP MARKUP
+   ════════════════════════════════════════════════════════════════════════ */
+function taskChipHtml(status){
+  if (status === "done"){
+    return '<span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>';
+  }
+  if (status === "in_progress"){
+    return '<span class="pulse-wrap" aria-hidden="true"><span class="pulse-ring"></span><span class="pulse-dot"></span></span>';
+  }
+  return '<span class="todo-box" aria-hidden="true"></span>';
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RENDER PHASES
+   ════════════════════════════════════════════════════════════════════════ */
+function renderPhases(data){
+  const container = document.getElementById("phasesContainer");
+  container.innerHTML = "";
+
+  data.phases.forEach((phase, idx) => {
+    const stats = phaseStats(phase);
+
+    const card = document.createElement("article");
+    card.className = "phase reveal";
+    card.dataset.phaseId = phase.id;
+
+    card.innerHTML = `
+      <div class="phase-top" data-toggle>
+        <div>
+          <div class="phase-title">
+            <h3>${escapeHtml(phase.name)}</h3>
+            <span class="phase-id">${escapeHtml(phase.id)}</span>
+          </div>
+          <p class="phase-blurb">${escapeHtml(phase.blurb)}</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="status-pill ${phase.status}">${STATUS_LABEL[phase.status] || phase.status}</span>
+          <button class="task-toggle" aria-expanded="false" aria-label="Toggle tasks for ${escapeHtml(phase.name)}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="phase-progress-row">
+        <div class="phase-ring">
+          <svg viewBox="0 0 44 44"><circle class="track" cx="22" cy="22" r="18"/><circle class="fill" cx="22" cy="22" r="18" data-ring></circle></svg>
+          <div class="pct" data-ring-label>0%</div>
+        </div>
+        <div class="phase-bar-wrap">
+          <div class="phase-bar"><span data-bar></span></div>
+          <div class="phase-count" data-count>${stats.done} / ${stats.total} tasks done</div>
+        </div>
+      </div>
+
+      <ul class="tasklist">
+        <li class="tasklist-inner">
+          ${phase.tasks.map(t => `
+            <div class="task-row ${t.status}" data-status="${t.status}" data-title="${escapeHtml(t.title.toLowerCase())}" data-detail="${escapeHtml(t.detail.toLowerCase())}" tabindex="0" role="button" aria-expanded="false">
+              <span class="task-chip">${taskChipHtml(t.status)}</span>
+              <div class="task-body">
+                <div class="task-title" data-task-title>${highlight(t.title, "")}</div>
+                <p class="task-detail" data-task-detail>${highlight(t.detail, "")}</p>
+              </div>
+              <svg class="exp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+          `).join("")}
+        </li>
+      </ul>
+    `;
+
+    container.appendChild(card);
+
+    // ring + bar animate using actual data
+    const ring = card.querySelector("[data-ring]");
+    const ringLabel = card.querySelector("[data-ring-label]");
+    const bar = card.querySelector("[data-bar]");
+    animateRing(ring, stats.pct, 18);
+    ringLabel.textContent = stats.pct + "%";
+    requestAnimationFrame(() => { bar.style.width = stats.pct + "%"; });
+
+    // phase expand/collapse
+    const toggleZone = card.querySelector("[data-toggle]");
+    toggleZone.addEventListener("click", () => togglePhase(card));
+
+    // task row expand/collapse + click target for detail
+    card.querySelectorAll(".task-row").forEach(row => {
+      row.addEventListener("click", () => {
+        row.classList.toggle("is-expanded");
+        row.setAttribute("aria-expanded", row.classList.contains("is-expanded") ? "true" : "false");
+      });
+      row.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " "){
+          e.preventDefault();
+          row.click();
+        }
+      });
+    });
+
+    // stagger reveal slightly per card if motion allowed
+    if (!reduceMotion) card.style.transitionDelay = Math.min(idx * 60, 360) + "ms";
+  });
+
+  observeReveal();
+  applyFilters();
+}
+
+function togglePhase(card){
+  const willOpen = !card.classList.contains("is-open");
+  card.classList.toggle("is-open", willOpen);
+  const btn = card.querySelector(".task-toggle");
+  if (btn) btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  if (willOpen && !reduceMotion){
+    requestAnimationFrame(() => {
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   FILTER + SEARCH
+   ════════════════════════════════════════════════════════════════════════ */
+function applyFilters(){
+  const rows = document.querySelectorAll(".task-row");
+  let anyVisiblePerPhase = new Map();
+  let totalVisible = 0;
+
+  rows.forEach(row => {
+    const status = row.dataset.status;
+    const title = row.dataset.title || "";
+    const detail = row.dataset.detail || "";
+    const matchesFilter = activeFilter === "all" || status === activeFilter;
+    const matchesSearch = !searchTerm || title.includes(searchTerm) || detail.includes(searchTerm);
+    const visible = matchesFilter && matchesSearch;
+
+    row.classList.toggle("filtered-out", !visible);
+
+    // refresh highlight markup for search term
+    const titleEl = row.querySelector("[data-task-title]");
+    const detailEl = row.querySelector("[data-task-detail]");
+    if (titleEl) titleEl.innerHTML = highlight(titleEl.textContent, searchTerm);
+    if (detailEl) detailEl.innerHTML = highlight(detailEl.textContent, searchTerm);
+
+    if (visible){
+      totalVisible++;
+      const phaseCard = row.closest(".phase");
+      if (phaseCard) anyVisiblePerPhase.set(phaseCard, true);
+    }
+  });
+
+  // hide/show whole phase cards if none of their tasks match, and auto-expand
+  // phases that have active search/filter results so users see them immediately
+  document.querySelectorAll(".phase").forEach(card => {
+    const hasVisible = anyVisiblePerPhase.has(card);
+    card.style.display = hasVisible ? "" : "none";
+    if (hasVisible && (activeFilter !== "all" || searchTerm)){
+      card.classList.add("is-open");
+      const btn = card.querySelector(".task-toggle");
+      if (btn) btn.setAttribute("aria-expanded", "true");
+    }
+  });
+
+  document.getElementById("emptyState").classList.toggle("show", totalVisible === 0);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SCROLL REVEAL (IntersectionObserver)
+   ════════════════════════════════════════════════════════════════════════ */
+let revealObserver = null;
+function observeReveal(){
+  if (reduceMotion){
+    document.querySelectorAll(".reveal").forEach(el => el.classList.add("in-view"));
+    return;
+  }
+  if (!revealObserver){
+    // generous lookahead so cards well below the fold are already revealed
+    // by the time a user (or a full-page screenshot) reaches them
+    revealObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting){
+          entry.target.classList.add("in-view");
+          revealObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.01, rootMargin: "0px 0px 600px 0px" });
+  }
+  document.querySelectorAll(".reveal:not(.in-view)").forEach(el => revealObserver.observe(el));
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RENDER HERO / STATS / OVERALL BAR
+   ════════════════════════════════════════════════════════════════════════ */
+function renderHeroAndStats(data){
+  document.title = data.project + " — Progress Tracker";
+  document.getElementById("projTitle").textContent = data.project;
+  document.getElementById("projTagline").textContent = data.tagline;
+  document.getElementById("branchText").textContent = data.branch;
+  document.getElementById("updatedText").textContent = formatDate(data.updated);
+
+  const tests = data.tests || { passing: 0, failing: 0 };
+  countUp(document.getElementById("testPassing"), tests.passing);
+  countUp(document.getElementById("testTotal"), tests.passing + tests.failing);
+
+  renderLinks(data.links);
+
+  const stats = computeStats(data);
+
+  countUp(document.getElementById("statTotal"), stats.total);
+  document.getElementById("statDonePct").textContent = stats.pctDone + "%";
+  countUp(document.getElementById("statProg"), stats.inProgress);
+  countUp(document.getElementById("statTodo"), stats.todo);
+
+  // rings: total ring shows 100% (it's a count, not a ratio) — represent fullness conceptually,
+  // done/progress/todo rings show their share of total tasks
+  animateRing(document.getElementById("ringTotal"), 100);
+  document.getElementById("ringTotalLabel").textContent = stats.total;
+
+  animateRing(document.getElementById("ringDone"), stats.pctDone);
+  document.getElementById("ringDoneLabel").textContent = stats.pctDone + "%";
+
+  const pctProg = stats.total ? Math.round((stats.inProgress / stats.total) * 100) : 0;
+  animateRing(document.getElementById("ringProg"), pctProg);
+  document.getElementById("ringProgLabel").textContent = pctProg + "%";
+
+  const pctTodo = stats.total ? Math.round((stats.todo / stats.total) * 100) : 0;
+  animateRing(document.getElementById("ringTodo"), pctTodo);
+  document.getElementById("ringTodoLabel").textContent = pctTodo + "%";
+
+  // overall bar
+  document.getElementById("overallPct").textContent = stats.pctDone + "%";
+  requestAnimationFrame(() => {
+    document.getElementById("overallFill").style.width = stats.pctDone + "%";
+  });
+  document.getElementById("legendDone").textContent = stats.done + " done";
+  document.getElementById("legendProg").textContent = stats.inProgress + " in progress";
+  document.getElementById("legendTodo").textContent = stats.todo + " to do";
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   WIRE UP CONTROLS
+   ════════════════════════════════════════════════════════════════════════ */
+function wireControls(){
+  document.querySelectorAll("#filterBar .btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#filterBar .btn").forEach(b => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      activeFilter = btn.dataset.filter;
+      applyFilters();
+    });
+  });
+
+  const searchInput = document.getElementById("searchInput");
+  let debounceTimer = null;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      searchTerm = searchInput.value.trim().toLowerCase();
+      applyFilters();
+    }, 120);
+  });
+
+  const navbar = document.getElementById("navbar");
+  window.addEventListener("scroll", () => {
+    navbar.classList.toggle("is-scrolled", window.scrollY > 8);
+  }, { passive: true });
+
+  // subtle pointer-tracked glow on phase cards (desktop hover only, ignored on touch)
+  document.addEventListener("pointermove", (e) => {
+    const card = e.target.closest && e.target.closest(".phase");
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    card.style.setProperty("--mx", (e.clientX - rect.left) + "px");
+    card.style.setProperty("--my", (e.clientY - rect.top) + "px");
+  }, { passive: true });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   BOOT
+   ════════════════════════════════════════════════════════════════════════ */
+function boot(data){
+  DATA = data;
+  renderHeroAndStats(data);
+  renderPhases(data);
+  observeReveal();
+
+  // safety net: guarantee every section becomes visible even in the rare case
+  // IntersectionObserver doesn't fire (unsupported browser, odd layout timing, etc.)
+  setTimeout(() => {
+    document.querySelectorAll(".reveal:not(.in-view)").forEach(el => el.classList.add("in-view"));
+  }, 1800);
+}
+
+wireControls();
+
+fetch("./tasks.json", { cache: "no-store" })
+  .then(res => {
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  })
+  .then(data => boot(data))
+  .catch(() => {
+    // offline / file:// / network failure — fall back to the embedded snapshot
+    boot(FALLBACK_DATA);
+  });
+</script>
+</body>
+</html>
