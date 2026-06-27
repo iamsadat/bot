@@ -1020,6 +1020,68 @@
   <script>
   'use strict';
 
+  /* ────── access code (soft door) ───────────────────────────────
+     Optional, off by default. If the server has JOBHUNT_ACCESS_CODE
+     configured, /api/* (and the websocket) start returning 401 until
+     an X-Access-Code header matches. This is a thin client-side prompt
+     for a small invite-only test — not real auth. */
+  (function () {
+    const STORAGE_KEY = 'jh_code';
+    const nativeFetch = window.fetch.bind(window);
+    let probePromise = null;
+
+    function isApiPath(input) {
+      try {
+        const url = typeof input === 'string' ? input : input.url;
+        const path = new URL(url, window.location.origin).pathname;
+        return path.startsWith('/api/');
+      } catch {
+        return false;
+      }
+    }
+
+    function withCode(init) {
+      const code = localStorage.getItem(STORAGE_KEY);
+      if (!code) return init;
+      const headers = new Headers((init && init.headers) || {});
+      headers.set('X-Access-Code', code);
+      return Object.assign({}, init, { headers });
+    }
+
+    function promptForCode() {
+      const code = window.prompt('Enter access code:');
+      if (code) localStorage.setItem(STORAGE_KEY, code);
+      else localStorage.removeItem(STORAGE_KEY);
+      return code;
+    }
+
+    window.fetch = async function (input, init) {
+      if (!isApiPath(input)) return nativeFetch(input, init);
+
+      let resp = await nativeFetch(input, withCode(init));
+      if (resp.status === 401) {
+        localStorage.removeItem(STORAGE_KEY);
+        promptForCode();
+        resp = await nativeFetch(input, withCode(init));
+      }
+      return resp;
+    };
+
+    // On load: if we've never been prompted, probe /api/status once. If the
+    // gate is off (200), do nothing. If it's on (401) and we have no stored
+    // code yet, prompt immediately so the rest of the app's fetches succeed.
+    probePromise = (async () => {
+      if (localStorage.getItem(STORAGE_KEY)) return;
+      try {
+        const r = await nativeFetch('/api/status');
+        if (r.status === 401) promptForCode();
+      } catch {
+        /* offline/startup race — the wrapped fetch above will retry-prompt */
+      }
+    })();
+    void probePromise;
+  })();
+
   /* ────── state ──────────────────────────────────────────────── */
   const state = {
     step: 1,

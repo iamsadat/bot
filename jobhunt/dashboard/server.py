@@ -26,10 +26,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import secrets
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
 from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue
@@ -37,8 +40,36 @@ from jobhunt.models import JobHuntPlan, UserProfile
 from jobhunt.onboarding import build_user_profile, parse_resume_text
 from jobhunt.trace import ThoughtBus, TraceStore
 
+# fastapi is an optional dependency for the rest of the package (importing
+# this module should stay cheap even when fastapi isn't installed — see
+# jobhunt/dashboard/__init__.py). We import it at module level (rather than
+# inside create_app) so that, combined with `from __future__ import
+# annotations`, FastAPI's own dependency-injection machinery can resolve
+# string annotations like `Request`/`Response` against this module's
+# globals when building route handlers.
+try:
+    from fastapi import (
+        Depends, FastAPI, HTTPException, Request, Response as FastAPIResponse,
+        WebSocket, WebSocketDisconnect,
+    )
+    from fastapi.responses import HTMLResponse, JSONResponse, Response
+    _FASTAPI_IMPORT_ERROR: ImportError | None = None
+except ImportError as _exc:  # pragma: no cover
+    _FASTAPI_IMPORT_ERROR = _exc
+    Depends = FastAPI = HTTPException = Request = FastAPIResponse = None  # type: ignore
+    WebSocket = WebSocketDisconnect = None  # type: ignore
+    HTMLResponse = JSONResponse = Response = None  # type: ignore
+
 
 _VALID_STATUSES = {"Saved", "Applied", "Assessment", "Interview", "Offer", "Closed"}
+
+# Cookie name for per-workspace isolation, and the strict pattern a valid
+# workspace id must match (secrets.token_hex(16) → 32 lowercase hex chars).
+# Anything that doesn't match this is never trusted as a filesystem path
+# component (path traversal defense-in-depth).
+WORKSPACE_COOKIE = "jh_ws"
+_SAFE_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +130,54 @@ class DashboardState:
         if self.hunt_status == "running":
             self.hunt_status = "idle"
         restore_approval_queue(self.approval_queue, snap.get("approvals", []))
+
+
+# ---------------------------------------------------------------------------
+# Workspace manager — production multi-tenant DashboardState cache
+# ---------------------------------------------------------------------------
+
+class WorkspaceManager:
+    """LRU cache of per-workspace ``DashboardState`` objects.
+
+    Each workspace gets its own SQLite-backed ``DashboardStore`` at
+    ``base_dir / f"{ws_id}.db"``. ``ws_id`` MUST already be validated
+    against ``_SAFE_ID_RE`` by the caller before reaching ``get`` — this
+    class trusts its input is a safe path component.
+    """
+
+    def __init__(self, base_dir: Path | str, cap: int = 200) -> None:
+        self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.cap = cap
+        self._cache: OrderedDict[str, DashboardState] = OrderedDict()
+
+    def get(self, ws_id: str) -> DashboardState:
+        if not _SAFE_ID_RE.match(ws_id):
+            raise ValueError(f"unsafe workspace id: {ws_id!r}")
+        existing = self._cache.get(ws_id)
+        if existing is not None:
+            self._cache.move_to_end(ws_id)
+            return existing
+
+        new_state = DashboardState(
+            trace_store=TraceStore(),
+            bus=ThoughtBus(),
+            store=DashboardStore(db_path=self.base_dir / f"{ws_id}.db"),
+        )
+        new_state.restore()
+        self._cache[ws_id] = new_state
+        self._cache.move_to_end(ws_id)
+
+        # Evict least-recently-used entries once over capacity. No need to
+        # re-persist on eviction — DashboardStore already writes synchronously
+        # on every mutation, so the SQLite file is always up to date.
+        while len(self._cache) > self.cap:
+            self._cache.popitem(last=False)
+
+        return new_state
+
+    def __len__(self) -> int:
+        return len(self._cache)
 
 
 # ---------------------------------------------------------------------------
@@ -250,26 +329,73 @@ async def _run_hunt_bg(state: DashboardState) -> None:
 # App factory
 # ---------------------------------------------------------------------------
 
-def create_app(state: DashboardState):
-    try:
-        from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-        from fastapi.responses import HTMLResponse, Response
-    except ImportError as exc:  # pragma: no cover
+def create_app(
+    state: DashboardState | None = None,
+    *,
+    workspace_factory: Callable[[str], DashboardState] | None = None,
+    access_code: str | None = None,
+):
+    if _FASTAPI_IMPORT_ERROR is not None:  # pragma: no cover
         raise RuntimeError(
             "fastapi is not installed. Run `pip install fastapi uvicorn`."
-        ) from exc
+        ) from _FASTAPI_IMPORT_ERROR
+
+    if workspace_factory is None and state is None:
+        raise ValueError("create_app requires either `state` or `workspace_factory`")
 
     @asynccontextmanager
     async def lifespan(app):
-        state.bus.set_loop(asyncio.get_event_loop())
+        if state is not None:
+            state.bus.set_loop(asyncio.get_event_loop())
         yield
 
     app = FastAPI(title="JobHunt Dashboard", version="0.3.0", lifespan=lifespan)
 
+    # ------------------------------------------------------------- per-request state
+
+    def get_state(request: Request, response: FastAPIResponse) -> DashboardState:
+        if workspace_factory is None:
+            return state  # legacy / test mode: single shared state, no cookie games
+        ws_id = request.cookies.get(WORKSPACE_COOKIE)
+        if not ws_id or not _SAFE_ID_RE.match(ws_id):
+            ws_id = secrets.token_hex(16)
+            response.set_cookie(
+                WORKSPACE_COOKIE, ws_id, max_age=60 * 60 * 24 * 180,
+                httponly=True, samesite="lax",
+            )
+        # NOTE: this dependency may run in a worker thread (FastAPI offloads
+        # sync dependencies via run_in_threadpool), so we must NOT touch
+        # asyncio.get_event_loop() here — there is no running loop in that
+        # thread. ThoughtBus.set_loop() is wired up just-in-time instead,
+        # from call sites that are guaranteed to run on the main loop (the
+        # websocket handler, and start_hunt() right before backgrounding
+        # the orchestrator).
+        return workspace_factory(ws_id)
+
+    # --------------------------------------------------------------- access gate
+
+    if access_code:
+        @app.middleware("http")
+        async def _access_code_gate(request: Request, call_next):
+            # Only the live-pipeline API is gated. The page shell and static
+            # companions (/demo, /tracker, /app, /site, /walkthrough, /) must
+            # always load so the gate is a soft door, not a wall around the
+            # whole site.
+            if request.url.path.startswith("/api/"):
+                supplied = (
+                    request.headers.get("X-Access-Code")
+                    or request.query_params.get("code")
+                )
+                if supplied != access_code:
+                    return JSONResponse(
+                        status_code=401, content={"detail": "access code required"},
+                    )
+            return await call_next(request)
+
     # ------------------------------------------------------------------ static
 
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
+    def index(_state: DashboardState = Depends(get_state)) -> str:
         return (Path(__file__).parent / "client.html").read_text()
 
     # ---- static companions: cinematic demo, SSOT tracker, sample-data app ----
@@ -313,7 +439,7 @@ def create_app(state: DashboardState):
     # ------------------------------------------------------------------ status
 
     @app.get("/api/status")
-    def get_status() -> dict:
+    def get_status(state: DashboardState = Depends(get_state)) -> dict:
         applied = sum(1 for j in state.jobs if j.get("status") in
                       ("Applied", "Assessment", "Interview", "Offer"))
         return {
@@ -331,7 +457,7 @@ def create_app(state: DashboardState):
     # ---------------------------------------------------------------- onboarding
 
     @app.post("/api/onboarding/profile")
-    def save_profile(body: dict) -> dict:
+    def save_profile(body: dict, state: DashboardState = Depends(get_state)) -> dict:
         required = {"name", "email", "target_roles", "locations"}
         missing = required - body.keys()
         if missing:
@@ -347,7 +473,7 @@ def create_app(state: DashboardState):
         return {"ok": True, "user_id": state.user_profile.user_id}
 
     @app.post("/api/onboarding/resume")
-    def parse_resume(body: dict) -> dict:
+    def parse_resume(body: dict, state: DashboardState = Depends(get_state)) -> dict:
         text = body.get("text", "")
         if not text.strip():
             raise HTTPException(status_code=422, detail="resume text is required")
@@ -360,7 +486,7 @@ def create_app(state: DashboardState):
         return result
 
     @app.post("/api/onboarding/ats")
-    def save_ats(body: dict) -> dict:
+    def save_ats(body: dict, state: DashboardState = Depends(get_state)) -> dict:
         def _parse_list(key: str) -> list[str]:
             v = body.get(key, "")
             if isinstance(v, list):
@@ -378,7 +504,7 @@ def create_app(state: DashboardState):
     # ---------------------------------------------------------------- hunt control
 
     @app.post("/api/hunt/start")
-    async def start_hunt() -> dict:
+    async def start_hunt(state: DashboardState = Depends(get_state)) -> dict:
         if state.user_profile is None:
             raise HTTPException(status_code=400, detail="complete onboarding first")
         if state.hunt_status == "running":
@@ -388,11 +514,16 @@ def create_app(state: DashboardState):
         state.documents = {}
         state.hunt_error = ""
         state.hunt_progress = {}
+        # We're on the main event loop here (this is an async route handler,
+        # not a threaded dependency), so it's safe to wire up cross-thread
+        # publishing now, just before the orchestrator starts running in a
+        # worker thread via asyncio.to_thread.
+        state.bus.set_loop(asyncio.get_event_loop())
         asyncio.create_task(_run_hunt_bg(state))
         return {"ok": True, "hunt_status": "running"}
 
     @app.post("/api/hunt/reset")
-    def reset_hunt() -> dict:
+    def reset_hunt(state: DashboardState = Depends(get_state)) -> dict:
         if state.hunt_status == "running":
             raise HTTPException(status_code=409, detail="cannot reset while running")
         state.user_profile = None
@@ -410,17 +541,19 @@ def create_app(state: DashboardState):
     # ------------------------------------------------------------------ plan / jobs
 
     @app.get("/api/plan")
-    def get_plan() -> dict:
+    def get_plan(state: DashboardState = Depends(get_state)) -> dict:
         if state.plan is None:
             return {"plan": None}
         return {"plan": _plan_to_dict(state.plan)}
 
     @app.get("/api/jobs")
-    def get_jobs() -> dict:
+    def get_jobs(state: DashboardState = Depends(get_state)) -> dict:
         return {"jobs": state.jobs}
 
     @app.post("/api/jobs/{job_id}/status")
-    def update_job_status(job_id: str, body: dict) -> dict:
+    def update_job_status(
+        job_id: str, body: dict, state: DashboardState = Depends(get_state),
+    ) -> dict:
         new_status = body.get("status", "")
         if new_status not in _VALID_STATUSES:
             raise HTTPException(
@@ -440,20 +573,23 @@ def create_app(state: DashboardState):
         raise HTTPException(status_code=404, detail="job not found")
 
     @app.get("/api/applications")
-    def get_apps() -> dict:
+    def get_apps(state: DashboardState = Depends(get_state)) -> dict:
         return {"applications": state.applications}
 
     # ----------------------------------------------------------------- documents
 
     @app.get("/api/documents/{job_id}")
-    def get_document(job_id: str) -> dict:
+    def get_document(job_id: str, state: DashboardState = Depends(get_state)) -> dict:
         doc = state.documents.get(job_id)
         if doc is None:
             raise HTTPException(status_code=404, detail="document not found")
         return {"document": doc}
 
     @app.get("/api/documents/{job_id}/download")
-    def download_document(job_id: str, format: str = "txt", kind: str = "resume") -> Any:
+    def download_document(
+        job_id: str, format: str = "txt", kind: str = "resume",
+        state: DashboardState = Depends(get_state),
+    ) -> Any:
         doc = state.documents.get(job_id)
         if doc is None:
             raise HTTPException(status_code=404, detail="document not found")
@@ -516,7 +652,10 @@ def create_app(state: DashboardState):
     # ----------------------------------------------------------------- traces
 
     @app.get("/api/traces")
-    def get_traces(agent: str | None = None, limit: int = 50) -> dict:
+    def get_traces(
+        agent: str | None = None, limit: int = 50,
+        state: DashboardState = Depends(get_state),
+    ) -> dict:
         traces = (
             state.trace_store.for_agent(agent)
             if agent
@@ -528,7 +667,9 @@ def create_app(state: DashboardState):
     # ----------------------------------------------------------------- approvals
 
     @app.get("/api/approvals")
-    def list_approvals(state_filter: str | None = None) -> dict:
+    def list_approvals(
+        state_filter: str | None = None, state: DashboardState = Depends(get_state),
+    ) -> dict:
         items = state.approval_queue.all()
         if state_filter:
             items = [r for r in items if r.state.value == state_filter]
@@ -536,7 +677,8 @@ def create_app(state: DashboardState):
 
     @app.post("/api/approve/{identifier}")
     def approve(identifier: str, decision: str = "approve",
-                reviewer: str = "", notes: str = "") -> dict:
+                reviewer: str = "", notes: str = "",
+                state: DashboardState = Depends(get_state)) -> dict:
         verb_to_state = {
             "approve": ApprovalState.APPROVED,
             "reject": ApprovalState.REJECTED,
@@ -578,9 +720,32 @@ def create_app(state: DashboardState):
 
     @app.websocket("/ws/stream")
     async def stream(ws: WebSocket) -> None:
+        # A WebSocket can't set a *new* cookie on its handshake response, so
+        # we can't mint a fresh workspace here the way `get_state` does for
+        # HTTP routes. The client always hits `GET /` first via the SPA,
+        # which sets the cookie — so by the time the socket connects, the
+        # cookie should already be present. Absence is rare/abuse-only.
+        if access_code:
+            supplied = (
+                ws.headers.get("X-Access-Code") or ws.query_params.get("code")
+            )
+            if supplied != access_code:
+                await ws.close(code=1008)  # policy violation
+                return
+
+        if workspace_factory is None:
+            ws_state = state
+        else:
+            ws_id = ws.cookies.get(WORKSPACE_COOKIE)
+            if not ws_id or not _SAFE_ID_RE.match(ws_id):
+                await ws.close(code=1008)  # policy violation
+                return
+            ws_state = workspace_factory(ws_id)
+            ws_state.bus.set_loop(asyncio.get_event_loop())
+
         await ws.accept()
         try:
-            async for payload in state.bus.subscribe():
+            async for payload in ws_state.bus.subscribe():
                 await ws.send_text(json.dumps(payload))
         except WebSocketDisconnect:
             return

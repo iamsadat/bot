@@ -11,9 +11,25 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     healthCheckPath: /api/status
+    # Render's free-tier disk is ephemeral — it resets on redeploy and after a
+    # long idle spin-down. That's fine for a short real-user test, but for
+    # anything longer-lived attach a paid persistent disk, or point
+    # DATABASE_URL at a real Postgres instance instead (already supported via
+    # SQLAlchemy — see jobhunt/db/engine.py).
     envVars:
       - key: JOBHUNT_DB_PATH
         value: /tmp/jobhunt.db
+      # Multi-tenant mode: where per-browser workspace SQLite files live, and
+      # the max number of concurrent workspaces kept warm at once.
+      - key: JOBHUNT_WORKSPACES_DIR
+        value: /tmp/jobhunt-workspaces
+      - key: JOBHUNT_WORKSPACE_CAP
+        value: "200"
+      # Set this in the Render dashboard after the first deploy (or here) to
+      # require testers to enter a passcode before using the live app —
+      # recommended when sharing the URL outside your immediate team.
+      - key: JOBHUNT_ACCESS_CODE
+        sync: false
       # Optional: set ANTHROPIC_API_KEY to enable real LLM tailoring.
       # - key: ANTHROPIC_API_KEY
       #   sync: false

@@ -11,9 +11,14 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+
 from fastapi.testclient import TestClient  # noqa: E402
 
-from jobhunt.dashboard.server import DashboardState, create_app  # noqa: E402
+from jobhunt.dashboard.server import (  # noqa: E402
+    DashboardState, WorkspaceManager, create_app,
+)
 from jobhunt.trace import ThoughtBus, TraceStore  # noqa: E402
 
 
@@ -441,3 +446,153 @@ def test_approve_marks_matching_job_as_applied():
     )
     client.post(f"/api/approve/{req.request_id}", params={"decision": "approve"})
     assert state.jobs[0]["status"] == "Applied"
+
+
+# ── multi-tenant workspace isolation (workspace_factory mode) ───────────────
+
+def _workspace_app(tmp_path, cap=200):
+    manager = WorkspaceManager(base_dir=tmp_path, cap=cap)
+    app = create_app(workspace_factory=manager.get)
+    return manager, app
+
+
+def test_workspace_factory_mode_sets_cookie_on_index():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, app = _workspace_app(Path(tmp))
+        client = TestClient(app)
+        r = client.get("/")
+        assert r.status_code == 200
+        assert client.cookies.get("jh_ws") is not None
+
+
+def test_two_cookie_jars_get_isolated_state():
+    with tempfile.TemporaryDirectory() as tmp:
+        manager, app = _workspace_app(Path(tmp))
+        client_a = TestClient(app)
+        client_b = TestClient(app)
+
+        # Each gets its own cookie on first load.
+        client_a.get("/")
+        client_b.get("/")
+        ws_a = client_a.cookies.get("jh_ws")
+        ws_b = client_b.cookies.get("jh_ws")
+        assert ws_a is not None and ws_b is not None
+        assert ws_a != ws_b
+
+        # Each does its own onboarding.
+        client_a.post("/api/onboarding/profile", json=_profile_payload(
+            name="Ada Lovelace", email="ada@example.com",
+        ))
+        client_b.post("/api/onboarding/profile", json=_profile_payload(
+            name="Grace Hopper", email="grace@example.com",
+        ))
+
+        state_a = manager.get(ws_a)
+        state_b = manager.get(ws_b)
+        assert state_a is not state_b
+        assert state_a.user_profile.name == "Ada Lovelace"
+        assert state_b.user_profile.name == "Grace Hopper"
+
+        # Jobs and approval queues stay isolated too.
+        state_a.jobs = [{"job_id": "j-1", "title": "X", "company": "Acme",
+                          "status": "Saved"}]
+        assert client_a.get("/api/jobs").json()["jobs"] != []
+        assert client_b.get("/api/jobs").json()["jobs"] == []
+
+        state_a.approval_queue.submit(
+            job_id="j-1", document_id="d-1", company="Acme", title="X",
+        )
+        assert len(state_a.approval_queue.all()) == 1
+        assert state_b.approval_queue.all() == []
+
+
+def test_path_traversal_cookie_rejected_and_fresh_workspace_minted():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, app = _workspace_app(Path(tmp))
+        client = TestClient(app)
+        r = client.get("/api/status", headers={"Cookie": "jh_ws=../../../etc/passwd"})
+        assert r.status_code == 200
+        new_ws = r.cookies.get("jh_ws")
+        assert new_ws is not None
+        assert new_ws != "../../../etc/passwd"
+        import re
+        assert re.match(r"^[a-f0-9]{32}$", new_ws)
+
+        # No file escaping the workspaces dir was ever touched.
+        assert not (Path(tmp) / ".." / "etc" / "passwd").resolve().exists()
+
+
+def test_workspace_manager_evicts_lru_beyond_cap():
+    with tempfile.TemporaryDirectory() as tmp:
+        manager = WorkspaceManager(base_dir=Path(tmp), cap=2)
+        ws1 = "a" * 32
+        ws2 = "b" * 32
+        ws3 = "c" * 32
+        s1 = manager.get(ws1)
+        manager.get(ws2)
+        assert len(manager) == 2
+        manager.get(ws3)  # evicts ws1 (least-recently-used)
+        assert len(manager) == 2
+        # ws1 is no longer cached, so .get() constructs a brand-new object.
+        s1_again = manager.get(ws1)
+        assert s1_again is not s1
+
+
+# ── access-code gate (off by default, opt-in via `access_code=`) ────────────
+
+def test_access_code_off_by_default_existing_tests_unaffected():
+    _, client = _client()
+    r = client.get("/api/status")
+    assert r.status_code == 200
+
+
+def test_access_code_missing_returns_401():
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    app = create_app(state, access_code="letmein")
+    client = TestClient(app)
+    r = client.get("/api/status")
+    assert r.status_code == 401
+    assert r.json()["detail"] == "access code required"
+
+
+def test_access_code_wrong_returns_401():
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    app = create_app(state, access_code="letmein")
+    client = TestClient(app)
+    r = client.get("/api/status", headers={"X-Access-Code": "nope"})
+    assert r.status_code == 401
+
+
+def test_access_code_correct_header_passes():
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    app = create_app(state, access_code="letmein")
+    client = TestClient(app)
+    r = client.get("/api/status", headers={"X-Access-Code": "letmein"})
+    assert r.status_code == 200
+
+
+def test_access_code_correct_query_param_passes():
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    app = create_app(state, access_code="letmein")
+    client = TestClient(app)
+    r = client.get("/api/status?code=letmein")
+    assert r.status_code == 200
+
+
+def test_access_code_does_not_gate_index_or_static_companions():
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    app = create_app(state, access_code="letmein")
+    client = TestClient(app)
+    assert client.get("/").status_code == 200
+    assert client.get("/demo").status_code == 200
+
+
+def test_access_code_gates_websocket():
+    from fastapi import WebSocketDisconnect
+
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    app = create_app(state, access_code="letmein")
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/stream"):
+            pass

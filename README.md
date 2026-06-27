@@ -20,6 +20,30 @@ job hunt. Every decision is recorded as an inspectable
   bundled `Dockerfile` + `render.yaml` (serves `uvicorn jobhunt.dashboard.app:app`). Persistence
   path is `JOBHUNT_DB_PATH`; set `ANTHROPIC_API_KEY` to enable real LLM tailoring.
 
+## Deploy your own live instance
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/iamsadat/bot)
+
+One click deploys the real FastAPI dashboard — onboarding, live multi-agent hunt,
+Kanban tracking, document approval — under your own free Render account, with no
+code changes. Render reads `render.yaml` and provisions everything automatically.
+
+**To share it with a small group of real testers (recommended for an initial test):**
+1. After the first deploy finishes, open the service in the Render dashboard → **Environment** → set `JOBHUNT_ACCESS_CODE` to a short passcode of your choice → save (Render redeploys automatically).
+2. Share the live URL + that passcode with up to ~10 testers. Each tester's browser gets
+   its own isolated workspace automatically (cookie-based) — they won't see each other's
+   data.
+3. This is a real-user **test** deployment, not yet built for scale: the free tier's disk
+   is ephemeral (a redeploy or a long idle period resets stored data) and there's no
+   horizontal scaling. For anything beyond a short test, attach a persistent disk or set
+   `DATABASE_URL` to a real Postgres instance, and budget time for the still-open hardening
+   items tracked in `jobhunt/tracker/tasks.json` (OpenTelemetry tracing, Vault-backed
+   secrets, k8s manifests + autoscaling, a formal pen test / GDPR audit).
+
+The static demo (landing page, sample-data interactive app, cinematic walkthrough,
+live progress tracker) is already deployed for free on GitHub Pages and needs no
+action — see the link at the top of this README.
+
 ## What's new in this drop
 
 * **Indeed RSS adapter** (`jobhunt/adapters/indeed.py`) — fourth job source, with polite token-bucket rate limiting (`jobhunt/rate_limit.py` + `RateLimitedHTTPClient`).

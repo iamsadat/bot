@@ -3,13 +3,14 @@
   "tagline": "A production-grade multi-agent platform that plans, discovers, vets, tailors, submits, and tracks job applications — reasoning deliberately at every step.",
   "updated": "2026-06-27",
   "branch": "claude/multi-agent-job-platform-OG9Az",
-  "tests": { "passing": 509, "failing": 0 },
+  "tests": { "passing": 527, "failing": 0 },
   "links": {
     "walkthrough": "../site/walkthrough.html",
     "demo_video": "../demo/jobhunt-demo.mp4",
     "interactive_demo": "../demo/demo.html",
     "interactive_app": "../site/app.html",
-    "repo": "https://github.com/iamsadat/bot"
+    "repo": "https://github.com/iamsadat/bot",
+    "deploy_your_own": "https://render.com/deploy?repo=https://github.com/iamsadat/bot"
   },
   "phases": [
     {
@@ -95,7 +96,8 @@
         { "title": "Improvement meta-agent", "status": "done", "detail": "Surfaces rollbacks and promotes winning variants from the action log." },
         { "title": "Structured JSON logging", "status": "done", "detail": "Pluggable sinks with PII redaction baked in." },
         { "title": "Real paid enrichment APIs", "status": "todo", "detail": "Swap heuristics for live Glassdoor / Crunchbase / news feeds." },
-        { "title": "pgvector embeddings", "status": "done", "detail": "Pluggable VectorStore: pgvector-backed (<=> ANN + jsonb filter) with an in-memory fallback; 48 offline tests." }
+        { "title": "pgvector embeddings", "status": "done", "detail": "Pluggable VectorStore: pgvector-backed (<=> ANN + jsonb filter) with an in-memory fallback; 48 offline tests." },
+        { "title": "Real semantic embeddings", "status": "done", "detail": "Deterministic hashing-trick bag-of-words vectors (fully offline, no paid API) replace the old placeholder zero-vectors — JD / resume / skills similarity is genuinely computed now." }
       ]
     },
     {
@@ -108,6 +110,9 @@
         { "title": "GitHub Pages deploy (tracker + demo + app)", "status": "done", "detail": "Workflow assembles + publishes the tracker, cinematic demo and interactive app to a mobile-accessible static site." },
         { "title": "Dockerfile + host deploy config", "status": "done", "detail": "Container + render.yaml + module-level ASGI app for one-click backend hosting." },
         { "title": "ruff / mypy gating", "status": "done", "detail": "ruff config added and now hard-blocks CI on the package; mypy configured (advisory while type coverage grows)." },
+        { "title": "Multi-tenant workspace isolation", "status": "done", "detail": "Cookie-scoped DashboardState per browser, SQLite-per-workspace, LRU-capped — concurrent testers no longer share or clobber each other's data." },
+        { "title": "Shared access-code gate", "status": "done", "detail": "Optional JOBHUNT_ACCESS_CODE soft-gates the live API + WebSocket behind a passcode, so you can invite a small group of real testers without opening it to the whole internet." },
+        { "title": "One-click Render deploy", "status": "done", "detail": "render.yaml wired for a one-click Deploy-to-Render button (README) — spin up your own live instance and share it with ~10 testers in minutes." },
         { "title": "OpenTelemetry tracing", "status": "todo", "detail": "Distributed traces across the agent pipeline." },
         { "title": "Vault-backed secrets", "status": "todo", "detail": "OAuth / IMAP tokens out of env and into a secret manager." },
         { "title": "k8s manifests + autoscaling + SLOs", "status": "todo", "detail": "Production runtime with horizontal scaling and service objectives." },
