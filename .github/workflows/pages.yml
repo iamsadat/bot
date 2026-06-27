@@ -52,10 +52,11 @@ jobs:
           cp _site/index.html _site/404.html
           echo "Assembled:" && find _site -type f | sort
 
+      # ONE-TIME SETUP (repo owner): Settings → Pages → Build and deployment →
+      # Source → "GitHub Actions". The workflow token can't enable Pages itself,
+      # so this 10-second toggle is required once; after that every push deploys.
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
