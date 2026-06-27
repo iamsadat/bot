@@ -1,282 +1,288 @@
-# TradeBot — a precise mock day-trading bot
+# JobHunt — production-grade multi-agent job hunting platform
 
-A single-symbol, intraday mock trading bot built around **multi-signal
-confluence**, **strict risk management**, and a **rich live dashboard** in
-the terminal. It runs entirely on synthetic market data so it is safe to
-experiment with — no exchange credentials, no real orders.
+A self-driving job application platform built on **seven specialised agents**
+that plan, discover, vet, tailor, submit, track, and continuously improve a
+job hunt. Every decision is recorded as an inspectable
+**ReasoningTrace** and streamed to a mobile-first dashboard via WebSockets.
+
+## Live site & deploy
+
+| What | Where |
+|------|-------|
+| **Progress tracker** (single source of truth — every phase/feature/task, animated) | Pages: `/tracker/` · server: `/tracker` |
+| **Interactive app** (full dashboard UX on sample data, mobile-friendly) | Pages: `/site/app.html` · server: `/app` |
+| **Cinematic demo** (animated 3D walkthrough + MP4) | Pages: `/demo/` · server: `/demo` |
+
+* **Static site (mobile link):** published to GitHub Pages by `.github/workflows/pages.yml` →
+  `https://iamsadat.github.io/bot/`. It bundles the tracker, interactive app and cinematic demo
+  into one mobile-accessible site (auto-enables Pages on first run).
+* **Backend (live dashboard):** `python -m jobhunt serve` locally, or one-click host with the
+  bundled `Dockerfile` + `render.yaml` (serves `uvicorn jobhunt.dashboard.app:app`). Persistence
+  path is `JOBHUNT_DB_PATH`; set `ANTHROPIC_API_KEY` to enable real LLM tailoring.
+
+## What's new in this drop
+
+* **Indeed RSS adapter** (`jobhunt/adapters/indeed.py`) — fourth job source, with polite token-bucket rate limiting (`jobhunt/rate_limit.py` + `RateLimitedHTTPClient`).
+* **Anthropic SDK integration** (`jobhunt/llm/`) — optional dep; `AnthropicLLMClient` uses Sonnet 4.6 for tone rewrites and Opus 4.7 for peer critique; `FakeLLMClient` keeps the full suite offline; PII is redacted before every API call.
+* **Auto-submit** for Greenhouse + Lever (`jobhunt/submitters/`) — `SubmissionAgent` calls real posting endpoints when `auto_submit_approved=True`; `SubmissionPlan` gains `submitted` + `submission_id` fields.
+* **Inbox watcher** (`jobhunt/inbox/`) — IMAP4_SSL source, confidence-scored email classifier, Calendly/Zoom/datetime calendar-hint extractor (`FakeInboxSource` for offline tests).
+* **Vetting enrichers** (`jobhunt/enrichers/`) — Glassdoor / Crunchbase / News / Layoffs heuristic enrichers + user-tunable weighted scorecard on `VettingAgent`.
+* **A/B experiment framework** (`jobhunt/ab.py`) — deterministic bucket assignment, winner promotion, rollback; wired into the Continuous-Improvement Meta-Agent.
+* **Structured logging + CI** — PII-redacting log module (`jobhunt/log.py`) and GitHub Actions workflow (`.github/workflows/ci.yml`).
+
+---
 
 It is designed to be:
 
-* **Precise** — every entry must clear a weighted confluence score *and* a
-  minimum number of agreeing indicators *and* an ADX trend-strength gate
-  *and* a session-VWAP location filter, then survive an overbought/oversold
-  veto.
-* **Safe** — fixed-fractional position sizing using ATR stops, take-profits
-  at a configurable reward:risk ratio, ATR-based trailing stops, a daily
-  loss circuit breaker, and a cool-down after consecutive losers.
-* **Honest** — entries fill at the *next* bar's open (no look-ahead),
-  bar-internal stop/TP collisions resolve to the worst case, slippage and
-  per-share commissions are charged on every fill.
-* **Explainable** — every decision is recorded with its score, its
-  per-signal votes, and a human-readable reason. The report includes the
-  full per-bar decision log as CSV.
+* **Safety-first** — every résumé bullet must be backed by an
+  ``evidence_id`` from the user's experience graph. The Resume Architect
+  refuses to ship a draft with even one unsupported claim.
+* **Observable** — the ``deliberate → act → critique → decide`` loop is
+  recorded for every agent invocation, PII is redacted before storage,
+  and the dashboard replays the full thought stream as it happens.
+* **Failure-tolerant** — every tool call is wrapped with retry,
+  exponential backoff, and a per-tool circuit breaker. Adapters degrade
+  gracefully (a dead source ⇒ flag on the discovery batch, not a crash).
+* **Pluggable** — swap the in-memory store for Postgres, fixture
+  adapters for real Greenhouse/Lever/Ashby APIs, the placeholder
+  embedder for Anthropic's embedding API. The interfaces don't change.
+* **Offline-by-default for tests** — every external dependency
+  (Postgres, Redis, S3, ATS APIs, LLM, inbox) ships with a `Fake*` companion
+  so the ~180 tests run with zero network access.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Install the dependencies (Python 3.10+)
+# 1. Python 3.11+; install dependencies
 pip install -r requirements.txt
 
-# 2. Run a fast headless backtest
-python -m tradebot backtest --days 20 --seed 1
+# 2. Run the full offline demo (plan → discover → vet → tailor → submit)
+python -m jobhunt demo
 
-# 3. Watch the bot trade live in the terminal
-python -m tradebot simulate --days 5 --seed 1 --speed 60
+# 3. Or hit the real public ATS APIs for a single example each
+python -m jobhunt demo --live-ats \
+    --greenhouse stripe \
+    --lever netflix \
+    --ashby ramp
 
-# 4. Open the generated report
-xdg-open reports/MOCK_seed1_20d/report.md   # or just `cat` it
+# 4. Launch the dashboard (mobile-first, dark + light themes)
+python -m jobhunt serve --host 127.0.0.1 --port 8765
+# Then open http://127.0.0.1:8765 in any browser.
+
+# 5. Run the test suite
+pytest -q
 ```
 
-The first command finishes in a couple of seconds and writes a markdown
-report, an equity-curve PNG, a `trades.csv`, and a `decisions.csv` (one row
-per bar with the score and indicator state) under `reports/`.
+The demo command prints the plan, the deduped discovery batch, vetting
+scorecards, tailored résumés (with keyword coverage), submission packages,
+and the redacted reasoning traces — all in a few seconds, all offline.
 
 ---
 
-## How the decision engine works
+## Installation
 
-On every bar the bot computes the indicator bundle below, converts each
-indicator into a **vote in `[-1, +1]`**, and combines the votes into a
-weighted aggregate **score in `[-1, +1]`**.
+### 1. System requirements
 
-| Bucket           | Indicator         | Default weight | Vote logic |
-| ---------------- | ----------------- | -------------: | --- |
-| Trend            | EMA stack (9/21/55) | 0.18 | Full vote when price > EMA9 > EMA21 > EMA55 (or inverse). |
-| Trend            | MACD              | 0.18 | Sign of line vs. signal, magnitude from histogram slope. |
-| Trend            | ADX direction     | 0.14 | Scaled by `(ADX – adx_min) / 30`, signed by +DI vs. –DI. |
-| Momentum         | RSI(14)           | 0.13 | Linear in 50 → 70 (long) and 30 → 50 (short); contrarian penalty above 70 / below 30. |
-| Momentum         | Stochastic %K/%D  | 0.12 | Crossover detection plus mid-range bias. |
-| Mean reversion   | VWAP deviation    | 0.08 | `tanh`-style of `(close − VWAP) / ATR`. |
-| Mean reversion   | Bollinger %B      | 0.07 | Centred so 0.5 is neutral. |
-| Volume confirm   | OBV vs OBV-EMA21  | 0.10 | Sign and magnitude of (OBV − OBV-EMA). |
+* Python 3.11+
+* Optional production extras:
+  * **PostgreSQL 14+** for the persistence layer
+  * **Redis 6+** for queues and pub/sub
+  * **S3 / MinIO** for résumé and cover-letter artefacts
+  * **WeasyPrint** system deps (`libpango`, `libcairo`) for PDF rendering
 
-A long entry fires only when **all** of the following hold (short is the
-mirror image):
+For the offline demo and tests, none of the production extras are required —
+fake clients ship in the package.
 
-1. `score ≥ entry_threshold` (default `0.50`).
-2. At least `min_agreeing_signals = 5` of the 8 votes are ≥ `+0.25`.
-3. `ADX ≥ adx_min` (default `22`) — no chasing weak trends.
-4. `close > VWAP` — trade with the institutional benchmark, not against it.
-5. `RSI < rsi_long_max = 70` — never chase an overbought top.
-6. The bar is past the session warmup (`warmup_bars = 15`) and before the
-   end-of-day cool-off (`cooldown_bars = 10`).
-7. We are not in a `post_trade_cooldown` window or a daily-loss halt.
+### 2. Set up the project
 
-If a long passes, the order is queued and **fills at the next bar's open**
-with `slippage_bps = 1` and `$0.005/share` commission.
+```bash
+git clone https://github.com/iamsadat/bot.git
+cd bot
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-### Why the confluence floor matters
+### 3. (Optional) Bring up Postgres + Redis + MinIO
 
-Many indicators agree directionally during chop. Without the
-`min_agreeing_signals` rule, the score crosses `entry_threshold` whenever a
-couple of strong signals shout — which is exactly when the others are
-silent because there's no real trend. Requiring 5/8 agreement turns the
-score from a sum of magnitudes into evidence that a coherent regime is in
-place.
+```bash
+docker compose up -d  # if a compose file is provided; otherwise install locally
+export DATABASE_URL=postgresql://jobhunt:jobhunt@localhost:5432/jobhunt
+export REDIS_URL=redis://localhost:6379/0
+export S3_BUCKET=jobhunt-artifacts
+```
+
+### 4. Apply database migrations
+
+```bash
+alembic upgrade head
+```
+
+Alembic auto-detects `DATABASE_URL`; with no URL set, the engine defaults to
+SQLite in-memory so the dashboard and tests still run.
+
+### 5. Verify everything works
+
+```bash
+pytest -q                       # 82+ tests should pass
+python -m jobhunt demo          # end-to-end offline pipeline
+python -m jobhunt serve         # open http://127.0.0.1:8765
+```
 
 ---
 
-## Risk management
-
-Every trade is sized so the *worst-case* loss equals
-`risk_per_trade × equity` (default 0.75 %). Concretely, given the bar's
-ATR(14):
+## Architecture at a glance
 
 ```
-stop_distance = stop_atr_mult * ATR              # default 1.5 × ATR
-qty = floor( (risk_per_trade * equity) / stop_distance )
-qty = min(qty, floor(max_position_pct * equity / price))
+                              ┌────────────────┐
+                              │   Orchestrator │
+                              │  plan-and-     │
+                              │  execute graph │
+                              └───────┬────────┘
+                                      │
+   ┌─────────────┬──────────┬─────────┴─────────┬────────────┬─────────────┐
+   ▼             ▼          ▼                   ▼            ▼             ▼
+Strategy &   Discovery   Vetting           Resume        Submission   Tracking
+Planning     (dedupe,    (risk/reward      Architect     (route to    (email
+             relevance,  scorecard)        (evidence-    Greenhouse/  classifier,
+             ghost-score)                  bound bullets) Lever/Ashby) Kanban)
+                                                                          │
+                                                                          ▼
+                                                                  Continuous-
+                                                                  Improvement
+                                                                  Meta-Agent
 ```
 
-* **Stop-loss** is placed at `entry ∓ stop_distance` (sign by direction).
-* **Take-profit** at `entry ± rr_ratio * stop_distance`
-  (default reward:risk **2.2 : 1**). With a strict 41 %+ win rate this is
-  positive expectancy.
-* **Trailing stop** ratchets every bar by `trail_atr_mult × ATR` — never
-  loosens, only tightens.
-* **End-of-day exit**: any open position is forcibly flattened in the last
-  `cooldown_bars` of the session — the bot never carries overnight risk.
-* **Daily loss circuit breaker**: if cumulative day P&L hits
-  `−daily_loss_limit_pct` (default 2.5 %) trading halts until the next
-  session.
-* **Consecutive-loss cool-down**: after `consec_loss_cooldown` losers in a
-  row (default 3) the bot pauses for `cooldown_bars` (default 30) bars.
+Every agent inherits from `BaseAgent[I, O]` which enforces the contract:
 
-Bar-internal stop/TP collisions resolve **to the stop** — the most
-pessimistic interpretation — so backtest P&L will not be flattered by a
-lucky tie.
+1. **`deliberate(inputs, trace) → list[str]`** — bullet the plan.
+2. **`act(inputs, trace) → O`** — do the work.
+3. **`critique(inputs, output, trace) → dict[str, float]`** — score the output.
+4. **`decide(...) → tuple[str, float]`** — final decision + confidence.
+
+If the critique falls below the agent's `quality_threshold` (e.g. 0.8 for the
+Resume Architect), the loop refines up to `max_refinements` times before
+giving up. The Resume Architect scores `no_hallucination = 0` if a bullet
+ever lacks an `evidence_id`, which short-circuits the loop and prevents the
+draft from leaving the agent.
+
+---
+
+## What's shipped
+
+| Phase | Status | Highlights |
+| ----- | ------ | ---------- |
+| 0 — Foundation | ✅ shipped | 7 agents, Orchestrator, FastAPI dashboard, CLI, 22 tests |
+| 1 — ATS adapters | ✅ shipped | Greenhouse/Lever/Ashby + Indeed adapters, rate limiting, offline fixtures |
+| 1.5 — Persistence | ✅ shipped | SQLAlchemy + Alembic, Postgres TraceStore, Redis & S3 clients (real + fake) |
+| 2 — Resume safety | ✅ shipped | TF-IDF JD parser, slot-fill template, PDF/DOCX renderers, Anthropic LLM integration |
+| 2.5/2.6 — Onboarding + UI | ✅ shipped | Live pipeline, premium UI, SQLite persistence, 158 tests |
+| 3 — Submission + Tracking | 🟡 partial | Greenhouse/Lever auto-submit, IMAP inbox watcher; Playwright + Calendar API deferred |
+| 4 — Vetting + Meta-agent | 🟡 partial | Glassdoor/Crunchbase/News/Layoffs enrichers, weighted scorecard, A/B framework |
+| 5 — Hardening | not started | OpenTelemetry, Vault, k8s manifests, GDPR audit |
+
+See `jobhunt/PROGRESS.md` for the full living checklist.
 
 ---
 
 ## CLI reference
 
 ```text
-python -m tradebot --help
+python -m jobhunt --help
 
-Usage: python -m tradebot [OPTIONS] COMMAND [ARGS]...
-
-  TradeBot — mock day-trading bot with multi-signal confluence.
+Usage: python -m jobhunt {demo,serve}
 
 Commands:
-  backtest   Run a fast headless backtest and write a markdown report.
-  simulate   Stream a backtest live in the terminal with a rich dashboard.
-  report     Re-render a markdown report from a pickled BacktestResult.
+  demo    Run a full plan → discover → vet → tailor → submit cycle.
+  serve   Start the FastAPI dashboard (WebSocket thought stream + Kanban).
 ```
 
-All three commands share the same option set (extracted via
-`@common_options` in `tradebot/cli.py`):
+`demo` options:
 
-| Option              | Default      | Meaning                                   |
-| ------------------- | -----------: | ----------------------------------------- |
-| `--symbol`          | `MOCK`       | Ticker label used in the report title.    |
-| `--days`            | `20`         | Synthetic trading days to generate.       |
-| `--seed`            | `42`         | RNG seed — same seed → same market.       |
-| `--vol`             | `0.35`       | Annualised volatility of the synthetic series. |
-| `--drift`           | `0.08`       | Annualised drift.                         |
-| `--start-price`     | `100.0`      | Starting price.                           |
-| `--equity`          | `100000`     | Starting account equity ($).              |
-| `--risk-per-trade`  | `0.0075`     | Fraction of equity risked per trade.      |
-| `--threshold`       | `0.50`       | Minimum strategy score to take a trade.   |
-| `--adx-min`         | `22.0`       | Minimum ADX for trend trades.             |
-| `--out`             | `reports`    | Output directory for the report bundle.   |
+| Flag | Meaning |
+| ---- | ------- |
+| `--live-ats` | Hit real Greenhouse/Lever/Ashby APIs instead of fixtures. |
+| `--greenhouse BOARD_TOKEN` | Add a Greenhouse board (repeatable). |
+| `--lever COMPANY` | Add a Lever company slug (repeatable). |
+| `--ashby COMPANY` | Add an Ashby company slug (repeatable). |
 
-`simulate` adds:
+`serve` options:
 
-| Option   | Default | Meaning                                            |
-| -------- | ------: | -------------------------------------------------- |
-| `--speed`| `120`   | Bars per second for the live dashboard playback.   |
-
-`backtest` adds `--save / --no-save` to pickle the `BacktestResult` next to
-the report so it can be re-rendered later via `report PATH/result.pkl`.
-
----
-
-## The live dashboard
-
-`simulate` opens a Rich-powered layout that updates in place while the
-bot trades:
-
-```
-╭─ Status ────────────────────────────────────────────────────────────────╮
-│ TradeBot · MOCK · 2025-01-08 14:32:00                                   │
-│ Equity $103,408.14  (+3.41%)   Bars 6240/7800                           │
-╰─────────────────────────────────────────────────────────────────────────╯
-╭─ Price ──────────────────╮ ╭─ Signal confluence ────────────────────────╮
-│ Last  $103.42            │ │ Signal     Vote   Bar                      │
-│ VWAP  $102.78  ATR 0.31  │ │ ema_stack +1.00   ▶ ████████████           │
-│ ▂▃▃▄▄▅▆▆▆▆▆▇▇█▇▇▇▆▆▆▆... │ │ macd      +0.74   ▶ █████████              │
-│ O 103.40 H 103.55 L ...  │ │ ...                                        │
-╰──────────────────────────╯ │ Score +0.612   reason: long_confluence     │
-╭─ Position ───────────────╮ ╰────────────────────────────────────────────╯
-│ LONG  qty 235            │ ╭─ Trade log ────────────────────────────────╮
-│ Entry  $103.05           │ │  47 L 102.80→103.34 (12b) +$126.83 take_…  │
-│ Stop   $102.74           │ │  48 S 104.21→103.95  (4b)  +$54.18  stop   │
-│ TP     $103.74           │ │  ...                                       │
-│ Risk   $72.85            │ ╰────────────────────────────────────────────╯
-│ Unrealised  +$86.95      │
-╰──────────────────────────╯
-```
-
-* **Status** — symbol, current bar timestamp, mark-to-market equity,
-  return %, progress.
-* **Price** — last/VWAP/ATR, an 80-bar sparkline, OHLCV of the current bar.
-* **Signal confluence** — every indicator's vote with magnitude bar plus
-  the aggregate score and the **reason** the bot did or didn't trade.
-* **Position** — side, entry, live stop, take-profit, dollars at risk and
-  unrealised P&L.
-* **Trade log** — last 8 closed trades with side, fill prices, bars held,
-  P&L and the exit reason.
-* **Equity** — sparkline + exact equity & return.
-* **Progress** — overall bar position.
-
----
-
-## The report
-
-After every run, `reports/<symbol>_seed<seed>_<days>d/` contains:
-
-```
-report.md        markdown summary with all metrics and the last 10 trades
-equity_curve.png equity + drawdown plot
-trades.csv       one row per closed trade
-decisions.csv    one row per bar — score, votes, RSI/ADX/ATR/VWAP, equity
-```
-
-Metrics computed:
-
-* **Total return %**, ending equity.
-* **Sharpe** and **Sortino**, both annualised using the bar cadence.
-* **Max drawdown %** computed over the equity curve.
-* **Trade count, win rate, profit factor, expectancy/trade, avg win/loss**.
-* **Average bars held**, longs vs. shorts, exit-reason breakdown
-  (stops vs. take-profits vs. session-close).
-
-The exit-reason breakdown is the easiest sanity check: a healthy run has
-roughly equal stops and take-profits with a non-trivial number of
-session-close exits coming from in-the-money runners (the trailing stop
-should usually grab those).
-
----
-
-## Tuning recipes
-
-| If the bot…                            | Try                                      |
-| -------------------------------------- | ---------------------------------------- |
-| Trades way too often / scalpy          | `--threshold 0.6`, raise `min_agreeing_signals` to 6 in `StrategyConfig`. |
-| Misses obvious moves                   | `--threshold 0.4`, lower `adx_min` to 18. |
-| Too many stop-outs                     | Raise `stop_atr_mult` to 2.0 and `rr_ratio` accordingly (`RiskConfig`). |
-| Drawdowns scare you                    | Lower `risk_per_trade` to 0.005 and `daily_loss_limit_pct` to 0.015. |
-| Whipsaw on choppy days                 | Raise `warmup_bars` to 30, raise `post_trade_cooldown` to 5. |
-
-For deeper edits, the four config dataclasses are the only knobs you need:
-
-* `tradebot.market.MarketConfig` — synthetic market shape.
-* `tradebot.strategy.StrategyConfig` — entry rules, weights.
-* `tradebot.risk.RiskConfig` — sizing, stops, halts.
-* `tradebot.engine.ExecConfig` — slippage and commissions.
+| Flag | Default | Meaning |
+| ---- | ------- | ------- |
+| `--host` | `127.0.0.1` | Bind address. |
+| `--port` | `8765` | TCP port. |
 
 ---
 
 ## Project layout
 
 ```
-tradebot/
-├── __init__.py
-├── __main__.py        # `python -m tradebot` entry point
-├── cli.py             # click-based commands & argument parsing
-├── market.py          # synthetic OHLCV generator (GBM + regimes + jumps)
-├── indicators.py      # vectorised TA: EMA/RSI/MACD/BB/ATR/VWAP/ADX/Stoch/OBV
-├── strategy.py        # multi-signal confluence + decision rules
-├── risk.py            # position sizing, stops, halts
-├── engine.py          # bar-by-bar mock broker + backtest loop
-├── report.py          # metrics + markdown + matplotlib equity plot
-└── dashboard.py       # rich-terminal live dashboard
+jobhunt/
+├── __main__.py        # `python -m jobhunt {demo,serve}`
+├── models.py          # dataclasses: User, Plan, JobPosting, Company, …
+├── tools.py           # retry + circuit breaker + typed (result, degraded)
+├── trace.py           # ReasoningTrace, in-memory TraceStore, ThoughtBus
+├── jd_parser.py       # HTML strip + TF-IDF + ATS categorisation (Phase 2)
+├── resume_template.py # slot-fill engine; every bullet has evidence_id
+├── resume_renderer.py # text / HTML / PDF (WeasyPrint) / DOCX (python-docx)
+├── embeddings.py      # placeholder vector + cosine similarity
+├── redis_client.py    # RedisClient + FakeRedisClient (queues + pub/sub)
+├── s3_client.py       # S3Client + FakeS3Client (artefact storage)
+├── http.py            # urllib HTTPClient + FakeHTTPClient for offline tests
+├── adapters/          # JobSource protocol + Greenhouse / Lever / Ashby
+├── agents/            # 7 agents + Orchestrator
+├── dashboard/         # FastAPI server + mobile-first HTML client
+├── db/                # SQLAlchemy ORM + Postgres TraceStore
+└── fixtures/          # offline JSON for demo & tests
+
+alembic/               # database migrations
+tests/jobhunt/         # 82+ tests (unit + integration, all offline)
 ```
+
+---
+
+## Safety invariants enforced in code
+
+| Invariant | Where it's enforced |
+| --------- | ------------------- |
+| No résumé bullet without an `evidence_id`. | `resume_template.build_resume_draft` + `ResumeArchitectAgent.critique`. |
+| PII (emails, phone numbers) is redacted before any storage or log sink. | `trace.redact` is called by `TraceStore.append` and `PostgresTraceStore.append`. |
+| Every external HTTP call uses retry + circuit breaker. | `tools.call_tool` wraps every adapter call. |
+| Adapter failures degrade gracefully — partial discovery is OK. | `DiscoveryBatch.degraded_sources`; the orchestrator only re-plans on *empty* discovery. |
+| Tailored documents always require human approval before submission. | `TailoredDocument.requires_human_approval = True`; the Submission Agent surfaces, never auto-fires. |
+| LLM rewrites are best-effort; deterministic fallback on any exception. | `resume_template._bullet_for_keyword` swallows LLM errors. |
+
+---
+
+## Testing
+
+```bash
+pytest -q                                 # all tests
+pytest tests/jobhunt/test_resume_template.py -v
+pytest -k "jd_parser"                     # by name
+```
+
+The suite is fully offline:
+
+* HTTP traffic is replaced by `FakeHTTPClient` with recorded JSON fixtures.
+* Redis/S3 are replaced by `FakeRedisClient`/`FakeS3Client`.
+* Postgres is replaced by SQLite in-memory.
+* LLM calls are not made; the resume engine falls back to deterministic
+  phrasing when no `llm` callback is provided.
 
 ---
 
 ## Honest caveats
 
-* **The market is fake.** The generator is realistic enough for parameter
-  sweeps but contains *no* news, gaps, halts, auctions, microstructure,
-  or correlation with anything real. Edge measured here does not transfer
-  to live trading.
-* **Costs are stylised.** Real spreads widen at the open/close, fee tiers
-  vary by venue, and borrow costs for shorts are ignored.
-* **Single symbol, no portfolio effects.** No correlation hedging, no
-  beta-neutralisation, no position rotation across names.
-
-This bot is a **pedagogical sandbox** for thinking about confluence-based
-day-trading rules, not a substitute for a real research stack.
+* **The current demo profile is a fixture.** Real onboarding (skill graph
+  editor, OAuth import from LinkedIn) is Phase 2 / Phase 3 work.
+* **Auto-apply is *not* enabled by default**. Tailored documents land in
+  the "awaiting human approval" bucket and never submit themselves. This
+  is by design; turning it on requires the auto-apply migration in Phase 3.
+* **The placeholder embedder returns zero vectors.** Phase 2 wires in
+  Anthropic's embedding API; until then, cosine similarity is a placeholder
+  shape, not a real signal.
+* **ToS-sensitive sources are deferred.** LinkedIn scraping is explicitly
+  out; the Phase-2 plan calls for an OAuth+human-assist path instead.

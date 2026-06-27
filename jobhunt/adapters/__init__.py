@@ -14,12 +14,14 @@ from jobhunt.adapters.ashby import AshbySource
 from jobhunt.adapters.base import JobSource, SourceUnavailable
 from jobhunt.adapters.fixture import FixtureSource
 from jobhunt.adapters.greenhouse import GreenhouseSource
+from jobhunt.adapters.indeed import IndeedSource
 from jobhunt.adapters.lever import LeverSource
 
 __all__ = [
     "AshbySource",
     "FixtureSource",
     "GreenhouseSource",
+    "IndeedSource",
     "JobSource",
     "LeverSource",
     "SourceUnavailable",

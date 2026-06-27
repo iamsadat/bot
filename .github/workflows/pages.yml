@@ -1,0 +1,75 @@
+name: Deploy site (tracker · demo · app)
+
+# Publishes the static JobHunt site to GitHub Pages:
+#   /                 landing page
+#   /tracker/         single-source-of-truth progress tracker
+#   /site/app.html    interactive client-side dashboard (sample data)
+#   /demo/            cinematic demo (interactive HTML + MP4)
+on:
+  push:
+    branches:
+      - main
+      - claude/multi-agent-job-platform-OG9Az
+    paths:
+      - "jobhunt/site/**"
+      - "jobhunt/tracker/**"
+      - "jobhunt/demo/demo.html"
+      - "jobhunt/demo/jobhunt-demo.mp4"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble static site
+        run: |
+          set -e
+          rm -rf _site
+          mkdir -p _site/tracker _site/demo _site/site
+          # landing at root
+          cp jobhunt/site/index.html _site/index.html
+          # interactive app under /site/ (its relative links expect ../demo and ../tracker)
+          cp jobhunt/site/app.html _site/site/app.html
+          # tracker + its single-source-of-truth data
+          cp jobhunt/tracker/index.html _site/tracker/index.html
+          cp jobhunt/tracker/tasks.json _site/tracker/tasks.json
+          # cinematic demo + recorded video
+          cp jobhunt/demo/demo.html _site/demo/demo.html
+          cp jobhunt/demo/jobhunt-demo.mp4 _site/demo/jobhunt-demo.mp4 || echo "no mp4 present, skipping"
+          # SPA-style 404 so deep links resolve
+          cp _site/index.html _site/404.html
+          echo "Assembled:" && find _site -type f | sort
+
+      # ONE-TIME SETUP (repo owner): Settings → Pages → Build and deployment →
+      # Source → "GitHub Actions". The workflow token can't enable Pages itself,
+      # so this 10-second toggle is required once; after that every push deploys.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

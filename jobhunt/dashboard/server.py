@@ -272,6 +272,39 @@ def create_app(state: DashboardState):
     def index() -> str:
         return (Path(__file__).parent / "client.html").read_text()
 
+    # ---- static companions: cinematic demo, SSOT tracker, sample-data app ----
+    _ROOT = Path(__file__).resolve().parent.parent  # jobhunt/
+
+    def _serve(rel: str, media: str):
+        path = _ROOT / rel
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"{rel} not found")
+        data = path.read_bytes()
+        return Response(content=data, media_type=media)
+
+    @app.get("/demo")
+    @app.get("/demo/demo.html")
+    def demo_page():
+        return _serve("demo/demo.html", "text/html; charset=utf-8")
+
+    @app.get("/demo/jobhunt-demo.mp4")
+    def demo_video():
+        return _serve("demo/jobhunt-demo.mp4", "video/mp4")
+
+    @app.get("/tracker")
+    @app.get("/tracker/index.html")
+    def tracker_page():
+        return _serve("tracker/index.html", "text/html; charset=utf-8")
+
+    @app.get("/tracker/tasks.json")
+    def tracker_data():
+        return _serve("tracker/tasks.json", "application/json")
+
+    @app.get("/app")
+    @app.get("/site/app.html")
+    def sample_app():
+        return _serve("site/app.html", "text/html; charset=utf-8")
+
     # ------------------------------------------------------------------ status
 
     @app.get("/api/status")

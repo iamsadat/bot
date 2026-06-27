@@ -1,5 +1,10 @@
 # JobHunt — progress tracker
 
+> **Live, single source of truth:** the animated tracker at `jobhunt/tracker/`
+> (data in `jobhunt/tracker/tasks.json`) — deployed to GitHub Pages at
+> `/tracker/` and served by the dashboard at `/tracker`. This markdown is the
+> narrative companion; `tasks.json` is the machine-readable status of record.
+
 Living log of what's done, what's in flight, and what's next. The
 roadmap is anchored to the phases in `ARCHITECTURE.md` §6.
 
@@ -63,8 +68,9 @@ parsing recorded HTTP responses.
 - [x] Recorded JSON fixtures per source for offline tests.
 - [x] Demo CLI: `python -m jobhunt demo --live-ats --greenhouse acme
       --lever northwind --ashby contoso`.
-- [ ] Adapter-level rate limiting + polite backoff per source.
-- [ ] Indeed RSS adapter (lower priority — fewer high-signal jobs).
+- [x] Adapter-level rate limiting + polite token-bucket backoff per source
+      (`jobhunt/rate_limit.py` + `RateLimitedHTTPClient` in `jobhunt/http.py`).
+- [x] Indeed RSS adapter (`jobhunt/adapters/indeed.py`).
 - [ ] LinkedIn adapter — defer; ToS-sensitive, needs the human-assist
       path rather than scraping.
 
@@ -110,7 +116,11 @@ parsing recorded HTTP responses.
 - [x] Dashboard client.html "Awaiting your approval" panel with
       approve / reject / request-edits buttons.
 - [ ] Skill-graph editor on the dashboard (deferred — needs onboarding flow).
-- [ ] Anthropic SDK integration for LLM body + critique (Sonnet 4.6 + Opus 4.7).
+- [x] Anthropic SDK integration (`jobhunt/llm/`) — optional dep.
+      `AnthropicLLMClient` (Sonnet 4.6 tone, Opus 4.7 critique) +
+      `FakeLLMClient` for offline tests + `resume_callback` /
+      `critique_callback` factories wired into `build_resume_draft`. PII
+      redacted before every send.
 
 ---
 
@@ -173,21 +183,40 @@ parsing recorded HTTP responses.
 
 ---
 
-## Phase 3 — Submission + Tracking
+## Phase 3 — Submission + Tracking  ·  🟡 partial
 
-- [ ] Greenhouse / Lever auto-apply via official endpoints.
-- [ ] Playwright auto-fill with one-click assist fallback.
-- [ ] Gmail/IMAP watcher; Calendar API integration.
+- [x] Greenhouse / Lever auto-apply via official endpoints
+      (`jobhunt/submitters/`). `SubmissionAgent` calls real APIs when
+      `auto_submit_approved=True` + `SubmitterRegistry` wired in.
+      `SubmissionPlan` gains `submitted` + `submission_id` fields.
+- [ ] Playwright auto-fill with one-click assist fallback — **deferred**.
+- [x] IMAP4_SSL inbox watcher (`jobhunt/inbox/`) + `FakeInboxSource`
+      for offline tests. Richer classifier with confidence scores.
+      Calendar hint extractor (Calendly / Zoom / datetime patterns) — **hint
+      extraction only; full Calendar API integration deferred**.
 - [ ] Realtime Kanban updates (already on the wire; need DB persistence
       to survive restarts).
 
+### Phase 3 — what's done
+
+Auto-submit shipped for Greenhouse and Lever via their official posting
+endpoints; Playwright path and Gmail OAuth remain deferred. The inbox watcher
+(`jobhunt/inbox/`) covers IMAP4_SSL with a `FakeInboxSource` for tests and a
+richer email classifier (confidence-scored). A calendar-hint extractor
+recognises Calendly/Zoom links and datetime patterns in email bodies but does
+not yet write to any calendar API.
+
 ---
 
-## Phase 4 — Vetting + Meta-agent
+## Phase 4 — Vetting + Meta-agent  ·  🟡 partial
 
-- [ ] Glassdoor / Crunchbase / News / Layoffs.fyi enrichers.
-- [ ] Weighted RiskRewardScorecard with user-tunable weights.
-- [ ] Action log → meta-agent → prompt/parameter A/B with rollback.
+- [x] Glassdoor / Crunchbase / News / Layoffs heuristic enrichers
+      (`jobhunt/enrichers/`).
+- [x] Weighted `RiskRewardScorecard` with user-tunable weights wired into
+      `VettingAgent`.
+- [x] A/B experiment framework (`jobhunt/ab.py`): deterministic
+      bucket assignment, winner promotion, rollback. Wired into
+      Continuous-Improvement Meta-Agent.
 
 ---
 
@@ -202,14 +231,25 @@ parsing recorded HTTP responses.
 
 ## Cross-cutting / always on
 
-- [ ] CI workflow (`pytest` + `ruff` + `mypy`).
+- [x] CI workflow (`.github/workflows/ci.yml`) — `pytest` + `ruff` + `mypy`
+      (linters run non-blocking; failures annotate but don't break the build).
 - [ ] Test coverage ≥ 80 % per module; ≥ 90 % on resume agent.
-- [ ] Structured logging with the PII redactor on every sink.
+- [x] Structured logging with PII redactor on every sink (`jobhunt/log.py`).
+      Rate-limited token-bucket per adapter (`jobhunt/rate_limit.py` +
+      `RateLimitedHTTPClient` in `jobhunt/http.py`).
+- [ ] mypy / ruff enforced as hard gates (non-blocking today — see CI note above).
 - [ ] Containerise each agent service for prod.
 
 ---
 
 ## Recent commits (most recent first)
+
+**Phase 3+4 multi-agent drop** (`pending — Phase 3+4 multi-agent drop`):
+- Indeed RSS adapter + rate-limit token-bucket; Anthropic SDK integration
+  (Sonnet 4.6 / Opus 4.7, PII-clean, offline `FakeLLMClient`); Greenhouse +
+  Lever auto-submit via `SubmitterRegistry`; IMAP inbox watcher + calendar
+  hint extractor; Glassdoor / Crunchbase / News / Layoffs enrichers + weighted
+  scorecard; A/B framework; structured logging; CI workflow. ~180 tests.
 
 **Phase 2.5 — Onboarding + live pipeline** (in flight):
 - 4-step onboarding wizard, resume skill extraction, background orchestrator,
