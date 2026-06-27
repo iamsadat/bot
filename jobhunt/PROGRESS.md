@@ -1,5 +1,10 @@
 # JobHunt — progress tracker
 
+> **Live, single source of truth:** the animated tracker at `jobhunt/tracker/`
+> (data in `jobhunt/tracker/tasks.json`) — deployed to GitHub Pages at
+> `/tracker/` and served by the dashboard at `/tracker`. This markdown is the
+> narrative companion; `tasks.json` is the machine-readable status of record.
+
 Living log of what's done, what's in flight, and what's next. The
 roadmap is anchored to the phases in `ARCHITECTURE.md` §6.
 

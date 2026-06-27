@@ -5,6 +5,21 @@ that plan, discover, vet, tailor, submit, track, and continuously improve a
 job hunt. Every decision is recorded as an inspectable
 **ReasoningTrace** and streamed to a mobile-first dashboard via WebSockets.
 
+## Live site & deploy
+
+| What | Where |
+|------|-------|
+| **Progress tracker** (single source of truth — every phase/feature/task, animated) | Pages: `/tracker/` · server: `/tracker` |
+| **Interactive app** (full dashboard UX on sample data, mobile-friendly) | Pages: `/site/app.html` · server: `/app` |
+| **Cinematic demo** (animated 3D walkthrough + MP4) | Pages: `/demo/` · server: `/demo` |
+
+* **Static site (mobile link):** published to GitHub Pages by `.github/workflows/pages.yml` →
+  `https://iamsadat.github.io/bot/`. It bundles the tracker, interactive app and cinematic demo
+  into one mobile-accessible site (auto-enables Pages on first run).
+* **Backend (live dashboard):** `python -m jobhunt serve` locally, or one-click host with the
+  bundled `Dockerfile` + `render.yaml` (serves `uvicorn jobhunt.dashboard.app:app`). Persistence
+  path is `JOBHUNT_DB_PATH`; set `ANTHROPIC_API_KEY` to enable real LLM tailoring.
+
 ## What's new in this drop
 
 * **Indeed RSS adapter** (`jobhunt/adapters/indeed.py`) — fourth job source, with polite token-bucket rate limiting (`jobhunt/rate_limit.py` + `RateLimitedHTTPClient`).
