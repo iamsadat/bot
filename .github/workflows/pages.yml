@@ -40,8 +40,9 @@ jobs:
           mkdir -p _site/tracker _site/demo _site/site
           # landing at root
           cp jobhunt/site/index.html _site/index.html
-          # interactive app under /site/ (its relative links expect ../demo and ../tracker)
+          # interactive app + walkthrough under /site/ (relative links expect ../demo, ../tracker)
           cp jobhunt/site/app.html _site/site/app.html
+          cp jobhunt/site/walkthrough.html _site/site/walkthrough.html
           # tracker + its single-source-of-truth data
           cp jobhunt/tracker/index.html _site/tracker/index.html
           cp jobhunt/tracker/tasks.json _site/tracker/tasks.json
