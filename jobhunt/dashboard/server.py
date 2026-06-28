@@ -780,6 +780,21 @@ def create_app(
                 return {"timeline": j.get("events", [])}
         raise HTTPException(status_code=404, detail="job not found")
 
+    @app.post("/api/jobs/{job_id}/notes")
+    def set_job_notes(
+        job_id: str, body: dict, state: DashboardState = Depends(get_state),
+    ) -> dict:
+        """Per-application notes + next action (powers the tracker view)."""
+        for j in state.jobs:
+            if j["job_id"] == job_id:
+                if "notes" in body:
+                    j["notes"] = str(body["notes"])
+                if "next_action" in body:
+                    j["next_action"] = str(body["next_action"]).strip()
+                state.persist()
+                return {"ok": True, "job": j}
+        raise HTTPException(status_code=404, detail="job not found")
+
     @app.get("/api/applications")
     def get_apps(state: DashboardState = Depends(get_state)) -> dict:
         return {"applications": state.applications}

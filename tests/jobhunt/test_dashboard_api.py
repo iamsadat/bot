@@ -829,3 +829,19 @@ def test_profile_get_returns_ats_config_for_editing():
     client.post("/api/onboarding/ats", json={"greenhouse_tokens": "stripe, airtable"})
     g = client.get("/api/profile").json()
     assert g["ats_config"]["greenhouse_tokens"] == ["stripe", "airtable"]
+
+
+# ── application tracker: notes / next action ─────────────────────────────────
+
+def test_job_notes_set_and_persist():
+    state, client = _client()
+    state.jobs = [{"job_id": "j1", "company": "Acme", "title": "Eng", "status": "Applied"}]
+    r = client.post("/api/jobs/j1/notes", json={"notes": "called", "next_action": "follow up Fri"})
+    assert r.status_code == 200
+    assert state.jobs[0]["notes"] == "called"
+    assert state.jobs[0]["next_action"] == "follow up Fri"
+
+
+def test_job_notes_404_for_unknown_job():
+    _, client = _client()
+    assert client.post("/api/jobs/nope/notes", json={"notes": "x"}).status_code == 404
