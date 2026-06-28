@@ -118,6 +118,9 @@ def _build_sources(live_ats: bool, greenhouse: list[str], lever: list[str],
 
 
 def cmd_demo(args) -> int:
+    from jobhunt.llm.callbacks import resume_callback
+    from jobhunt.llm.factory import build_llm_client_from_env
+
     store = TraceStore()
     bus = ThoughtBus()
     sources = _build_sources(
@@ -126,7 +129,9 @@ def cmd_demo(args) -> int:
         lever=args.lever or [],
         ashby=args.ashby or [],
     )
-    orch = Orchestrator(store, bus)
+    llm_client = build_llm_client_from_env()
+    llm_cb = resume_callback(llm_client) if llm_client is not None else None
+    orch = Orchestrator(store, bus, llm=llm_cb)
     profile = _demo_profile()
     result = orch.run(
         OrchestratorInputs(profile=profile, sources=sources),

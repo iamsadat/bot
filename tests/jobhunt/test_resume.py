@@ -36,6 +36,50 @@ def test_resume_bullets_have_evidence_ids(profile, store, bus):
     assert doc.requires_human_approval is True
 
 
+def test_resume_bullets_polished_by_llm_keep_evidence_id(profile, store, bus):
+    posting = JobPosting(
+        job_id="j3", source="g", source_id="3",
+        url="https://boards.greenhouse.io/co/j3",
+        title="Backend Engineer", company="C",
+        location="Remote", jd_text="Python, Kubernetes.",
+        remote=True,
+    )
+
+    def llm(action, payload):
+        assert action == "rewrite_bullet"
+        return f"LLM polished: {payload['keyword']}"
+
+    agent = ResumeArchitectAgent(store, bus, llm=llm)
+    res = agent.run(
+        ResumeInputs(profile=profile, postings=[posting]), task_id="t"
+    )
+    [doc] = res.output
+    assert doc.bullets and all(b.get("evidence_id") for b in doc.bullets)
+    assert any(b["text"].startswith("LLM polished:") for b in doc.bullets)
+
+
+def test_resume_bullets_fall_back_when_llm_raises(profile, store, bus):
+    posting = JobPosting(
+        job_id="j4", source="g", source_id="4",
+        url="https://boards.greenhouse.io/co/j4",
+        title="Backend Engineer", company="C",
+        location="Remote", jd_text="Python, Kubernetes.",
+        remote=True,
+    )
+
+    def broken_llm(action, payload):
+        raise RuntimeError("rate limited")
+
+    agent = ResumeArchitectAgent(store, bus, llm=broken_llm)
+    res = agent.run(
+        ResumeInputs(profile=profile, postings=[posting]), task_id="t"
+    )
+    [doc] = res.output
+    # Deterministic phrasing survives the LLM failure, evidence stays intact.
+    assert doc.bullets and all(b.get("evidence_id") for b in doc.bullets)
+    assert all("Delivered work involving" in b["text"] for b in doc.bullets)
+
+
 def test_resume_refines_when_coverage_low(profile, store, bus):
     # An unrelated JD should drive coverage low; ensure the agent still
     # produces structured output without hallucinations (the safety

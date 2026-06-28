@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from jobhunt.adapters.base import JobSource
 from jobhunt.agents.base import AgentResult, BaseAgent
@@ -70,12 +70,14 @@ class Orchestrator(BaseAgent[OrchestratorInputs, OrchestratorOutput]):
         submission: SubmissionAgent | None = None,
         tracking: TrackingAgent | None = None,
         improvement: ImprovementAgent | None = None,
+        *,
+        llm: Callable[[str, dict], str] | None = None,
     ) -> None:
         super().__init__(trace_store, bus)
         self.strategy = strategy or StrategyAgent(trace_store, bus)
         self.discovery = discovery or DiscoveryAgent(trace_store, bus)
         self.vetting = vetting or VettingAgent(trace_store, bus)
-        self.resume = resume or ResumeArchitectAgent(trace_store, bus)
+        self.resume = resume or ResumeArchitectAgent(trace_store, bus, llm=llm)
         self.submission = submission or SubmissionAgent(trace_store, bus)
         self.tracking = tracking or TrackingAgent(trace_store, bus)
         self.improvement = improvement or ImprovementAgent(trace_store, bus)
