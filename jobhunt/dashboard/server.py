@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import secrets
 import time
@@ -497,11 +498,40 @@ def create_app(
     if workspace_factory is None and state is None:
         raise ValueError("create_app requires either `state` or `workspace_factory`")
 
+    # Recruiter-email auto-status: an IMAP source built from env (None if
+    # unconfigured). Single-tenant `serve` mode polls it in the background;
+    # the manual sync endpoint works in any mode.
+    from jobhunt.dashboard.inbox_sync import build_inbox_from_env, sync_inbox
+    inbox_source = build_inbox_from_env()
+    _inbox_since = {"ts": 0.0}
+
     @asynccontextmanager
     async def lifespan(app):
         if state is not None:
             state.bus.set_loop(asyncio.get_event_loop())
-        yield
+        poll_task = None
+        if state is not None and inbox_source is not None:
+            interval = int(os.environ.get("JOBHUNT_IMAP_POLL_SECONDS", "300"))
+
+            async def _poll_loop():
+                while True:
+                    await asyncio.sleep(interval)
+                    res = await asyncio.to_thread(
+                        sync_inbox, state, inbox_source, since=_inbox_since["ts"],
+                    )
+                    _inbox_since["ts"] = time.time()
+                    if res.get("updates"):
+                        state.bus.publish(
+                            "inbox", "poll",
+                            f"Inbox sync: {res['updates']} application(s) updated.",
+                        )
+
+            poll_task = asyncio.create_task(_poll_loop())
+        try:
+            yield
+        finally:
+            if poll_task is not None:
+                poll_task.cancel()
 
     app = FastAPI(title="JobHunt Dashboard", version="0.3.0", lifespan=lifespan)
 
@@ -620,6 +650,7 @@ def create_app(
             # LLM (if any) will tone-polish resumes for this deployment.
             "dev_nav": dev_nav,
             "llm": describe_llm_from_env(),
+            "inbox_connected": inbox_source is not None,
         }
 
     # ---------------------------------------------------------------- onboarding
@@ -917,6 +948,26 @@ def create_app(
         # it newest-first as a human-readable activity log.
         events = list(reversed(state.bus.history()))[:limit]
         return {"activity": events}
+
+    # ----------------------------------------------------------------- inbox
+
+    @app.get("/api/inbox/status")
+    def inbox_status() -> dict:
+        return {"connected": inbox_source is not None}
+
+    @app.post("/api/inbox/sync")
+    async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:
+        if inbox_source is None:
+            raise HTTPException(
+                status_code=400,
+                detail="inbox not configured — set JOBHUNT_IMAP_HOST/USER/PASSWORD",
+            )
+        state.bus.set_loop(asyncio.get_event_loop())
+        res = await asyncio.to_thread(
+            sync_inbox, state, inbox_source, since=_inbox_since["ts"],
+        )
+        _inbox_since["ts"] = time.time()
+        return res
 
     # ----------------------------------------------------------------- approvals
 

@@ -1173,6 +1173,10 @@
             <button class="seg-btn" data-f="Offer">Offer</button>
             <button class="seg-btn" data-f="Closed">Closed</button>
           </div>
+          <button class="btn btn-ghost btn-sm" id="btn-inbox-sync" style="display:none;" title="Check your inbox for recruiter updates">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M22 6l-10 7L2 6"/></svg>
+            Check email
+          </button>
         </div>
         <div class="apps-table-wrap">
           <table class="apps-table" id="apps-table">
@@ -1690,6 +1694,10 @@
       lp.title = llm.reason || 'No LLM key set — using deterministic phrasing';
     }
 
+    // Recruiter-email auto-status: show the "Check email" action when wired.
+    const ib = $('btn-inbox-sync');
+    if (ib) ib.style.display = s.inbox_connected ? 'inline-flex' : 'none';
+
     $('s-jobs').textContent = s.jobs_count;
     $('s-approved').textContent = s.approvals_pending === 0
       ? '✓' : '—';
@@ -2048,6 +2056,17 @@
     if (appsState.sort === key) appsState.dir *= -1;
     else { appsState.sort = key; appsState.dir = 1; }
     drawAppsTable();
+  });
+
+  $('btn-inbox-sync').addEventListener('click', async () => {
+    const b = $('btn-inbox-sync'); b.disabled = true;
+    try {
+      const r = await api('POST', '/api/inbox/sync', {});
+      toast(r.updates ? `📬 ${r.updates} application(s) updated from email`
+                      : `Checked ${r.checked} email(s) — no updates`, r.updates ? 'good' : '');
+      await refreshAll();
+    } catch (e) { toast(e.message || 'Inbox sync failed', 'bad'); }
+    finally { b.disabled = false; }
   });
 
   async function renderApplications() {
