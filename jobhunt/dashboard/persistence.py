@@ -132,6 +132,7 @@ def _profile_from_dict(d: dict) -> UserProfile:
         user_id=d.get("user_id", ""),
         name=d.get("name", ""),
         email=d.get("email", ""),
+        phone=d.get("phone", ""),
         target_roles=list(d.get("target_roles", [])),
         locations=list(d.get("locations", [])),
         min_salary=d.get("min_salary"),

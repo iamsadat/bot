@@ -32,6 +32,7 @@ class UserProfile:
     email: str
     target_roles: list[str]
     locations: list[str]
+    phone: str = ""
     min_salary: int | None = None
     remote_ok: bool = True
     culture_keywords: list[str] = field(default_factory=list)

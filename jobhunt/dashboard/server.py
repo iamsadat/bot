@@ -28,6 +28,7 @@ import asyncio
 import json
 import re
 import secrets
+import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
@@ -212,6 +213,124 @@ def _build_sources(ats_config: dict):
     return sources
 
 
+def _default_submitter_registry():
+    """Real Greenhouse + Lever submitters over an urllib poster.
+
+    Used by the live approve flow to actually POST applications. Tests inject
+    a registry backed by ``FakePoster`` instead.
+    """
+    from jobhunt.submitters.base import UrllibPoster
+    from jobhunt.submitters.greenhouse import GreenhouseSubmitter
+    from jobhunt.submitters.lever import LeverSubmitter
+    from jobhunt.submitters.registry import SubmitterRegistry
+
+    poster = UrllibPoster()
+    return SubmitterRegistry([GreenhouseSubmitter(poster), LeverSubmitter(poster)])
+
+
+def _ats_connected(state: DashboardState) -> bool:
+    """True when the user has configured real ATS handles (not fixtures).
+
+    Auto-submission is gated on this: the offline fixtures use real-looking
+    ``boards.greenhouse.io`` URLs, so without this gate, approving a fixture
+    job would fire a real (garbage) POST to Greenhouse. Real submission only
+    happens once the user has actually connected a board.
+    """
+    return any(
+        state.ats_config.get(k)
+        for k in ("greenhouse_tokens", "lever_slugs", "ashby_slugs")
+    )
+
+
+def _add_event(
+    state: DashboardState, job_id: str, stage: str, detail: str,
+    *, status: str = "done",
+) -> None:
+    """Append a lifecycle event to a job's per-application timeline.
+
+    Stored inside the job dict (``job["events"]``) so it persists via the
+    existing ``jobs_json`` snapshot with no schema change.
+    """
+    for j in state.jobs:
+        if j["job_id"] == job_id:
+            j.setdefault("events", []).append({
+                "ts": time.time(), "stage": stage,
+                "detail": detail, "status": status,
+            })
+            break
+
+
+def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
+    """Attempt real submission for a just-approved job. Returns a status dict.
+
+    Real submission fires only when the user has connected ATS boards
+    (``_ats_connected``) AND a submitter supports the job URL AND the job
+    hasn't already been submitted — so offline fixtures never POST. Otherwise
+    the job is left Applied for the user to finish on the company site.
+    """
+    if job is None:
+        return None
+    job_id = job["job_id"]
+    company, title, url = job.get("company", ""), job.get("title", ""), job.get("url", "")
+
+    has_route = (
+        doc is not None
+        and not job.get("submitted")
+        and _ats_connected(state)
+        and registry.for_url(url) is not None
+    )
+    if not has_route:
+        _add_event(state, job_id, "Applied", "Marked Applied — finish on the company site")
+        state.bus.publish(
+            "submission", job_id,
+            f"{company} → {title}: marked Applied "
+            f"(open the posting to finish on the company site).",
+        )
+        return {"submitted": False, "manual": True}
+
+    profile = state.user_profile
+    plan = {
+        "url": url, "job_id": job_id,
+        "applicant": {
+            "name": profile.name if profile else "",
+            "email": profile.email if profile else "",
+            "phone": getattr(profile, "phone", "") if profile else "",
+        },
+        "resume_text": doc.get("resume_text", ""),
+        "cover_letter_text": doc.get("cover_letter_text", ""),
+    }
+    try:
+        result = registry.submit(plan)
+        ok = bool(result and result.ok)
+        sub_id = result.submission_id if result else ""
+        detail = result.detail if result else "no submitter"
+    except Exception as exc:  # a network/parse error must not 500 the approve
+        ok, sub_id, detail = False, "", f"error: {exc}"
+
+    if ok:
+        job["submitted"] = True
+        job["submission_id"] = sub_id
+        try:
+            state.approval_queue.transition(req.request_id, ApprovalState.SUBMITTED)
+        except InvalidTransition:
+            pass
+        suffix = f" (id {sub_id})" if sub_id else ""
+        _add_event(state, job_id, "Submitted", f"Auto-submitted to {company}{suffix}")
+        state.bus.publish(
+            "submission", job_id, f"{company} → {title}: auto-submitted{suffix}.",
+        )
+        return {"submitted": True, "submission_id": sub_id}
+
+    _add_event(
+        state, job_id, "Submit failed",
+        f"Submission to {company} failed: {detail}", status="failed",
+    )
+    state.bus.publish(
+        "submission", job_id, f"{company} → {title}: submission failed ({detail}).",
+    )
+    return {"submitted": False, "detail": detail}
+
+
 def _execute_hunt(state: DashboardState) -> None:
     """Runs the full orchestrator pipeline synchronously (called in a thread)."""
     from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
@@ -254,6 +373,12 @@ def _execute_hunt(state: DashboardState) -> None:
                 "remote": p.remote,
                 "status": "Saved",
                 "posted_at": p.posted_at,
+                "events": [{
+                    "ts": time.time(), "stage": "Discovered",
+                    "detail": f"Found on {p.source}"
+                    + (f" · {p.relevance_score:.0%} match" if p.relevance_score else ""),
+                    "status": "done",
+                }],
             }
             for p in batch.postings
         ]
@@ -299,6 +424,11 @@ def _execute_hunt(state: DashboardState) -> None:
             f"Tailored resume ready: {doc.company} — {doc.title} "
             f"(coverage {doc.keyword_coverage:.0%}). Awaiting your approval.",
         )
+        _add_event(
+            state, doc.job_id, "Tailored",
+            f"Resume tailored · {doc.keyword_coverage:.0%} ATS coverage · awaiting approval",
+            status="running",
+        )
 
     # Backfill application titles from documents
     for app in state.applications:
@@ -339,6 +469,7 @@ def create_app(
     workspace_factory: Callable[[str], DashboardState] | None = None,
     access_code: str | None = None,
     dev_nav: bool = False,
+    submitter_registry=None,
 ):
     if _FASTAPI_IMPORT_ERROR is not None:  # pragma: no cover
         raise RuntimeError(
@@ -355,6 +486,13 @@ def create_app(
         yield
 
     app = FastAPI(title="JobHunt Dashboard", version="0.3.0", lifespan=lifespan)
+
+    # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
+    # Lever submitters; tests inject one backed by FakePoster.
+    registry = (
+        submitter_registry if submitter_registry is not None
+        else _default_submitter_registry()
+    )
 
     # ------------------------------------------------------------- per-request state
 
@@ -545,6 +683,8 @@ def create_app(
             if "@" not in email:
                 raise HTTPException(status_code=422, detail="invalid email")
             p.email = email.lower()
+        if "phone" in body:
+            p.phone = str(body["phone"]).strip()
         p.target_roles = _as_list("target_roles", p.target_roles)
         p.locations = _as_list("locations", p.locations)
         p.skills = [s.lower() for s in _as_list("skills", p.skills)]
@@ -628,8 +768,16 @@ def create_app(
                     "tracking", job_id,
                     f"{j['company']} → {j['title']}: {old} → {new_status}",
                 )
+                _add_event(state, job_id, new_status, f"Moved {old} → {new_status}")
                 state.persist()
                 return {"ok": True, "job": j}
+        raise HTTPException(status_code=404, detail="job not found")
+
+    @app.get("/api/jobs/{job_id}/timeline")
+    def get_timeline(job_id: str, state: DashboardState = Depends(get_state)) -> dict:
+        for j in state.jobs:
+            if j["job_id"] == job_id:
+                return {"timeline": j.get("events", [])}
         raise HTTPException(status_code=404, detail="job not found")
 
     @app.get("/api/applications")
@@ -768,21 +916,24 @@ def create_app(
             )
         except InvalidTransition as e:
             raise HTTPException(status_code=409, detail=str(e))
-        # Auto-advance: when a resume is approved, mark the matching job as "Applied"
+        # Auto-apply: approving marks the job Applied and, for connected ATS
+        # boards, fires a real submission via the submitter registry.
+        submission = None
         if decision == "approve":
-            for j in state.jobs:
-                if j["job_id"] == req.job_id and j.get("status") == "Saved":
-                    j["status"] = "Applied"
-                    state.bus.publish(
-                        "submission", req.job_id,
-                        f"{j['company']} → {j['title']}: marked Applied "
-                        f"(use 'Open job' to submit on the company site).",
-                    )
-                    break
+            job = next((j for j in state.jobs if j["job_id"] == req.job_id), None)
+            doc = state.documents.get(req.job_id)
+            if job is not None and job.get("status") == "Saved":
+                job["status"] = "Applied"
+            _add_event(state, req.job_id, "Approved",
+                       f"Resume approved by {reviewer or 'you'}")
+            submission = _auto_apply(state, registry, req, job, doc)
+        elif decision == "reject":
+            _add_event(state, req.job_id, "Rejected", "Resume rejected — won't be used",
+                       status="failed")
         state.bus.publish("approval", req.job_id,
                           f"{req.company} → {decision} by {reviewer or 'anon'}")
         state.persist()
-        return {"ok": True, "request": req.to_dict()}
+        return {"ok": True, "request": req.to_dict(), "submission": submission}
 
     # ----------------------------------------------------------------- WebSocket
 

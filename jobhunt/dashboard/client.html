@@ -595,6 +595,8 @@
       background: rgba(110,168,254,0.08); }
     .tag.salary { color: var(--accent-2); border-color: rgba(167,139,250,0.3);
       background: rgba(167,139,250,0.08); }
+    .tag.submitted { color: var(--good); border-color: rgba(34,211,168,0.45);
+      background: rgba(34,211,168,0.14); font-weight: 600; }
 
     /* Stream */
     .stream { max-height: 460px; overflow-y: auto; padding-right: 6px;
@@ -913,6 +915,10 @@
               <input class="input" type="email" id="f-email" placeholder="ada@example.com" autocomplete="email" />
             </div>
             <div class="field">
+              <div class="field-label">Phone <span class="hint">optional · used when auto-applying</span></div>
+              <input class="input" type="tel" id="f-phone" placeholder="+1 555 123 4567" autocomplete="tel" />
+            </div>
+            <div class="field">
               <div class="field-label">Target roles <span class="hint">press Enter to add</span></div>
               <div class="chips" id="roles-input">
                 <input type="text" id="roles-text" placeholder="backend engineer, staff engineer…" />
@@ -1071,7 +1077,7 @@
           </div>
           <div class="hint-banner">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-            <span><strong>Approve</strong> marks the tailored resume accepted and moves the job to <em>Applied</em> — then use <em>Open job posting</em> in the card to submit on the company site. JobHunt never auto-submits. Every action is logged in <strong>Activity</strong>.</span>
+            <span><strong>Approve</strong> accepts the résumé and moves the job to <em>Applied</em>. For jobs on a connected Greenhouse/Lever board it <strong>auto-submits the application</strong> for you; otherwise it's marked Applied so you can finish on the company site. Open a card to see each application's <em>Progress</em>.</span>
           </div>
           <div id="approvals-body">
             <div class="empty">
@@ -1117,6 +1123,10 @@
           <div class="field">
             <div class="field-label">Email</div>
             <input class="input" type="email" id="p-email" />
+          </div>
+          <div class="field">
+            <div class="field-label">Phone <span class="hint">used for auto-submitted applications</span></div>
+            <input class="input" type="tel" id="p-phone" placeholder="+1 555 123 4567" />
           </div>
           <div class="field full">
             <div class="field-label">Target roles <span class="hint">press Enter to add</span></div>
@@ -1452,6 +1462,7 @@
     try {
       await api('POST', '/api/onboarding/profile', {
         name: state.name, email: state.email,
+        phone: ($('f-phone').value || '').trim(),
         target_roles: state.targetRoles, locations: state.locations,
         min_salary: state.minSalary, remote_ok: state.remoteOk,
         skills: state.skills, veto_companies: state.vetoCompanies,
@@ -1592,6 +1603,7 @@
           <div class="jt">${j.title}</div>
           <div class="jc">${j.company} · ${j.location || '—'}</div>
           <div class="jtags">
+            ${j.submitted ? '<span class="tag submitted">✓ Submitted</span>' : ''}
             ${j.remote ? '<span class="tag remote">Remote</span>' : ''}
             <span class="tag match">${((j.relevance_score||0)*100).toFixed(0)}% match</span>
             ${sal ? `<span class="tag salary">${sal}</span>` : ''}
@@ -1642,12 +1654,26 @@
           return;
         }
         try {
-          await api('POST', `/api/approve/${b.dataset.id}?decision=${act}`);
-          const msg = act === 'approve'
-            ? '✓ Approved — job moved to Applied. Open the posting to submit.'
-            : act === 'reject' ? 'Rejected — resume won\'t be used.'
-            : 'Edits requested — flagged for revision.';
-          toast(msg, act === 'reject' ? 'bad' : 'good');
+          const res = await api('POST', `/api/approve/${b.dataset.id}?decision=${act}`);
+          let msg, kind = 'good';
+          if (act === 'approve') {
+            const sub = res.submission || {};
+            if (sub.submitted) {
+              msg = '🚀 Approved & auto-submitted'
+                + (sub.submission_id ? ` (confirmation ${sub.submission_id})` : '') + '.';
+            } else if (sub.manual) {
+              msg = '✓ Approved — marked Applied. Open the posting to finish on the company site.';
+            } else {
+              msg = '✓ Approved, but auto-submit failed'
+                + (sub.detail ? ` (${sub.detail})` : '') + ' — you can apply manually.';
+              kind = 'bad';
+            }
+          } else if (act === 'reject') {
+            msg = 'Rejected — resume won\'t be used.'; kind = 'bad';
+          } else {
+            msg = 'Edits requested — flagged for revision.';
+          }
+          toast(msg, kind);
           await refreshAll();
         } catch (e) { toast(e.message, 'bad'); }
       });
@@ -1672,10 +1698,21 @@
   $('drawer-back').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
 
+  function timeAgo(ts) {
+    if (!ts) return '';
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
   async function renderDrawerBody(job) {
     const root = $('drawer-body'); root.innerHTML = '<div class="skel" style="height:200px"></div>';
     let doc = null;
     try { doc = (await api('GET', `/api/documents/${job.job_id}`)).document; } catch {}
+    let timeline = [];
+    try { timeline = (await api('GET', `/api/jobs/${job.job_id}/timeline`)).timeline || []; } catch {}
     const STATUSES = ['Saved','Applied','Assessment','Interview','Offer','Closed'];
     let html = '';
 
@@ -1687,6 +1724,28 @@
         ).join('')}
       </div>
     </div>`;
+
+    // Per-application progress timeline (reuses the plan-stepper styling).
+    html += `<div class="drawer-section">
+      <h4>Progress</h4>`;
+    if (job.submitted) {
+      html += `<div class="hint-banner" style="border-color:rgba(34,211,168,0.3);">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke="var(--good)" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <span><strong>Submitted</strong>${job.submission_id ? ` · confirmation <span class="mono">${escapeHtml(String(job.submission_id))}</span>` : ''}</span>
+      </div>`;
+    }
+    if (timeline.length) {
+      html += `<div class="plan-steps">
+        ${timeline.map((e) => `
+          <div class="plan-step ${e.status === 'failed' ? 'failed' : e.status === 'running' ? 'running' : 'done'}">
+            <div class="agent">${escapeHtml(e.stage || '')}</div>
+            <div class="action">${escapeHtml(e.detail || '')}${e.ts ? ` · <span style="color:var(--muted-2)">${timeAgo(e.ts)}</span>` : ''}</div>
+          </div>`).join('')}
+      </div>`;
+    } else {
+      html += `<div class="empty" style="padding:14px;">No activity yet.</div>`;
+    }
+    html += `</div>`;
 
     html += `<div class="drawer-section">
       <h4>Posting</h4>
@@ -1805,6 +1864,7 @@
     if (!p) return;
     $('p-name').value = p.name || '';
     $('p-email').value = p.email || '';
+    $('p-phone').value = p.phone || '';
     const set = (arr, vals) => { arr.splice(0, arr.length, ...(vals || [])); };
     set(profileState.roles, p.target_roles);
     set(profileState.locs, p.locations);
@@ -1821,6 +1881,7 @@
     try {
       await api('PUT', '/api/profile', {
         name: $('p-name').value.trim(), email: $('p-email').value.trim(),
+        phone: $('p-phone').value.trim(),
         target_roles: profileState.roles, locations: profileState.locs,
         skills: profileState.skills, veto_companies: profileState.veto,
         min_salary: parseInt($('p-salary').value) || null,

@@ -100,6 +100,7 @@ def build_user_profile(form: dict[str, Any]) -> UserProfile:
         user_id=uuid.uuid4().hex,
         name=form["name"].strip(),
         email=form["email"].strip().lower(),
+        phone=str(form.get("phone", "")).strip(),
         target_roles=[r.strip() for r in form.get("target_roles", []) if r.strip()],
         locations=[loc.strip() for loc in form.get("locations", []) if loc.strip()],
         min_salary=form.get("min_salary") or None,
