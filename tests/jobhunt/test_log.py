@@ -130,7 +130,7 @@ def test_file_sink_writes_to_file() -> None:
         log = StructuredLogger("filesink-test", sinks=[sink])
         log.info("written", key="value")
 
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read().strip()
         payload = json.loads(content)
         assert payload["event"] == "written"

@@ -30,6 +30,9 @@ services:
       # recommended when sharing the URL outside your immediate team.
       - key: JOBHUNT_ACCESS_CODE
         sync: false
-      # Optional: set ANTHROPIC_API_KEY to enable real LLM tailoring.
+      # Optional: set GEMINI_API_KEY (free tier, checked first) or ANTHROPIC_API_KEY
+      # (paid fallback) to enable real LLM bullet tone-polish.
+      # - key: GEMINI_API_KEY
+      #   sync: false
       # - key: ANTHROPIC_API_KEY
       #   sync: false

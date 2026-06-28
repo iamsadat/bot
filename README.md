@@ -18,7 +18,32 @@ job hunt. Every decision is recorded as an inspectable
   into one mobile-accessible site (auto-enables Pages on first run).
 * **Backend (live dashboard):** `python -m jobhunt serve` locally, or one-click host with the
   bundled `Dockerfile` + `render.yaml` (serves `uvicorn jobhunt.dashboard.app:app`). Persistence
-  path is `JOBHUNT_DB_PATH`; set `ANTHROPIC_API_KEY` to enable real LLM tailoring.
+  path is `JOBHUNT_DB_PATH`; set `GEMINI_API_KEY` (free tier) or `ANTHROPIC_API_KEY`
+  (paid) to enable real LLM bullet tone-polish on the resume pipeline.
+
+## Deploy your own live instance
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/iamsadat/bot)
+
+One click deploys the real FastAPI dashboard — onboarding, live multi-agent hunt,
+Kanban tracking, document approval — under your own free Render account, with no
+code changes. Render reads `render.yaml` and provisions everything automatically.
+
+**To share it with a small group of real testers (recommended for an initial test):**
+1. After the first deploy finishes, open the service in the Render dashboard → **Environment** → set `JOBHUNT_ACCESS_CODE` to a short passcode of your choice → save (Render redeploys automatically).
+2. Share the live URL + that passcode with up to ~10 testers. Each tester's browser gets
+   its own isolated workspace automatically (cookie-based) — they won't see each other's
+   data.
+3. This is a real-user **test** deployment, not yet built for scale: the free tier's disk
+   is ephemeral (a redeploy or a long idle period resets stored data) and there's no
+   horizontal scaling. For anything beyond a short test, attach a persistent disk or set
+   `DATABASE_URL` to a real Postgres instance, and budget time for the still-open hardening
+   items tracked in `jobhunt/tracker/tasks.json` (OpenTelemetry tracing, Vault-backed
+   secrets, k8s manifests + autoscaling, a formal pen test / GDPR audit).
+
+The static demo (landing page, sample-data interactive app, cinematic walkthrough,
+live progress tracker) is already deployed for free on GitHub Pages and needs no
+action — see the link at the top of this README.
 
 ## Deploy your own live instance
 
@@ -47,7 +72,7 @@ action — see the link at the top of this README.
 ## What's new in this drop
 
 * **Indeed RSS adapter** (`jobhunt/adapters/indeed.py`) — fourth job source, with polite token-bucket rate limiting (`jobhunt/rate_limit.py` + `RateLimitedHTTPClient`).
-* **Anthropic SDK integration** (`jobhunt/llm/`) — optional dep; `AnthropicLLMClient` uses Sonnet 4.6 for tone rewrites and Opus 4.7 for peer critique; `FakeLLMClient` keeps the full suite offline; PII is redacted before every API call.
+* **LLM integration** (`jobhunt/llm/`) — optional dep; `AnthropicLLMClient` (Sonnet 4.6) or `GeminiLLMClient` (free-tier `gemini-3.5-flash`) polish résumé bullet tone on top of the deterministic, evidence-backed text — `build_llm_client_from_env()` picks `GEMINI_API_KEY` over `ANTHROPIC_API_KEY` when set, else the pipeline stays fully heuristic; `FakeLLMClient` keeps the full suite offline; PII is redacted before every API call.
 * **Auto-submit** for Greenhouse + Lever (`jobhunt/submitters/`) — `SubmissionAgent` calls real posting endpoints when `auto_submit_approved=True`; `SubmissionPlan` gains `submitted` + `submission_id` fields.
 * **Inbox watcher** (`jobhunt/inbox/`) — IMAP4_SSL source, confidence-scored email classifier, Calendly/Zoom/datetime calendar-hint extractor (`FakeInboxSource` for offline tests).
 * **Vetting enrichers** (`jobhunt/enrichers/`) — Glassdoor / Crunchbase / News / Layoffs heuristic enrichers + user-tunable weighted scorecard on `VettingAgent`.

@@ -15,8 +15,10 @@ import pytest
 from jobhunt.llm import (
     AnthropicLLMClient,
     FakeLLMClient,
+    GeminiLLMClient,
     LLMError,
     LLMUnavailable,
+    build_llm_client_from_env,
     critique_callback,
     resume_callback,
 )
@@ -42,6 +44,20 @@ def _make_sdk_stub(response_text: str = "stub response") -> MagicMock:
 
     sdk = MagicMock()
     sdk.messages = messages
+    return sdk
+
+
+def _make_gemini_sdk_stub(response_text: str = "stub response") -> MagicMock:
+    """Build a minimal fake google-genai SDK object whose
+    models.generate_content() returns a stub with ``.text``."""
+    response = MagicMock()
+    response.text = response_text
+
+    models = MagicMock()
+    models.generate_content.return_value = response
+
+    sdk = MagicMock()
+    sdk.models = models
     return sdk
 
 
@@ -267,6 +283,160 @@ class TestAnthropicLLMClientErrors:
         with pytest.raises(LLMError) as exc_info:
             client.complete("sys", "usr")
         assert exc_info.value.__cause__ is original
+
+
+# ================================================================== GeminiLLMClient
+
+
+class TestGeminiLLMClientUnavailable:
+    def test_raises_llm_unavailable_when_sdk_missing(self, monkeypatch):
+        """Simulate the google-genai package not being installed."""
+
+        original_import = importlib.import_module
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "google.genai":
+                raise ImportError("No module named 'google.genai'")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", _fake_import)
+        monkeypatch.delitem(sys.modules, "google.genai", raising=False)
+
+        with pytest.raises(LLMUnavailable, match="google-genai"):
+            GeminiLLMClient()  # no _sdk injection -> triggers lazy import
+
+    def test_llm_unavailable_is_subclass_of_llm_error(self):
+        assert issubclass(LLMUnavailable, LLMError)
+
+
+class TestGeminiLLMClientHappyPath:
+    def test_complete_returns_response_text(self):
+        sdk = _make_gemini_sdk_stub("Hello, world!")
+        client = GeminiLLMClient(_sdk=sdk)
+        result = client.complete("system prompt", "user message")
+        assert result == "Hello, world!"
+
+    def test_complete_returns_empty_string_when_response_text_is_none(self):
+        sdk = _make_gemini_sdk_stub()
+        sdk.models.generate_content.return_value.text = None
+        client = GeminiLLMClient(_sdk=sdk)
+        result = client.complete("sys", "usr")
+        assert result == ""
+
+    def test_complete_passes_model_override(self):
+        sdk = _make_gemini_sdk_stub("ok")
+        client = GeminiLLMClient(_sdk=sdk)
+        client.complete("sys", "usr", model="gemini-special")
+        call_kwargs = sdk.models.generate_content.call_args.kwargs
+        assert call_kwargs["model"] == "gemini-special"
+
+    def test_complete_uses_default_model_when_none_passed(self):
+        sdk = _make_gemini_sdk_stub("ok")
+        client = GeminiLLMClient(_sdk=sdk)
+        client.complete("sys", "usr")
+        call_kwargs = sdk.models.generate_content.call_args.kwargs
+        assert call_kwargs["model"] == GeminiLLMClient.DEFAULT_MODEL
+
+    def test_complete_passes_max_tokens_in_config(self):
+        sdk = _make_gemini_sdk_stub("ok")
+        client = GeminiLLMClient(_sdk=sdk)
+        client.complete("sys", "usr", max_tokens=42)
+        call_kwargs = sdk.models.generate_content.call_args.kwargs
+        assert call_kwargs["config"]["max_output_tokens"] == 42
+
+    def test_complete_redacts_pii_before_sending(self):
+        sdk = _make_gemini_sdk_stub("redacted ok")
+        client = GeminiLLMClient(_sdk=sdk)
+        client.complete("system", "user email: alice@example.com")
+        call_kwargs = sdk.models.generate_content.call_args.kwargs
+        assert "alice@example.com" not in call_kwargs["contents"]
+        assert "<email>" in call_kwargs["contents"]
+
+
+class TestGeminiLLMClientErrors:
+    def test_wraps_sdk_exception_as_llm_error(self):
+        sdk = MagicMock()
+        sdk.models.generate_content.side_effect = RuntimeError("rate limited")
+
+        client = GeminiLLMClient(_sdk=sdk)
+        with pytest.raises(LLMError, match="rate limited"):
+            client.complete("sys", "usr")
+
+    def test_wrapped_llm_error_has_original_cause(self):
+        sdk = MagicMock()
+        original = RuntimeError("timeout")
+        sdk.models.generate_content.side_effect = original
+
+        client = GeminiLLMClient(_sdk=sdk)
+        with pytest.raises(LLMError) as exc_info:
+            client.complete("sys", "usr")
+        assert exc_info.value.__cause__ is original
+
+
+# ================================================================== build_llm_client_from_env
+
+
+class TestBuildLlmClientFromEnv:
+    def test_returns_none_when_no_keys_set(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        assert build_llm_client_from_env() is None
+
+    def test_prefers_gemini_when_both_keys_set(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "a-key")
+
+        original_import = importlib.import_module
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "google.genai":
+                mod = MagicMock()
+                mod.Client.return_value = _make_gemini_sdk_stub()
+                return mod
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", _fake_import)
+
+        client = build_llm_client_from_env()
+        assert isinstance(client, GeminiLLMClient)
+
+    def test_falls_back_to_anthropic_when_only_that_key_set(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "a-key")
+
+        original_import = importlib.import_module
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "anthropic":
+                mod = MagicMock()
+                mod.Anthropic.return_value = _make_sdk_stub()
+                return mod
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", _fake_import)
+
+        client = build_llm_client_from_env()
+        assert isinstance(client, AnthropicLLMClient)
+
+    def test_falls_back_to_anthropic_when_gemini_sdk_missing(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "a-key")
+
+        original_import = importlib.import_module
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "google.genai":
+                raise ImportError("no google-genai")
+            if name == "anthropic":
+                mod = MagicMock()
+                mod.Anthropic.return_value = _make_sdk_stub()
+                return mod
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", _fake_import)
+
+        client = build_llm_client_from_env()
+        assert isinstance(client, AnthropicLLMClient)
 
 
 # ================================================================== resume_callback

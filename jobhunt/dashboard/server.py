@@ -215,11 +215,15 @@ def _build_sources(ats_config: dict):
 def _execute_hunt(state: DashboardState) -> None:
     """Runs the full orchestrator pipeline synchronously (called in a thread)."""
     from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
+    from jobhunt.llm.callbacks import resume_callback
+    from jobhunt.llm.factory import build_llm_client_from_env
 
     sources = _build_sources(state.ats_config)
 
     assert state.user_profile is not None
-    orch = Orchestrator(state.trace_store, state.bus)
+    llm_client = build_llm_client_from_env()
+    llm_cb = resume_callback(llm_client) if llm_client is not None else None
+    orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)
 
     result = orch.run(
         OrchestratorInputs(profile=state.user_profile, sources=sources),
@@ -396,7 +400,9 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index(_state: DashboardState = Depends(get_state)) -> str:
-        return (Path(__file__).parent / "client.html").read_text()
+        return (Path(__file__).parent / "client.html").read_text(
+            encoding="utf-8"
+        )
 
     # ---- static companions: cinematic demo, SSOT tracker, sample-data app ----
     _ROOT = Path(__file__).resolve().parent.parent  # jobhunt/

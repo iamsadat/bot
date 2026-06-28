@@ -42,7 +42,7 @@ class FixtureSource(JobSource):
         self._only_sources = only_sources
 
     def _load(self) -> list[dict]:
-        with self._path.open() as f:
+        with self._path.open(encoding="utf-8") as f:
             return json.load(f)
 
     def search(self, query: dict) -> list[JobPosting]:

@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from jobhunt.agents.base import BaseAgent
 from jobhunt.models import JobPosting, ReasoningTrace, UserProfile
+from jobhunt.trace import ThoughtBus, TraceStore
 
 
 @dataclass
@@ -68,6 +69,20 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
     # Safety-critical: refuse to ship sub-threshold output.
     quality_threshold = 0.8
     max_refinements = 2
+
+    def __init__(
+        self,
+        trace_store: TraceStore,
+        bus: ThoughtBus,
+        tools=None,
+        *,
+        llm: Callable[[str, dict], str] | None = None,
+    ) -> None:
+        super().__init__(trace_store, bus, tools)
+        # Optional tone-polish callback, e.g. resume_callback(GeminiLLMClient(...)).
+        # Bullets keep their deterministic evidence_id regardless — the LLM only
+        # ever rewrites cosmetic text, never invents or removes evidence.
+        self.llm = llm
 
     def deliberate(self, inputs: ResumeInputs, trace: ReasoningTrace) -> list[str]:
         return [
@@ -173,12 +188,16 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
                 missing.append(kw)
                 continue
             matched.append(kw)
-            bullets.append(
-                {
-                    "text": f"Delivered work involving {kw} ({ev['text'][:80]}).",
-                    "evidence_id": ev["id"],
-                }
-            )
+            text = f"Delivered work involving {kw} ({ev['text'][:80]})."
+            if self.llm is not None:
+                try:
+                    improved = self.llm("rewrite_bullet", {"keyword": kw, "draft": text})
+                    if improved and isinstance(improved, str):
+                        text = improved.strip()
+                except Exception:
+                    # LLM is best-effort; fall back to deterministic phrasing.
+                    pass
+            bullets.append({"text": text, "evidence_id": ev["id"]})
         return matched, missing, bullets
 
     @staticmethod
