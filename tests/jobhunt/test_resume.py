@@ -46,7 +46,10 @@ def test_resume_bullets_polished_by_llm_keep_evidence_id(profile, store, bus):
     )
 
     def llm(action, payload):
-        assert action == "rewrite_bullet"
+        # The agent calls both "rewrite_bullet" (per keyword) and "summary".
+        assert action in ("rewrite_bullet", "summary")
+        if action == "summary":
+            return "A polished two-sentence summary."
         return f"LLM polished: {payload['keyword']}"
 
     agent = ResumeArchitectAgent(store, bus, llm=llm)
@@ -56,6 +59,8 @@ def test_resume_bullets_polished_by_llm_keep_evidence_id(profile, store, bus):
     [doc] = res.output
     assert doc.bullets and all(b.get("evidence_id") for b in doc.bullets)
     assert any(b["text"].startswith("LLM polished:") for b in doc.bullets)
+    # The LLM-written summary flows into the rendered resume text.
+    assert "A polished two-sentence summary." in doc.resume_text
 
 
 def test_resume_bullets_fall_back_when_llm_raises(profile, store, bus):
@@ -77,7 +82,12 @@ def test_resume_bullets_fall_back_when_llm_raises(profile, store, bus):
     [doc] = res.output
     # Deterministic phrasing survives the LLM failure, evidence stays intact.
     assert doc.bullets and all(b.get("evidence_id") for b in doc.bullets)
-    assert all("Delivered work involving" in b["text"] for b in doc.bullets)
+    # Fell back to a deterministic, non-empty bullet for each matched keyword —
+    # not the LLM output, and each weaves in its keyword.
+    assert all(b["text"].strip() for b in doc.bullets)
+    assert all("LLM" not in b["text"] for b in doc.bullets)
+    assert any(kw in b["text"] for kw in ("python", "kubernetes")
+               for b in doc.bullets)
 
 
 def test_resume_refines_when_coverage_low(profile, store, bus):

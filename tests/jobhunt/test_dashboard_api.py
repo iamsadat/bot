@@ -414,6 +414,104 @@ def test_download_missing_doc_404():
     assert r.status_code == 404
 
 
+def test_download_pdf():
+    state, client = _client()
+    _seed_doc(state)
+    r = client.get("/api/documents/j-1/download?format=pdf&kind=resume")
+    try:
+        import fpdf  # noqa: F401
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("application/pdf")
+        assert r.content[:4] == b"%PDF"
+    except ImportError:
+        assert r.status_code == 503
+        assert "fpdf2" in r.json()["detail"]
+
+
+def test_download_docx():
+    state, client = _client()
+    _seed_doc(state)
+    r = client.get("/api/documents/j-1/download?format=docx&kind=resume")
+    try:
+        import docx  # noqa: F401
+        assert r.status_code == 200
+        assert r.content[:2] == b"PK"  # docx is a zip
+    except ImportError:
+        assert r.status_code == 503
+        assert "python-docx" in r.json()["detail"]
+
+
+# ── /api/status extra flags ──────────────────────────────────────────────────
+
+def test_status_exposes_dev_nav_and_llm(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    client = TestClient(create_app(state, dev_nav=True))
+    d = client.get("/api/status").json()
+    assert d["dev_nav"] is True
+    assert d["llm"]["active"] is False and d["llm"]["provider"] is None
+
+
+def test_status_dev_nav_defaults_false():
+    state, client = _client()
+    assert client.get("/api/status").json()["dev_nav"] is False
+
+
+# ── /api/profile (GET/PUT) ───────────────────────────────────────────────────
+
+def test_profile_get_none_before_onboarding():
+    _, client = _client()
+    assert client.get("/api/profile").json()["profile"] is None
+
+
+def test_profile_get_after_onboarding():
+    _, client = _client()
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    p = client.get("/api/profile").json()["profile"]
+    assert p["name"] == "Ada Lovelace"
+
+
+def test_profile_put_updates_fields():
+    state, client = _client()
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    r = client.put("/api/profile", json={
+        "skills": ["python", "redis"], "weekly_target": 7,
+        "target_roles": "staff engineer, backend engineer",
+    })
+    assert r.status_code == 200
+    p = r.json()["profile"]
+    assert p["skills"] == ["python", "redis"]
+    assert p["weekly_target"] == 7
+    assert p["target_roles"] == ["staff engineer", "backend engineer"]
+    assert state.user_profile.weekly_target == 7
+
+
+def test_profile_put_before_onboarding_400():
+    _, client = _client()
+    r = client.put("/api/profile", json={"name": "X"})
+    assert r.status_code == 400
+
+
+def test_profile_put_rejects_bad_email():
+    _, client = _client()
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    r = client.put("/api/profile", json={"email": "not-an-email"})
+    assert r.status_code == 422
+
+
+# ── /api/activity ────────────────────────────────────────────────────────────
+
+def test_activity_feed_returns_bus_history():
+    state, client = _client()
+    state.bus.publish("discovery", "t", "Found 3 roles")
+    state.bus.publish("resume", "t", "Tailored a resume")
+    items = client.get("/api/activity").json()["activity"]
+    # Newest first.
+    assert items[0]["thought"] == "Tailored a resume"
+    assert items[1]["thought"] == "Found 3 roles"
+
+
 # ── /api/hunt/reset ──────────────────────────────────────────────────────────
 
 def test_hunt_reset_clears_state():

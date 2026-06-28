@@ -162,9 +162,15 @@ def cmd_serve(args) -> int:
     if state.user_profile:
         print(f"  Restored profile: {state.user_profile.name} "
               f"({len(state.jobs)} jobs, hunt_status={state.hunt_status})")
+    # Local `serve` is a dev context, so show the Tracker/Demo nav by default;
+    # production (jobhunt.dashboard.app) keeps them off unless JOBHUNT_DEV_NAV
+    # is set. Either way the env var wins when explicitly provided.
+    import os
+    _dev_nav_env = os.environ.get("JOBHUNT_DEV_NAV", "").strip().lower()
+    dev_nav = _dev_nav_env in ("1", "true", "yes", "on") if _dev_nav_env else True
     app = __import__(
         "jobhunt.dashboard.server", fromlist=["create_app"]
-    ).create_app(state)
+    ).create_app(state, dev_nav=dev_nav)
     print(f"\n  JobHunt dashboard running at http://{args.host}:{args.port}\n")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0

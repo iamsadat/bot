@@ -751,6 +751,87 @@
       padding: 24px 16px; border-top: 1px solid var(--border);
       margin-top: 16px;
     }
+
+    /* ════════════════════════════════════════════════════════════════════
+       DASHBOARD NAV TABS + VIEWS
+       ══════════════════════════════════════════════════════════════════ */
+    .dash-nav {
+      display: flex; align-items: center; gap: 4px;
+      padding: 4px; border-radius: 12px;
+      background: var(--panel); border: 1px solid var(--border);
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      width: fit-content;
+    }
+    .dash-tab {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 8px 16px; border-radius: 9px; border: none;
+      background: transparent; color: var(--muted);
+      font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all 0.15s var(--ease);
+    }
+    .dash-tab svg { width: 15px; height: 15px; }
+    .dash-tab:hover { color: var(--fg-soft); background: var(--panel-hover); }
+    .dash-tab.active { color: white; background: var(--accent-grad);
+      box-shadow: 0 4px 12px rgba(110,168,254,0.28); }
+    .dash-tab .tab-badge {
+      font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+      background: rgba(255,255,255,0.16);
+    }
+    .dash-tab:not(.active) .tab-badge { background: var(--panel-strong); color: var(--muted); }
+
+    .view { display: none; flex-direction: column; gap: 20px;
+      animation: fade-up 0.4s var(--ease); }
+    .view.active { display: flex; }
+
+    /* LLM status pill in header */
+    .pill.llm-on { color: var(--good); border-color: rgba(34,211,168,0.4); }
+    .pill.llm-on::before { background: var(--good); box-shadow: 0 0 6px var(--good); }
+    .pill.llm-off { color: var(--muted); }
+
+    /* Approve hint banner */
+    .hint-banner {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 10px 12px; margin-bottom: 12px;
+      background: linear-gradient(135deg, rgba(110,168,254,0.07), rgba(167,139,250,0.07));
+      border: 1px solid rgba(110,168,254,0.2); border-radius: 10px;
+      font-size: 11.5px; color: var(--fg-soft); line-height: 1.5;
+    }
+    .hint-banner svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px;
+      stroke: var(--accent); }
+
+    /* Profile form */
+    .profile-grid {
+      display: grid; gap: 16px;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 760px) { .profile-grid { grid-template-columns: 1fr 1fr; } }
+    .profile-grid .full { grid-column: 1 / -1; }
+
+    /* keyword chips (read-only, in drawer) */
+    .kw-wrap { display: flex; flex-wrap: wrap; gap: 5px; }
+    .kw {
+      font-size: 11px; padding: 3px 9px; border-radius: 999px;
+      background: rgba(110,168,254,0.1); color: var(--accent);
+      border: 1px solid rgba(110,168,254,0.25); font-weight: 500;
+    }
+    .kw.miss { background: rgba(248,113,113,0.08); color: var(--bad);
+      border-color: rgba(248,113,113,0.25); }
+
+    /* Activity feed */
+    .activity { list-style: none; max-height: 70vh; overflow-y: auto; }
+    .activity li {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 11px 4px 12px; border-bottom: 1px solid var(--border);
+    }
+    .activity li:last-child { border-bottom: none; }
+    .act-agent {
+      flex-shrink: 0; min-width: 86px;
+      font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; padding-top: 1px;
+      background: var(--accent-grad); -webkit-background-clip: text;
+      background-clip: text; color: transparent;
+    }
+    .act-text { color: var(--fg-soft); font-size: 12.5px; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -768,8 +849,11 @@
       <span><span class="brand-name">JobHunt</span></span>
     </div>
     <div class="header-right">
-      <a class="pill" href="/tracker" target="_blank" rel="noopener" title="Project progress — single source of truth" style="text-decoration:none">📊 Tracker</a>
-      <a class="pill" href="/demo" target="_blank" rel="noopener" title="Watch the cinematic demo" style="text-decoration:none">🎬 Demo</a>
+      <span id="dev-nav" style="display:none; gap:10px; align-items:center;">
+        <a class="pill" href="/tracker" target="_blank" rel="noopener" title="Project progress — single source of truth" style="text-decoration:none">📊 Tracker</a>
+        <a class="pill" href="/demo" target="_blank" rel="noopener" title="Watch the cinematic demo" style="text-decoration:none">🎬 Demo</a>
+      </span>
+      <span id="llm-pill" class="pill llm-off" title="Resume tone-polish engine" style="display:none">heuristic</span>
       <span id="hunt-pill" class="pill">idle</span>
       <button class="icon-btn" id="btn-theme" aria-label="theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -940,6 +1024,28 @@
 
   <!-- ═════════════════════ DASHBOARD ═════════════════════ -->
   <div id="dashboard">
+
+    <!-- view tabs -->
+    <nav class="dash-nav">
+      <button class="dash-tab active" data-view="pipeline">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Pipeline
+      </button>
+      <button class="dash-tab" data-view="profile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>
+        Profile
+      </button>
+      <button class="dash-tab" data-view="activity">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Activity <span class="tab-badge" id="activity-badge">0</span>
+      </button>
+    </nav>
+
+    <!-- ───────── PIPELINE VIEW ───────── -->
+    <div class="view active" id="view-pipeline">
     <div class="stat-row">
       <div class="stat"><div class="sk">Discovered</div><div class="sv num grad" id="s-jobs">0</div></div>
       <div class="stat"><div class="sk">Approved</div><div class="sv num" id="s-approved">0</div></div>
@@ -962,6 +1068,10 @@
           <div class="panel-head">
             <span class="pt">Awaiting your approval</span>
             <span class="pc" id="approvals-count">0</span>
+          </div>
+          <div class="hint-banner">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span><strong>Approve</strong> marks the tailored resume accepted and moves the job to <em>Applied</em> — then use <em>Open job posting</em> in the card to submit on the company site. JobHunt never auto-submits. Every action is logged in <strong>Activity</strong>.</span>
           </div>
           <div id="approvals-body">
             <div class="empty">
@@ -990,6 +1100,75 @@
         </section>
       </div>
     </div>
+    </div><!-- /view-pipeline -->
+
+    <!-- ───────── PROFILE VIEW ───────── -->
+    <div class="view" id="view-profile">
+      <section class="panel" style="max-width:860px; width:100%;">
+        <div class="panel-head">
+          <span class="pt">Your profile</span>
+          <span class="pc">Edits apply to the next hunt</span>
+        </div>
+        <div class="profile-grid">
+          <div class="field">
+            <div class="field-label">Full name</div>
+            <input class="input" type="text" id="p-name" />
+          </div>
+          <div class="field">
+            <div class="field-label">Email</div>
+            <input class="input" type="email" id="p-email" />
+          </div>
+          <div class="field full">
+            <div class="field-label">Target roles <span class="hint">press Enter to add</span></div>
+            <div class="chips" id="p-roles-input"><input type="text" id="p-roles-text" placeholder="backend engineer…" /></div>
+          </div>
+          <div class="field full">
+            <div class="field-label">Preferred locations <span class="hint">press Enter to add</span></div>
+            <div class="chips" id="p-locs-input"><input type="text" id="p-locs-text" placeholder="Remote, NYC…" /></div>
+          </div>
+          <div class="field full">
+            <div class="field-label">Skills <span class="hint">press Enter to add</span></div>
+            <div class="chips" id="p-skills-input"><input type="text" id="p-skills-text" placeholder="python, redis…" /></div>
+          </div>
+          <div class="field full">
+            <div class="field-label">Companies to avoid <span class="hint">press Enter to add</span></div>
+            <div class="chips" id="p-veto-input"><input type="text" id="p-veto-text" placeholder="Fabrikam…" /></div>
+          </div>
+          <div class="field">
+            <div class="field-label">Minimum salary (USD / year)</div>
+            <input class="input" type="number" id="p-salary" step="5000" />
+          </div>
+          <div class="field">
+            <div class="field-label">Weekly application target</div>
+            <input class="input" type="number" id="p-weekly" min="1" max="50" />
+          </div>
+          <div class="full toggle-row" style="border-top:none;">
+            <div>
+              <div class="tl">Open to remote roles</div>
+              <div class="tld">Includes remote-OK postings even when location doesn't match.</div>
+            </div>
+            <div class="toggle" id="p-remote-toggle"><div class="toggle-thumb"></div></div>
+          </div>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:18px;">
+          <button class="btn btn-primary" id="btn-save-profile">Save changes</button>
+          <button class="btn btn-ghost" id="btn-revert-profile">Revert</button>
+        </div>
+      </section>
+    </div><!-- /view-profile -->
+
+    <!-- ───────── ACTIVITY VIEW ───────── -->
+    <div class="view" id="view-activity">
+      <section class="panel" style="max-width:860px; width:100%;">
+        <div class="panel-head">
+          <span class="pt">Activity log</span>
+          <span class="pc">Everything the agents and you have done</span>
+        </div>
+        <ul class="activity" id="activity-list">
+          <li><div class="empty" style="width:100%"><span class="empty-icon">🗒️</span>No activity yet.</div></li>
+        </ul>
+      </section>
+    </div><!-- /view-activity -->
 
     <footer>
       Seven agents · plan → discovery → vetting → resume → critique → submission → tracking
@@ -1109,10 +1288,17 @@
     setTimeout(() => t.remove(), 3200);
   }
 
-  /* ────── theme ──────────────────────────────────────────────── */
+  /* ────── theme (persisted, dark by default) ─────────────────── */
+  (function initTheme() {
+    const saved = localStorage.getItem('jh_theme');
+    if (saved === 'light' || saved === 'dark') {
+      document.documentElement.dataset.theme = saved;
+    }
+  })();
   $('btn-theme').addEventListener('click', () => {
     const h = document.documentElement;
     h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('jh_theme', h.dataset.theme);
   });
 
   /* ────── api ────────────────────────────────────────────────── */
@@ -1303,7 +1489,11 @@
   /* ────── refresh / poll ─────────────────────────────────────── */
   let pollTimer = null;
   async function refreshAll() {
-    await Promise.all([renderStatus(), renderPlan(), renderJobs(), renderApprovals()]);
+    await Promise.all([
+      renderStatus(), renderPlan(), renderJobs(), renderApprovals(),
+      refreshActivityBadge(),
+    ]);
+    if ($('view-activity').classList.contains('active')) renderActivity();
   }
   function startPolling() { pollTimer = setInterval(refreshAll, 2500); refreshAll(); }
   function stopPolling()  { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
@@ -1326,6 +1516,23 @@
     const pill = $('hunt-pill');
     pill.textContent = s.hunt_status;
     pill.className = 'pill ' + s.hunt_status;
+
+    // Dev-only nav (Tracker/Demo) — hidden in production unless JOBHUNT_DEV_NAV.
+    $('dev-nav').style.display = s.dev_nav ? 'flex' : 'none';
+
+    // LLM tone-polish status pill.
+    const llm = s.llm || {};
+    const lp = $('llm-pill');
+    lp.style.display = '';
+    if (llm.active) {
+      lp.className = 'pill llm-on';
+      lp.textContent = (llm.provider === 'gemini' ? 'Gemini' : 'Claude') + ' polish';
+      lp.title = 'Resume tone-polish active: ' + (llm.model || llm.provider);
+    } else {
+      lp.className = 'pill llm-off';
+      lp.textContent = 'heuristic';
+      lp.title = llm.reason || 'No LLM key set — using deterministic phrasing';
+    }
 
     $('s-jobs').textContent = s.jobs_count;
     $('s-approved').textContent = s.approvals_pending === 0
@@ -1436,7 +1643,11 @@
         }
         try {
           await api('POST', `/api/approve/${b.dataset.id}?decision=${act}`);
-          toast(`Marked ${act}`, 'good');
+          const msg = act === 'approve'
+            ? '✓ Approved — job moved to Applied. Open the posting to submit.'
+            : act === 'reject' ? 'Rejected — resume won\'t be used.'
+            : 'Edits requested — flagged for revision.';
+          toast(msg, act === 'reject' ? 'bad' : 'good');
           await refreshAll();
         } catch (e) { toast(e.message, 'bad'); }
       });
@@ -1497,8 +1708,17 @@
           <a class="btn btn-ghost btn-sm" href="/api/documents/${job.job_id}/download?format=docx&kind=resume">↓ DOCX</a>
         </div>
         <div style="font-size:11.5px; color:var(--muted); margin-bottom:8px;">
-          Coverage: <strong>${(doc.keyword_coverage*100).toFixed(0)}%</strong> ·
-          Matched: ${doc.matched_keywords.length} · Missing: ${doc.missing_keywords.length}
+          ATS coverage: <strong style="color:var(--fg)">${(doc.keyword_coverage*100).toFixed(0)}%</strong>
+          · ${doc.matched_keywords.length} matched · ${doc.missing_keywords.length} missing
+        </div>
+        ${doc.matched_keywords.length ? `<div class="kw-wrap" style="margin-bottom:6px;">
+          ${doc.matched_keywords.map((k) => `<span class="kw">${escapeHtml(k)}</span>`).join('')}
+        </div>` : ''}
+        ${doc.missing_keywords.length ? `<div class="kw-wrap" style="margin-bottom:10px;">
+          ${doc.missing_keywords.map((k) => `<span class="kw miss">${escapeHtml(k)}</span>`).join('')}
+        </div>` : ''}
+        <div style="font-size:11px; color:var(--muted); margin-bottom:10px; line-height:1.5;">
+          🔒 Every bullet is backed by your real skills/experience — the AI only polishes wording, it never invents experience.
         </div>
         <div class="resume-preview">${escapeHtml(doc.resume_text)}</div>
       </div>`;
@@ -1552,6 +1772,88 @@
       $('stream-count').textContent = streamCount;
     };
     ws.onclose = () => setTimeout(openStream, 2000);
+  }
+
+  /* ────── dashboard view tabs ────────────────────────────────── */
+  const profileState = { roles: [], locs: [], skills: [], veto: [], remoteOk: true };
+  let renderPRoles, renderPLocs, renderPSkills, renderPVeto;
+  (function initProfileChips() {
+    renderPRoles  = makeChip($('p-roles-input'),  $('p-roles-text'),  profileState.roles);
+    renderPLocs   = makeChip($('p-locs-input'),   $('p-locs-text'),   profileState.locs);
+    renderPSkills = makeChip($('p-skills-input'), $('p-skills-text'), profileState.skills);
+    renderPVeto   = makeChip($('p-veto-input'),   $('p-veto-text'),   profileState.veto);
+  })();
+  $('p-remote-toggle').addEventListener('click', (e) => {
+    e.currentTarget.classList.toggle('on');
+    profileState.remoteOk = e.currentTarget.classList.contains('on');
+  });
+
+  function switchView(name) {
+    $$('.dash-tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
+    ['pipeline', 'profile', 'activity'].forEach((v) =>
+      $(`view-${v}`).classList.toggle('active', v === name));
+    if (name === 'profile') loadProfile();
+    if (name === 'activity') renderActivity();
+  }
+  $$('.dash-tab').forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
+
+  /* ────── profile view ───────────────────────────────────────── */
+  async function loadProfile() {
+    let data;
+    try { data = await api('GET', '/api/profile'); } catch { return; }
+    const p = data.profile;
+    if (!p) return;
+    $('p-name').value = p.name || '';
+    $('p-email').value = p.email || '';
+    const set = (arr, vals) => { arr.splice(0, arr.length, ...(vals || [])); };
+    set(profileState.roles, p.target_roles);
+    set(profileState.locs, p.locations);
+    set(profileState.skills, p.skills);
+    set(profileState.veto, p.veto_companies);
+    renderPRoles(); renderPLocs(); renderPSkills(); renderPVeto();
+    $('p-salary').value = p.min_salary || '';
+    $('p-weekly').value = p.weekly_target || 10;
+    profileState.remoteOk = p.remote_ok !== false;
+    $('p-remote-toggle').classList.toggle('on', profileState.remoteOk);
+  }
+  $('btn-save-profile').addEventListener('click', async () => {
+    const btn = $('btn-save-profile'); btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await api('PUT', '/api/profile', {
+        name: $('p-name').value.trim(), email: $('p-email').value.trim(),
+        target_roles: profileState.roles, locations: profileState.locs,
+        skills: profileState.skills, veto_companies: profileState.veto,
+        min_salary: parseInt($('p-salary').value) || null,
+        weekly_target: parseInt($('p-weekly').value) || 10,
+        remote_ok: profileState.remoteOk,
+      });
+      toast('Profile saved — applies to the next hunt', 'good');
+    } catch (e) { toast(e.message || 'Save failed', 'bad'); }
+    finally { btn.disabled = false; btn.textContent = 'Save changes'; }
+  });
+  $('btn-revert-profile').addEventListener('click', loadProfile);
+
+  /* ────── activity view ──────────────────────────────────────── */
+  async function renderActivity() {
+    let data;
+    try { data = await api('GET', '/api/activity?limit=200'); } catch { return; }
+    const ul = $('activity-list');
+    const items = data.activity || [];
+    $('activity-badge').textContent = items.length;
+    if (!items.length) {
+      ul.innerHTML = '<li><div class="empty" style="width:100%"><span class="empty-icon">🗒️</span>No activity yet.</div></li>';
+      return;
+    }
+    ul.innerHTML = items.map((e) =>
+      `<li><span class="act-agent">${escapeHtml(e.agent || '')}</span>` +
+      `<span class="act-text">${escapeHtml(e.thought || '')}</span></li>`
+    ).join('');
+  }
+  async function refreshActivityBadge() {
+    try {
+      const d = await api('GET', '/api/activity?limit=200');
+      $('activity-badge').textContent = (d.activity || []).length;
+    } catch { /* ignore */ }
   }
 
   /* ────── boot ───────────────────────────────────────────────── */

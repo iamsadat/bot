@@ -71,6 +71,8 @@ action — see the link at the top of this README.
 
 ## What's new in this drop
 
+* **Dashboard UX overhaul** (`jobhunt/dashboard/`) — the live app now has tabbed **Pipeline / Profile / Activity** views: an editable profile (`GET`/`PUT /api/profile`), a full activity log of every agent + user action (`GET /api/activity`), an LLM-status pill (Gemini/Claude polish vs. heuristic), a persisted dark/light theme, and clearer approve feedback that explains JobHunt never auto-submits. The dev-only Tracker/Demo nav is gated behind `JOBHUNT_DEV_NAV` (on for local `serve`, off in production).
+* **Pure-Python document downloads** — résumé/cover-letter PDF rendering moved from WeasyPrint to **fpdf2** (`pip install jobhunt[pdf]`), so PDF works with a plain `pip` on Windows and in Docker with no system libraries; DOCX via `python-docx` and styled HTML share one structured renderer (`jobhunt/resume_renderer.py`).
 * **Indeed RSS adapter** (`jobhunt/adapters/indeed.py`) — fourth job source, with polite token-bucket rate limiting (`jobhunt/rate_limit.py` + `RateLimitedHTTPClient`).
 * **LLM integration** (`jobhunt/llm/`) — optional dep; `AnthropicLLMClient` (Sonnet 4.6) or `GeminiLLMClient` (free-tier `gemini-3.5-flash`) polish résumé bullet tone on top of the deterministic, evidence-backed text — `build_llm_client_from_env()` picks `GEMINI_API_KEY` over `ANTHROPIC_API_KEY` when set, else the pipeline stays fully heuristic; `FakeLLMClient` keeps the full suite offline; PII is redacted before every API call.
 * **Auto-submit** for Greenhouse + Lever (`jobhunt/submitters/`) — `SubmissionAgent` calls real posting endpoints when `auto_submit_approved=True`; `SubmissionPlan` gains `submitted` + `submission_id` fields.

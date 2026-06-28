@@ -22,7 +22,56 @@ from jobhunt.resume_renderer import (
     DOCXRenderer,
     RendererUnavailable,
     get_renderer,
+    text_to_pdf,
+    text_to_styled_html,
+    text_to_docx,
 )
+
+
+_SAMPLE_BODY = """ada@example.com
+
+SUMMARY
+Backend engineer with Python and distributed-systems depth.
+
+KEY SKILLS
+python, kubernetes
+
+HIGHLIGHTS
+- Built Python services with smart — dashes and “curly quotes”.
+- Designed Kubernetes deployments.
+"""
+
+
+def test_text_to_styled_html_structures_sections_and_bullets():
+    html = text_to_styled_html("Ada Lovelace", _SAMPLE_BODY, tab_title="Acme")
+    assert "<h1>Ada Lovelace</h1>" in html
+    assert "<h2>Summary</h2>" in html      # ALL-CAPS header → title-cased <h2>
+    assert "<ul>" in html and "<li>" in html
+    assert "<title>Acme</title>" in html
+    # HTML-escaped, no raw angle brackets from content.
+    assert "&" not in html.replace("&amp;", "").replace("&lt;", "").replace("&gt;", "")
+
+
+def test_text_to_pdf_emits_pdf_or_raises():
+    try:
+        import fpdf  # noqa: F401
+    except ImportError:
+        with pytest.raises(RendererUnavailable):
+            text_to_pdf("Ada", _SAMPLE_BODY)
+        return
+    out = text_to_pdf("Ada Lovelace", _SAMPLE_BODY)
+    assert isinstance(out, bytes) and out[:4] == b"%PDF"
+
+
+def test_text_to_docx_emits_zip_or_raises():
+    try:
+        import docx  # noqa: F401
+    except ImportError:
+        with pytest.raises(RendererUnavailable):
+            text_to_docx("Ada", _SAMPLE_BODY)
+        return
+    out = text_to_docx("Ada Lovelace", _SAMPLE_BODY)
+    assert out[:2] == b"PK"
 
 
 def _profile() -> UserProfile:
@@ -145,11 +194,11 @@ def test_get_renderer_returns_correct_class_per_extension():
 
 
 def test_pdf_renderer_raises_when_dep_missing():
-    """If WeasyPrint isn't installed the renderer raises a clean exception."""
+    """If fpdf2 isn't installed the renderer raises a clean exception."""
     draft = build_resume_draft(_profile(), _posting(), keywords=["python"])
     try:
-        import weasyprint  # noqa: F401
-        # Installed — render should succeed.
+        import fpdf  # noqa: F401
+        # Installed — render should succeed and emit a real PDF.
         out = PDFRenderer().render(draft)
         assert isinstance(out, bytes) and out[:4] == b"%PDF"
     except ImportError:
