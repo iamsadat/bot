@@ -76,6 +76,46 @@ def extract_keywords(jd: str, limit: int = 15) -> list[str]:
     return [k for k, _ in ranked[:limit]]
 
 
+# Generic JD prose that the TF-IDF/frequency ranker surfaces but which no
+# candidate can meaningfully "match" — excluded so coverage reflects real skills.
+_FILLER = {
+    "comfortable", "fluent", "need", "like", "frameworks", "framework",
+    "strong", "excellent", "ability", "including", "etc", "years", "year",
+    "working", "knowledge", "understanding", "proficient", "familiar", "plus",
+    "bonus", "nice", "preferred", "required", "responsibilities", "requirements",
+    "looking", "join", "build", "building", "help", "across", "using", "deep",
+    "passion", "passionate", "ideal", "great", "good", "solid", "hands",
+    "engineer", "developer", "senior", "junior", "staff", "role", "position",
+}
+
+
+def _best_keywords(jd: str, limit: int) -> list[str]:
+    """Skill-focused ATS keyword set, maximising real coverage.
+
+    Prefers the ``jd_parser``'s categorised *skills* (true tech terms from its
+    taxonomy), tops up with its distinctive TF-IDF/frequency union ranking, and
+    drops generic JD filler. Falls back to plain frequency extraction.
+    """
+    try:
+        from jobhunt.jd_parser import parse_jd
+        parsed = parse_jd(jd, limit=limit * 3)
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for kw in list(parsed.skills) + list(parsed.union_keywords):
+            k = kw.lower()
+            if k in seen or k in _STOP or k in _FILLER or len(k) < 3:
+                continue
+            seen.add(k)
+            ordered.append(k)
+            if len(ordered) >= limit:
+                break
+        if ordered:
+            return ordered
+    except Exception:
+        pass
+    return extract_keywords(jd, limit)
+
+
 class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
     name = "resume"
     # Safety-critical: refuse to ship sub-threshold output.
@@ -111,7 +151,7 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
     ) -> list[TailoredDocument]:
         docs: list[TailoredDocument] = []
         for posting in inputs.postings:
-            kws = extract_keywords(posting.jd_text, inputs.max_keywords)
+            kws = _best_keywords(posting.jd_text, inputs.max_keywords)
             matched, missing, bullets = self._map_evidence(
                 kws, inputs.profile, posting
             )
@@ -186,9 +226,15 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
         self, keywords: list[str], profile: UserProfile, posting: JobPosting,
     ) -> tuple[list[str], list[str], list[dict[str, str]]]:
         # Build evidence index from skills and experience descriptions.
+        # Each skill also registers its synonyms/aliases (k8s ← kubernetes) so a
+        # JD keyword that uses a different surface form still matches.
+        from jobhunt.skills_taxonomy import expand_term
         evidence: dict[str, dict[str, Any]] = {}
         for i, s in enumerate(profile.skills):
-            evidence[s.lower()] = {"id": f"skill:{i}", "kind": "skill", "text": s}
+            entry = {"id": f"skill:{i}", "kind": "skill", "text": s}
+            evidence[s.lower()] = entry
+            for syn in expand_term(s):
+                evidence.setdefault(syn, entry)
         for j, e in enumerate(profile.experiences):
             desc = " ".join(str(v) for v in e.values()).lower()
             for tok in _TOKEN_RE.findall(desc):
