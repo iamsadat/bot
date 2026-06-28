@@ -19,14 +19,21 @@ def build_llm_client_from_env() -> LLMClient | None:
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         try:
-            return GeminiLLMClient(api_key=gemini_key)
+            client = GeminiLLMClient(api_key=gemini_key)
+            print(
+                f"LLM tone-polish: Gemini active ({client.DEFAULT_MODEL}, free tier).",
+                file=sys.stderr,
+            )
+            return client
         except LLMUnavailable as exc:
             print(f"GEMINI_API_KEY is set but unusable: {exc}", file=sys.stderr)
 
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
     if anthropic_key:
         try:
-            return AnthropicLLMClient(api_key=anthropic_key)
+            client = AnthropicLLMClient(api_key=anthropic_key)
+            print("LLM tone-polish: Anthropic active (paid).", file=sys.stderr)
+            return client
         except LLMUnavailable as exc:
             print(f"ANTHROPIC_API_KEY is set but unusable: {exc}", file=sys.stderr)
 
