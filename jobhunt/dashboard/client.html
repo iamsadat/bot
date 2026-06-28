@@ -834,6 +834,50 @@
       background-clip: text; color: transparent;
     }
     .act-text { color: var(--fg-soft); font-size: 12.5px; line-height: 1.5; }
+
+    /* Applications tracker */
+    .apps-toolbar { display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+    .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px;
+      background: rgba(0,0,0,0.18); border: 1px solid var(--border); }
+    [data-theme="light"] .seg { background: rgba(0,0,0,0.03); }
+    .seg-btn { border: none; background: transparent; color: var(--muted);
+      font: inherit; font-size: 12px; font-weight: 600; padding: 5px 11px;
+      border-radius: 7px; cursor: pointer; transition: all 0.15s var(--ease); }
+    .seg-btn:hover { color: var(--fg-soft); }
+    .seg-btn.active { color: white; background: var(--accent-grad); }
+    .apps-table-wrap { overflow-x: auto; }
+    .apps-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .apps-table th { text-align: left; font-size: 10.5px; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted); font-weight: 700;
+      padding: 8px 10px; border-bottom: 1px solid var(--border-strong);
+      cursor: pointer; white-space: nowrap; user-select: none; }
+    .apps-table th.num { text-align: right; }
+    .apps-table th:hover { color: var(--fg-soft); }
+    .apps-table td { padding: 10px; border-bottom: 1px solid var(--border);
+      vertical-align: middle; }
+    .apps-table tbody tr { cursor: pointer; transition: background 0.12s var(--ease); }
+    .apps-table tbody tr:hover { background: var(--panel-hover); }
+    .apps-table .c-company { font-weight: 600; }
+    .apps-table .c-role { color: var(--fg-soft); max-width: 240px; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    .apps-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .apps-table .c-next { color: var(--muted); max-width: 200px; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    .st-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+      font-weight: 600; padding: 3px 9px; border-radius: 999px;
+      border: 1px solid var(--border); color: var(--fg-soft);
+      background: var(--panel-strong); white-space: nowrap; }
+    .st-badge.Applied { color: var(--accent); border-color: rgba(110,168,254,0.3);
+      background: rgba(110,168,254,0.1); }
+    .st-badge.Assessment { color: var(--warn); border-color: rgba(251,191,36,0.3);
+      background: rgba(251,191,36,0.1); }
+    .st-badge.Interview { color: var(--accent-2); border-color: rgba(167,139,250,0.3);
+      background: rgba(167,139,250,0.1); }
+    .st-badge.Offer { color: var(--good); border-color: rgba(34,211,168,0.35);
+      background: rgba(34,211,168,0.12); }
+    .st-badge.Closed { color: var(--muted-2); }
+    .stale { color: var(--warn); font-weight: 700; }
   </style>
 </head>
 <body>
@@ -1038,6 +1082,11 @@
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
         Pipeline
       </button>
+      <button class="dash-tab" data-view="applications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Applications <span class="tab-badge" id="apps-badge">0</span>
+      </button>
       <button class="dash-tab" data-view="profile">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>
@@ -1107,6 +1156,47 @@
       </div>
     </div>
     </div><!-- /view-pipeline -->
+
+    <!-- ───────── APPLICATIONS VIEW ───────── -->
+    <div class="view" id="view-applications">
+      <section class="panel">
+        <div class="panel-head">
+          <span class="pt">Applications tracker</span>
+          <span class="pc"><span id="apps-filter-label">All</span> · click a row for details</span>
+        </div>
+        <div class="apps-toolbar">
+          <div class="seg" id="apps-filter">
+            <button class="seg-btn active" data-f="all">All</button>
+            <button class="seg-btn" data-f="active">Active</button>
+            <button class="seg-btn" data-f="Applied">Applied</button>
+            <button class="seg-btn" data-f="Interview">Interview</button>
+            <button class="seg-btn" data-f="Offer">Offer</button>
+            <button class="seg-btn" data-f="Closed">Closed</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btn-inbox-sync" style="display:none;" title="Check your inbox for recruiter updates">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M22 6l-10 7L2 6"/></svg>
+            Check email
+          </button>
+        </div>
+        <div class="apps-table-wrap">
+          <table class="apps-table" id="apps-table">
+            <thead><tr>
+              <th data-sort="company">Company</th>
+              <th data-sort="title">Role</th>
+              <th data-sort="status">Status</th>
+              <th data-sort="source">Source</th>
+              <th data-sort="submitted">Submitted</th>
+              <th data-sort="days" class="num">Days in stage</th>
+              <th data-sort="next">Next action</th>
+            </tr></thead>
+            <tbody id="apps-body"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="apps-empty" style="display:none;">
+          <span class="empty-icon">📋</span>No applications yet — run a hunt and approve a résumé.
+        </div>
+      </section>
+    </div><!-- /view-applications -->
 
     <!-- ───────── PROFILE VIEW ───────── -->
     <div class="view" id="view-profile">
@@ -1179,6 +1269,37 @@
               <div class="field" style="margin:0;">
                 <div class="field-label">Ashby slugs</div>
                 <input class="input" type="text" id="p-ashby" placeholder="vercel, supabase" />
+              </div>
+            </div>
+          </div>
+
+          <div class="full" style="border-top:1px solid var(--border); padding-top:16px;">
+            <div class="field-label" style="margin-bottom:4px;">Screening answers <span class="hint">used to auto-answer ATS custom questions</span></div>
+            <div class="tld" style="margin-bottom:12px;">Greenhouse boards often ask work-authorization / sponsorship questions. These let auto-apply answer them on your behalf.</div>
+            <div class="profile-grid" style="gap:12px;">
+              <div class="field" style="margin:0;">
+                <div class="field-label">Authorized to work?</div>
+                <select class="input" id="aa-workauth">
+                  <option value="">—</option><option>Yes</option><option>No</option>
+                </select>
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">Need visa sponsorship?</div>
+                <select class="input" id="aa-sponsor">
+                  <option value="">—</option><option>Yes</option><option>No</option>
+                </select>
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">Years of experience</div>
+                <input class="input" type="number" id="aa-years" min="0" max="50" />
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">LinkedIn URL</div>
+                <input class="input" type="url" id="aa-linkedin" placeholder="https://linkedin.com/in/…" />
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">Website / portfolio</div>
+                <input class="input" type="url" id="aa-website" placeholder="https://…" />
               </div>
             </div>
           </div>
@@ -1528,6 +1649,11 @@
       refreshActivityBadge(),
     ]);
     if ($('view-activity').classList.contains('active')) renderActivity();
+    if ($('view-applications').classList.contains('active')) renderApplications();
+    else if (typeof appsState !== 'undefined') {
+      try { appsState.jobs = (await api('GET', '/api/jobs')).jobs || []; } catch {}
+      $('apps-badge').textContent = appsState.jobs.filter((j) => j.status !== 'Saved').length;
+    }
   }
   function startPolling() { pollTimer = setInterval(refreshAll, 2500); refreshAll(); }
   function stopPolling()  { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
@@ -1567,6 +1693,10 @@
       lp.textContent = 'heuristic';
       lp.title = llm.reason || 'No LLM key set — using deterministic phrasing';
     }
+
+    // Recruiter-email auto-status: show the "Check email" action when wired.
+    const ib = $('btn-inbox-sync');
+    if (ib) ib.style.display = s.inbox_connected ? 'inline-flex' : 'none';
 
     $('s-jobs').textContent = s.jobs_count;
     $('s-approved').textContent = s.approvals_pending === 0
@@ -1770,6 +1900,14 @@
     }
     html += `</div>`;
 
+    // Notes & next step (powers the tracker's "Next action" column).
+    html += `<div class="drawer-section">
+      <h4>Notes &amp; next step</h4>
+      <input class="input" id="d-next" placeholder="Next action — e.g. follow up Fri" value="${escapeHtml(job.next_action || '')}" style="margin-bottom:8px;" />
+      <textarea class="textarea" id="d-notes" placeholder="Private notes about this application…" style="min-height:90px;">${escapeHtml(job.notes || '')}</textarea>
+      <button class="btn btn-ghost btn-sm" id="d-save-notes" style="margin-top:8px;">Save notes</button>
+    </div>`;
+
     html += `<div class="drawer-section">
       <h4>Posting</h4>
       <div style="font-size:13px; line-height:1.5;">
@@ -1831,6 +1969,16 @@
         } catch (e) { toast(e.message, 'bad'); }
       });
     });
+    const saveBtn = root.querySelector('#d-save-notes');
+    if (saveBtn) saveBtn.addEventListener('click', async () => {
+      try {
+        const r = await api('POST', `/api/jobs/${job.job_id}/notes`, {
+          notes: $('d-notes').value, next_action: $('d-next').value,
+        });
+        job.notes = r.job.notes; job.next_action = r.job.next_action;
+        toast('Notes saved', 'good');
+      } catch (e) { toast(e.message, 'bad'); }
+    });
   }
 
   function escapeHtml(s) {
@@ -1873,12 +2021,104 @@
 
   function switchView(name) {
     $$('.dash-tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
-    ['pipeline', 'profile', 'activity'].forEach((v) =>
+    ['pipeline', 'applications', 'profile', 'activity'].forEach((v) =>
       $(`view-${v}`).classList.toggle('active', v === name));
     if (name === 'profile') loadProfile();
     if (name === 'activity') renderActivity();
+    if (name === 'applications') renderApplications();
   }
   $$('.dash-tab').forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
+
+  /* ────── applications tracker ───────────────────────────────── */
+  const appsState = { filter: 'all', sort: 'status', dir: 1, jobs: [] };
+  const STATUS_ORDER = { Saved:0, Applied:1, Assessment:2, Interview:3, Offer:4, Closed:5 };
+
+  function lastStageTs(j) {
+    const ev = j.events || [];
+    return ev.length ? (ev[ev.length - 1].ts || 0) : 0;
+  }
+  function daysInStage(j) {
+    const ts = lastStageTs(j);
+    if (!ts) return 0;
+    return Math.max(0, Math.floor(Date.now() / 1000 - ts) / 86400);
+  }
+
+  $('apps-filter').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg-btn'); if (!b) return;
+    appsState.filter = b.dataset.f;
+    $$('#apps-filter .seg-btn').forEach((x) => x.classList.toggle('active', x === b));
+    $('apps-filter-label').textContent = b.textContent;
+    drawAppsTable();
+  });
+  $('apps-table').querySelector('thead').addEventListener('click', (e) => {
+    const th = e.target.closest('th'); if (!th) return;
+    const key = th.dataset.sort;
+    if (appsState.sort === key) appsState.dir *= -1;
+    else { appsState.sort = key; appsState.dir = 1; }
+    drawAppsTable();
+  });
+
+  $('btn-inbox-sync').addEventListener('click', async () => {
+    const b = $('btn-inbox-sync'); b.disabled = true;
+    try {
+      const r = await api('POST', '/api/inbox/sync', {});
+      toast(r.updates ? `📬 ${r.updates} application(s) updated from email`
+                      : `Checked ${r.checked} email(s) — no updates`, r.updates ? 'good' : '');
+      await refreshAll();
+    } catch (e) { toast(e.message || 'Inbox sync failed', 'bad'); }
+    finally { b.disabled = false; }
+  });
+
+  async function renderApplications() {
+    try { appsState.jobs = (await api('GET', '/api/jobs')).jobs || []; } catch { return; }
+    drawAppsTable();
+  }
+
+  function drawAppsTable() {
+    const ACTIVE = ['Applied', 'Assessment', 'Interview', 'Offer'];
+    let rows = appsState.jobs.slice();
+    if (appsState.filter === 'active') rows = rows.filter((j) => ACTIVE.includes(j.status));
+    else if (appsState.filter !== 'all') rows = rows.filter((j) => j.status === appsState.filter);
+
+    const val = (j) => {
+      switch (appsState.sort) {
+        case 'company': return (j.company || '').toLowerCase();
+        case 'title': return (j.title || '').toLowerCase();
+        case 'status': return STATUS_ORDER[j.status] ?? 0;
+        case 'source': return (j.source || '').toLowerCase();
+        case 'submitted': return j.submitted ? 1 : 0;
+        case 'days': return daysInStage(j);
+        case 'next': return (j.next_action || '').toLowerCase();
+        default: return 0;
+      }
+    };
+    rows.sort((a, b) => (val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * appsState.dir);
+
+    $('apps-badge').textContent = appsState.jobs.filter((j) => j.status !== 'Saved').length;
+    const body = $('apps-body');
+    $('apps-empty').style.display = rows.length ? 'none' : 'block';
+    $('apps-table').style.display = rows.length ? '' : 'none';
+    body.innerHTML = rows.map((j) => {
+      const d = daysInStage(j);
+      const dCell = d >= 7 && ACTIVE.includes(j.status)
+        ? `<span class="stale">${Math.round(d)}d</span>` : `${Math.round(d)}d`;
+      return `<tr data-job="${j.job_id}">
+        <td class="c-company">${escapeHtml(j.company || '')}</td>
+        <td class="c-role">${escapeHtml(j.title || '')}</td>
+        <td><span class="st-badge ${j.status}">${j.status}</span></td>
+        <td>${escapeHtml(j.source || '')}</td>
+        <td>${j.submitted ? '✓ ' + escapeHtml(String(j.submission_id || 'sent')) : '—'}</td>
+        <td class="num">${dCell}</td>
+        <td class="c-next">${escapeHtml(j.next_action || '—')}</td>
+      </tr>`;
+    }).join('');
+    body.querySelectorAll('tr[data-job]').forEach((tr) => {
+      tr.addEventListener('click', () => {
+        const j = appsState.jobs.find((x) => x.job_id === tr.dataset.job);
+        if (j) openDrawer(j);
+      });
+    });
+  }
 
   /* ────── profile view ───────────────────────────────────────── */
   async function loadProfile() {
@@ -1904,6 +2144,12 @@
     $('p-greenhouse').value = (ats.greenhouse_tokens || []).join(', ');
     $('p-lever').value = (ats.lever_slugs || []).join(', ');
     $('p-ashby').value = (ats.ashby_slugs || []).join(', ');
+    const aa = p.application_answers || {};
+    $('aa-workauth').value = aa.work_authorization || '';
+    $('aa-sponsor').value = aa.requires_sponsorship || '';
+    $('aa-years').value = aa.years_experience || '';
+    $('aa-linkedin').value = aa.linkedin || '';
+    $('aa-website').value = aa.website || '';
   }
   $('btn-save-profile').addEventListener('click', async () => {
     const btn = $('btn-save-profile'); btn.disabled = true; btn.textContent = 'Saving…';
@@ -1917,6 +2163,13 @@
         min_salary: parseInt($('p-salary').value) || null,
         weekly_target: parseInt($('p-weekly').value) || 10,
         remote_ok: profileState.remoteOk,
+        application_answers: {
+          work_authorization: $('aa-workauth').value,
+          requires_sponsorship: $('aa-sponsor').value,
+          years_experience: $('aa-years').value,
+          linkedin: $('aa-linkedin').value.trim(),
+          website: $('aa-website').value.trim(),
+        },
       });
       // ATS handles live in their own config (also feeds auto-submit routing).
       await api('POST', '/api/onboarding/ats', {

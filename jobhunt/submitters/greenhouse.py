@@ -9,14 +9,109 @@ See: https://developers.greenhouse.io/job-board.html#submitting-an-application
 
 from __future__ import annotations
 
+import json
 import re
+import urllib.request
 import uuid
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from jobhunt.submitters.base import Poster, SubmitResult
 
-if TYPE_CHECKING:
-    pass
+# A browser-like UA + Accept reduce the chance the public board endpoints
+# reject our request as non-browser automation.
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 JobHunt/1.0"
+    ),
+    "Accept": "application/json, text/plain, */*",
+}
+
+_QUESTIONS_ENDPOINT = (
+    "https://boards-api.greenhouse.io/v1/boards/{token}/jobs/{job_id}?questions=true"
+)
+
+# Fields handled directly from the applicant/résumé — never overwritten by the
+# custom-question mapper.
+_BASE_FIELDS = {
+    "first_name", "last_name", "email", "phone", "full_name", "name",
+    "resume", "resume_text", "cover_letter", "cover_letter_text",
+}
+
+
+def _default_question_fetcher(url: str) -> dict:
+    req = urllib.request.Request(url, headers=_BROWSER_HEADERS)
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+        return json.loads(resp.read())
+
+
+def _answer_for(label: str, answers: dict, applicant: dict) -> str:
+    """Best-effort map a question label to a stored standard answer."""
+    label_l = label.lower()
+
+    def pick(*keys: str) -> str:
+        for k in keys:
+            v = answers.get(k)
+            if v not in (None, ""):
+                return str(v)
+        return ""
+
+    if "sponsor" in label_l:
+        return pick("requires_sponsorship", "sponsorship")
+    if any(k in label_l for k in ("authoriz", "right to work", "legally", "eligible to work")):
+        return pick("work_authorization", "authorized")
+    if "years" in label_l and ("experience" in label_l or "exp" in label_l):
+        return pick("years_experience")
+    if "linkedin" in label_l:
+        return pick("linkedin")
+    if any(k in label_l for k in ("website", "portfolio", "github")):
+        return pick("website", "portfolio")
+    if any(k in label_l for k in ("salary", "compensation", "pay")):
+        return pick("salary_expectation", "desired_salary")
+    if "gender" in label_l:
+        return pick("gender")
+    if "race" in label_l or "ethnic" in label_l:
+        return pick("race", "ethnicity")
+    if "veteran" in label_l:
+        return pick("veteran_status")
+    if "disab" in label_l:
+        return pick("disability_status")
+    if any(k in label_l for k in ("location", "based", "city", "where are you")):
+        return applicant.get("location", "") or pick("location")
+    # Generic yes/no screeners — a stored default lets the user opt in.
+    return pick("default_yes_no")
+
+
+def _resolve_value(field: dict, answer: str) -> str | None:
+    """Resolve a textual answer against a select field's allowed values."""
+    if not answer:
+        return None
+    values = field.get("values")
+    if not values:
+        return answer  # free-text field
+    ans = answer.strip().lower()
+    for v in values:
+        if str(v.get("label", "")).strip().lower() == ans:
+            return str(v.get("value"))
+    for v in values:  # looser contains match
+        if ans in str(v.get("label", "")).strip().lower():
+            return str(v.get("value"))
+    return None
+
+
+def map_questions(questions: list, answers: dict, applicant: dict) -> dict:
+    """Map a Greenhouse ``questions`` payload to ``{field_name: value}``."""
+    out: dict[str, str] = {}
+    for q in questions or []:
+        label = q.get("label", "")
+        for f in q.get("fields", []):
+            name = f.get("name", "")
+            if not name or name in _BASE_FIELDS:
+                continue
+            resolved = _resolve_value(f, _answer_for(label, answers, applicant))
+            if resolved not in (None, ""):
+                out[name] = str(resolved)
+    return out
 
 # Two URL forms we support:
 #   1. https://boards.greenhouse.io/<token>/jobs/<job_id>         (public board)
@@ -62,12 +157,25 @@ def _build_multipart(fields: dict[str, str | bytes]) -> tuple[bytes, str]:
 
 
 class GreenhouseSubmitter:
-    """Posts an application to the Greenhouse Board API."""
+    """Posts an application to the Greenhouse Board API.
+
+    Sends a real rendered PDF (``plan['resume_pdf']`` when present), browser-like
+    headers, and best-effort answers to the board's custom screening questions
+    (fetched live and mapped from ``plan['answers']``).
+    """
 
     name = "greenhouse"
 
-    def __init__(self, poster: Poster) -> None:
+    def __init__(
+        self,
+        poster: Poster,
+        question_fetcher: Callable[[str], dict] | None = None,
+    ) -> None:
         self._poster = poster
+        # When None, custom-question fetching is skipped entirely (keeps tests
+        # offline). The live dashboard passes the real urllib fetcher
+        # (``_default_question_fetcher``).
+        self._fetch_questions = question_fetcher
 
     def supports(self, url: str) -> bool:
         return (
@@ -90,24 +198,52 @@ class GreenhouseSubmitter:
         first_name = name_parts[0] if name_parts else ""
         last_name = name_parts[1] if len(name_parts) > 1 else ""
 
+        # Prefer a real rendered PDF; fall back to encoding the plain text.
+        resume_bytes = plan.get("resume_pdf") or plan.get("resume_text", "").encode()
         fields: dict[str, str | bytes] = {
             "first_name": first_name,
             "last_name": last_name,
             "email": applicant.get("email", ""),
             "phone": applicant.get("phone", ""),
-            "resume": plan.get("resume_text", "").encode(),
+            "resume": resume_bytes,
             "cover_letter": plan.get("cover_letter_text", ""),
         }
 
+        # Answer the board's custom screening questions where we can.
+        unanswered: list[str] = []
+        try:
+            if self._fetch_questions is None:
+                raise RuntimeError("question fetching disabled")
+            payload = self._fetch_questions(
+                _QUESTIONS_ENDPOINT.format(token=token, job_id=job_id)
+            )
+            questions = payload.get("questions", [])
+            mapped = map_questions(questions, plan.get("answers", {}), applicant)
+            fields.update(mapped)
+            for q in questions:
+                if not q.get("required"):
+                    continue
+                names = [f.get("name", "") for f in q.get("fields", [])]
+                if not any(n in fields and fields[n] not in ("", b"") for n in names):
+                    unanswered.append(q.get("label", "?"))
+        except Exception:
+            # No question data (offline/unsupported) — submit base fields and
+            # let the API report any missing required questions.
+            pass
+
         body, content_type = _build_multipart(fields)
-        headers = {"Content-Type": content_type}
+        headers = {"Content-Type": content_type, "Referer": url, **_BROWSER_HEADERS}
 
         status, resp = self._poster.post_json(api_url, headers=headers, body=body)
 
         if 200 <= status < 300:
-            return SubmitResult(
-                ok=True,
-                submission_id=str(resp.get("id", "")),
-                detail="accepted",
-            )
-        return SubmitResult(ok=False, detail=str(status))
+            detail = "accepted"
+            if unanswered:
+                detail += f"; unanswered required: {', '.join(unanswered)}"
+            return SubmitResult(ok=True, submission_id=str(resp.get("id", "")), detail=detail)
+
+        err = resp.get("error") or resp.get("errors") or ""
+        detail = f"{status}: {err}" if err else str(status)
+        if unanswered:
+            detail += f" (unanswered required questions: {', '.join(unanswered)})"
+        return SubmitResult(ok=False, detail=detail)

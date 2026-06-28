@@ -40,6 +40,10 @@ class UserProfile:
     experiences: list[dict[str, Any]] = field(default_factory=list)
     veto_companies: list[str] = field(default_factory=list)
     weekly_target: int = 10
+    # Standard answers to common ATS screening / custom questions, used when
+    # auto-submitting (work authorization, sponsorship, years of experience,
+    # LinkedIn/website, optional EEO). Free-form so new keys can be added.
+    application_answers: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
