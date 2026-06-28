@@ -694,3 +694,121 @@ def test_access_code_gates_websocket():
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws/stream"):
             pass
+
+
+# ── auto-apply on approve ────────────────────────────────────────────────────
+
+def _registry_client(poster):
+    """Client whose approve flow uses a FakePoster-backed Greenhouse/Lever registry."""
+    from jobhunt.submitters.greenhouse import GreenhouseSubmitter
+    from jobhunt.submitters.lever import LeverSubmitter
+    from jobhunt.submitters.registry import SubmitterRegistry
+    reg = SubmitterRegistry([GreenhouseSubmitter(poster), LeverSubmitter(poster)])
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    return state, TestClient(create_app(state, submitter_registry=reg))
+
+
+def _seed_greenhouse_job(state):
+    url = "https://boards.greenhouse.io/acme/jobs/123"
+    state.jobs = [{
+        "job_id": "123", "company": "Acme", "title": "Backend",
+        "url": url, "status": "Saved", "events": [],
+    }]
+    state.documents["123"] = {
+        "job_id": "123", "company": "Acme", "title": "Backend", "url": url,
+        "resume_text": "Ada Lovelace\nada@example.com", "cover_letter_text": "Dear Acme",
+        "keyword_coverage": 0.8, "matched_keywords": ["python"], "missing_keywords": [],
+        "bullets": [],
+    }
+    state.approval_queue.submit(job_id="123", document_id="d", company="Acme", title="Backend")
+
+
+def test_approve_auto_submits_when_ats_connected():
+    from jobhunt.submitters.base import FakePoster
+    poster = FakePoster()
+    poster.add("https://boards-api.greenhouse.io/v1/boards/acme/jobs/123", 201, {"id": "GH-999"})
+    state, client = _registry_client(poster)
+    client.post("/api/onboarding/profile", json=_profile_payload(phone="+15551234"))
+    _seed_greenhouse_job(state)
+    state.ats_config = {"greenhouse_tokens": ["acme"], "lever_slugs": [], "ashby_slugs": []}
+
+    r = client.post("/api/approve/123?decision=approve")
+    assert r.status_code == 200
+    assert r.json()["submission"] == {"submitted": True, "submission_id": "GH-999"}
+    assert len(poster.calls) == 1
+    # Applicant payload carried name/email/phone from the profile.
+    sent = poster.calls[0]["body"]
+    assert b"ada@example.com" in sent and b"+15551234" in sent
+    job = state.jobs[0]
+    assert job["submitted"] is True and job["submission_id"] == "GH-999"
+    assert job["status"] == "Applied"
+
+
+def test_approve_does_not_submit_for_fixtures_without_ats():
+    from jobhunt.submitters.base import FakePoster
+    poster = FakePoster()
+    state, client = _registry_client(poster)
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    _seed_greenhouse_job(state)  # greenhouse-looking URL but no ATS connected
+
+    r = client.post("/api/approve/123?decision=approve")
+    assert r.json()["submission"] == {"submitted": False, "manual": True}
+    assert len(poster.calls) == 0  # never hit the network for fixtures
+    assert state.jobs[0]["status"] == "Applied"
+    assert not state.jobs[0].get("submitted")
+
+
+def test_approve_surfaces_submission_failure():
+    from jobhunt.submitters.base import FakePoster
+    poster = FakePoster()
+    poster.add("https://boards-api.greenhouse.io/v1/boards/acme/jobs/123", 422, {"error": "bad"})
+    state, client = _registry_client(poster)
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    _seed_greenhouse_job(state)
+    state.ats_config = {"greenhouse_tokens": ["acme"], "lever_slugs": [], "ashby_slugs": []}
+
+    r = client.post("/api/approve/123?decision=approve")
+    sub = r.json()["submission"]
+    assert sub["submitted"] is False and "422" in sub["detail"]
+    assert not state.jobs[0].get("submitted")
+
+
+def test_approve_no_duplicate_submit():
+    from jobhunt.submitters.base import FakePoster
+    poster = FakePoster()
+    poster.add("https://boards-api.greenhouse.io/v1/boards/acme/jobs/123", 201, {"id": "GH-1"})
+    state, client = _registry_client(poster)
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    _seed_greenhouse_job(state)
+    state.ats_config = {"greenhouse_tokens": ["acme"], "lever_slugs": [], "ashby_slugs": []}
+
+    client.post("/api/approve/123?decision=approve")
+    # A second approve of an already-SUBMITTED request is an invalid transition.
+    r2 = client.post("/api/approve/123?decision=approve")
+    assert r2.status_code in (404, 409)
+    assert len(poster.calls) == 1  # not submitted twice
+
+
+# ── per-application timeline ─────────────────────────────────────────────────
+
+def test_timeline_records_status_changes():
+    state, client = _client()
+    state.jobs = [{"job_id": "j-1", "company": "X", "title": "Eng", "status": "Saved", "events": []}]
+    client.post("/api/jobs/j-1/status", json={"status": "Interview"})
+    tl = client.get("/api/jobs/j-1/timeline").json()["timeline"]
+    assert tl and tl[-1]["stage"] == "Interview"
+    assert "Saved → Interview" in tl[-1]["detail"]
+
+
+def test_timeline_404_for_unknown_job():
+    _, client = _client()
+    assert client.get("/api/jobs/nope/timeline").status_code == 404
+
+
+# ── profile phone ────────────────────────────────────────────────────────────
+
+def test_profile_put_updates_phone():
+    _, client = _client()
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    r = client.put("/api/profile", json={"phone": "+1 555 000 1111"})
+    assert r.json()["profile"]["phone"] == "+1 555 000 1111"
