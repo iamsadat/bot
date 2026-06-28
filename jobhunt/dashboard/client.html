@@ -1152,12 +1152,35 @@
             <div class="field-label">Weekly application target</div>
             <input class="input" type="number" id="p-weekly" min="1" max="50" />
           </div>
+          <div class="field full">
+            <div class="field-label">Culture keywords <span class="hint">e.g. remote-first, async — press Enter to add</span></div>
+            <div class="chips" id="p-culture-input"><input type="text" id="p-culture-text" placeholder="remote-first, mission-driven…" /></div>
+          </div>
           <div class="full toggle-row" style="border-top:none;">
             <div>
               <div class="tl">Open to remote roles</div>
               <div class="tld">Includes remote-OK postings even when location doesn't match.</div>
             </div>
             <div class="toggle" id="p-remote-toggle"><div class="toggle-thumb"></div></div>
+          </div>
+
+          <div class="full" style="border-top:1px solid var(--border); padding-top:16px;">
+            <div class="field-label" style="margin-bottom:4px;">Connected job boards (ATS)</div>
+            <div class="tld" style="margin-bottom:12px;">Add public Greenhouse / Lever / Ashby handles to discover live jobs — and to enable auto-submit on approve. Comma-separated.</div>
+            <div class="profile-grid" style="gap:12px;">
+              <div class="field" style="margin:0;">
+                <div class="field-label">Greenhouse boards</div>
+                <input class="input" type="text" id="p-greenhouse" placeholder="stripe, airtable" />
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">Lever slugs</div>
+                <input class="input" type="text" id="p-lever" placeholder="netflix, github" />
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">Ashby slugs</div>
+                <input class="input" type="text" id="p-ashby" placeholder="vercel, supabase" />
+              </div>
+            </div>
           </div>
         </div>
         <div style="display:flex; gap:10px; margin-top:18px;">
@@ -1834,13 +1857,14 @@
   }
 
   /* ────── dashboard view tabs ────────────────────────────────── */
-  const profileState = { roles: [], locs: [], skills: [], veto: [], remoteOk: true };
-  let renderPRoles, renderPLocs, renderPSkills, renderPVeto;
+  const profileState = { roles: [], locs: [], skills: [], veto: [], culture: [], remoteOk: true };
+  let renderPRoles, renderPLocs, renderPSkills, renderPVeto, renderPCulture;
   (function initProfileChips() {
-    renderPRoles  = makeChip($('p-roles-input'),  $('p-roles-text'),  profileState.roles);
-    renderPLocs   = makeChip($('p-locs-input'),   $('p-locs-text'),   profileState.locs);
-    renderPSkills = makeChip($('p-skills-input'), $('p-skills-text'), profileState.skills);
-    renderPVeto   = makeChip($('p-veto-input'),   $('p-veto-text'),   profileState.veto);
+    renderPRoles   = makeChip($('p-roles-input'),   $('p-roles-text'),   profileState.roles);
+    renderPLocs    = makeChip($('p-locs-input'),    $('p-locs-text'),    profileState.locs);
+    renderPSkills  = makeChip($('p-skills-input'),  $('p-skills-text'),  profileState.skills);
+    renderPVeto    = makeChip($('p-veto-input'),    $('p-veto-text'),    profileState.veto);
+    renderPCulture = makeChip($('p-culture-input'), $('p-culture-text'), profileState.culture);
   })();
   $('p-remote-toggle').addEventListener('click', (e) => {
     e.currentTarget.classList.toggle('on');
@@ -1870,11 +1894,16 @@
     set(profileState.locs, p.locations);
     set(profileState.skills, p.skills);
     set(profileState.veto, p.veto_companies);
-    renderPRoles(); renderPLocs(); renderPSkills(); renderPVeto();
+    set(profileState.culture, p.culture_keywords);
+    renderPRoles(); renderPLocs(); renderPSkills(); renderPVeto(); renderPCulture();
     $('p-salary').value = p.min_salary || '';
     $('p-weekly').value = p.weekly_target || 10;
     profileState.remoteOk = p.remote_ok !== false;
     $('p-remote-toggle').classList.toggle('on', profileState.remoteOk);
+    const ats = data.ats_config || {};
+    $('p-greenhouse').value = (ats.greenhouse_tokens || []).join(', ');
+    $('p-lever').value = (ats.lever_slugs || []).join(', ');
+    $('p-ashby').value = (ats.ashby_slugs || []).join(', ');
   }
   $('btn-save-profile').addEventListener('click', async () => {
     const btn = $('btn-save-profile'); btn.disabled = true; btn.textContent = 'Saving…';
@@ -1884,9 +1913,16 @@
         phone: $('p-phone').value.trim(),
         target_roles: profileState.roles, locations: profileState.locs,
         skills: profileState.skills, veto_companies: profileState.veto,
+        culture_keywords: profileState.culture,
         min_salary: parseInt($('p-salary').value) || null,
         weekly_target: parseInt($('p-weekly').value) || 10,
         remote_ok: profileState.remoteOk,
+      });
+      // ATS handles live in their own config (also feeds auto-submit routing).
+      await api('POST', '/api/onboarding/ats', {
+        greenhouse_tokens: $('p-greenhouse').value,
+        lever_slugs: $('p-lever').value,
+        ashby_slugs: $('p-ashby').value,
       });
       toast('Profile saved — applies to the next hunt', 'good');
     } catch (e) { toast(e.message || 'Save failed', 'bad'); }

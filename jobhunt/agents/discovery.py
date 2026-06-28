@@ -19,12 +19,14 @@ from dataclasses import dataclass
 
 from jobhunt.adapters.base import JobSource
 from jobhunt.agents.base import BaseAgent
+from jobhunt.embeddings import cosine_similarity, embed_jd_text, embed_user_skills
 from jobhunt.models import (
     DiscoveryBatch,
     JobPosting,
     ReasoningTrace,
     UserProfile,
 )
+from jobhunt.skills_taxonomy import expand_terms
 
 
 _TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z+\-#0-9]*")
@@ -47,11 +49,27 @@ def _cosine(a: Counter, b: Counter) -> float:
 
 
 def relevance(posting: JobPosting, profile: UserProfile) -> float:
-    profile_vec = Counter(
-        _tokenize(" ".join(profile.skills + profile.target_roles))
+    """Blended 0..1 relevance of a posting to the user.
+
+    Combines two complementary signals:
+      * lexical bag-of-words cosine over **synonym-expanded** skills/roles
+        (so "k8s" in the JD counts for a "kubernetes" skill), and
+      * semantic cosine in the hashing-trick embedding space (catches related
+        vocabulary that doesn't share exact tokens).
+
+    The blend re-ranks borderline jobs more sharply than raw token overlap.
+    """
+    skill_terms = list(profile.skills) + list(profile.target_roles)
+    expanded = expand_terms(skill_terms)
+    profile_vec = Counter(_tokenize(" ".join(sorted(expanded))))
+    jd_text = posting.jd_text + " " + posting.title
+    jd_vec = Counter(_tokenize(jd_text))
+    lexical = _cosine(profile_vec, jd_vec)
+
+    semantic = cosine_similarity(
+        embed_user_skills(skill_terms), embed_jd_text(jd_text)
     )
-    jd_vec = Counter(_tokenize(posting.jd_text + " " + posting.title))
-    return round(_cosine(profile_vec, jd_vec), 4)
+    return round(0.55 * lexical + 0.45 * semantic, 4)
 
 
 def ghost_score(posting: JobPosting, now: float | None = None) -> float:

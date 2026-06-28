@@ -812,3 +812,20 @@ def test_profile_put_updates_phone():
     client.post("/api/onboarding/profile", json=_profile_payload())
     r = client.put("/api/profile", json={"phone": "+1 555 000 1111"})
     assert r.json()["profile"]["phone"] == "+1 555 000 1111"
+
+
+# ── editable culture keywords + ATS sources ──────────────────────────────────
+
+def test_profile_put_updates_culture_keywords():
+    _, client = _client()
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    r = client.put("/api/profile", json={"culture_keywords": ["remote-first", "async"]})
+    assert r.json()["profile"]["culture_keywords"] == ["remote-first", "async"]
+
+
+def test_profile_get_returns_ats_config_for_editing():
+    state, client = _client()
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    client.post("/api/onboarding/ats", json={"greenhouse_tokens": "stripe, airtable"})
+    g = client.get("/api/profile").json()
+    assert g["ats_config"]["greenhouse_tokens"] == ["stripe", "airtable"]
