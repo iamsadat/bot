@@ -21,7 +21,7 @@ FIX = Path(__file__).parent.parent.parent / "jobhunt" / "fixtures" / "ats"
 
 
 def _load(name: str):
-    return json.loads((FIX / name).read_text())
+    return json.loads((FIX / name).read_text(encoding="utf-8"))
 
 
 # ----- shared --------------------------------------------------------------

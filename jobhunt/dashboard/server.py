@@ -400,7 +400,9 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index(_state: DashboardState = Depends(get_state)) -> str:
-        return (Path(__file__).parent / "client.html").read_text()
+        return (Path(__file__).parent / "client.html").read_text(
+            encoding="utf-8"
+        )
 
     # ---- static companions: cinematic demo, SSOT tracker, sample-data app ----
     _ROOT = Path(__file__).resolve().parent.parent  # jobhunt/
