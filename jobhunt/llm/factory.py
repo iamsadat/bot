@@ -8,11 +8,34 @@ callers get ``None`` and the pipeline stays on deterministic heuristics.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 
 from jobhunt.llm.anthropic_client import AnthropicLLMClient, LLMClient, LLMUnavailable
 from jobhunt.llm.gemini_client import GeminiLLMClient
+
+
+def describe_llm_from_env() -> dict:
+    """Report which LLM (if any) the environment will use — without API calls.
+
+    Mirrors ``build_llm_client_from_env``'s precedence (Gemini → Anthropic) but
+    only inspects env vars + installed packages, so it's cheap enough to call
+    from the status endpoint. Returns ``{active, provider, model, reason}``.
+    """
+    if os.environ.get("GEMINI_API_KEY"):
+        if importlib.util.find_spec("google.genai"):
+            return {"active": True, "provider": "gemini",
+                    "model": GeminiLLMClient.DEFAULT_MODEL, "reason": ""}
+        return {"active": False, "provider": "gemini", "model": None,
+                "reason": "google-genai not installed (pip install google-genai)"}
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        if importlib.util.find_spec("anthropic"):
+            return {"active": True, "provider": "anthropic",
+                    "model": AnthropicLLMClient.DEFAULT_MODEL, "reason": ""}
+        return {"active": False, "provider": "anthropic", "model": None,
+                "reason": "anthropic not installed (pip install anthropic)"}
+    return {"active": False, "provider": None, "model": None, "reason": ""}
 
 
 def build_llm_client_from_env() -> LLMClient | None:

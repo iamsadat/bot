@@ -92,16 +92,12 @@ class PDFRenderer:
     content_type = "application/pdf"
 
     def render(self, draft: ResumeDraft) -> bytes:
-        try:
-            from weasyprint import HTML  # type: ignore
-        except ImportError as e:
-            raise RendererUnavailable(
-                "WeasyPrint not installed; pip install weasyprint"
-            ) from e
-        html = _draft_to_html(draft)
-        buf = BytesIO()
-        HTML(string=html).write_pdf(target=buf)
-        return buf.getvalue()
+        # Pure-Python fpdf2 — no system libraries, installs cleanly on
+        # Windows and in Docker (unlike WeasyPrint's GTK/Pango stack).
+        body = draft.to_text()
+        lines = body.split("\n")
+        heading = lines[0].strip() if lines and lines[0].strip() else draft.candidate_name
+        return text_to_pdf(heading, "\n".join(lines[1:]))
 
 
 # --------------------------------------------------------------- DOCX
@@ -141,6 +137,168 @@ class DOCXRenderer:
         buf = BytesIO()
         doc.save(buf)
         return buf.getvalue()
+
+
+# ----------------------------------------------------------------- helpers
+#
+# These take a heading + a structured plain-text body (the format produced by
+# ResumeArchitectAgent._render_resume: ALL-CAPS section headers, "- " bullets,
+# blank-line separated paragraphs) and render clean PDF / HTML / DOCX. They
+# back the dashboard download endpoint so every format shares one layout.
+
+# Core PDF fonts are latin-1 only; transliterate the handful of unicode
+# punctuation our text can contain so fpdf2 never raises on an exotic glyph.
+_TRANSLIT = {
+    "—": "-", "–": "-", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "•": "-", "…": "...",
+    "→": "->", "←": "<-", "≥": ">=", "≤": "<=",
+    " ": " ", " ": " ", "​": "",
+}
+
+
+def _latin1(s: str) -> str:
+    for k, v in _TRANSLIT.items():
+        s = s.replace(k, v)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def _esc(s: str) -> str:
+    return (
+        s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+
+
+def _is_heading(line: str) -> bool:
+    """Section headers are short, all-caps, alphabetic lines."""
+    s = line.strip()
+    return bool(s) and len(s) <= 40 and s == s.upper() and any(c.isalpha() for c in s)
+
+
+def _is_bullet(line: str) -> bool:
+    return line.lstrip().startswith(("- ", "* ", "• "))
+
+
+def _bullet_text(line: str) -> str:
+    return line.lstrip()[2:].strip()
+
+
+def text_to_pdf(heading: str, body: str) -> bytes:
+    """Render a heading + structured body to a clean A4 PDF via fpdf2."""
+    try:
+        from fpdf import FPDF  # type: ignore
+    except ImportError as e:
+        raise RendererUnavailable("fpdf2 not installed; pip install fpdf2") from e
+
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.set_margins(18, 16, 18)
+    pdf.add_page()
+
+    # multi_cell leaves the cursor at the right margin by default, which makes
+    # the *next* full-width cell see zero available width; LMARGIN/NEXT returns
+    # the cursor to the left margin on the following line.
+    def cell(text: str, h: float) -> None:
+        pdf.multi_cell(0, h, _latin1(text), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_text_color(17, 17, 24)
+    pdf.set_font("Helvetica", "B", 19)
+    cell(heading, 9)
+    pdf.ln(1)
+
+    for raw in body.split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            pdf.ln(2)
+            continue
+        if _is_heading(line):
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_text_color(90, 92, 120)
+            cell(line.strip(), 6)
+            pdf.set_text_color(30, 30, 38)
+            continue
+        if _is_bullet(line):
+            pdf.set_font("Helvetica", size=10)
+            cell("-  " + _bullet_text(line), 5)
+            continue
+        pdf.set_font("Helvetica", size=10)
+        cell(line, 5)
+
+    return bytes(pdf.output())
+
+
+def text_to_styled_html(heading: str, body: str, *, tab_title: str = "") -> str:
+    """Render a heading + structured body to a self-contained styled HTML page."""
+    blocks: list[str] = []
+    bullets: list[str] = []
+
+    def flush() -> None:
+        if bullets:
+            blocks.append("<ul>" + "".join(f"<li>{_esc(b)}</li>" for b in bullets) + "</ul>")
+            bullets.clear()
+
+    for raw in body.split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            flush()
+            continue
+        if _is_heading(line):
+            flush()
+            blocks.append(f"<h2>{_esc(line.strip().title())}</h2>")
+            continue
+        if _is_bullet(line):
+            bullets.append(_bullet_text(line))
+            continue
+        flush()
+        blocks.append(f"<p>{_esc(line)}</p>")
+    flush()
+
+    inner = "\n  ".join(blocks)
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8">
+<title>{_esc(tab_title or heading)}</title>
+<style>
+  body {{ font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+          max-width: 720px; margin: 40px auto; padding: 0 24px;
+          color: #14161f; line-height: 1.5; }}
+  h1 {{ font-size: 1.7em; margin: 0 0 4px; letter-spacing: -0.02em; }}
+  h2 {{ font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.09em;
+        color: #5b6478; border-bottom: 1px solid #e3e6ef;
+        padding-bottom: 4px; margin: 26px 0 10px; }}
+  p {{ margin: 0 0 8px; }}
+  ul {{ margin: 0 0 8px; padding-left: 20px; }}
+  li {{ margin-bottom: 5px; }}
+</style></head><body>
+  <h1>{_esc(heading)}</h1>
+  {inner}
+</body></html>"""
+
+
+def text_to_docx(heading: str, body: str) -> bytes:
+    """Render a heading + structured body to a .docx via python-docx."""
+    try:
+        from docx import Document  # type: ignore
+    except ImportError as e:
+        raise RendererUnavailable(
+            "python-docx not installed; pip install python-docx"
+        ) from e
+
+    doc = Document()
+    doc.add_heading(heading, level=0)
+    for raw in body.split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        if _is_heading(line):
+            doc.add_heading(line.strip().title(), level=2)
+        elif _is_bullet(line):
+            doc.add_paragraph(_bullet_text(line), style="List Bullet")
+        else:
+            doc.add_paragraph(line)
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------- factory

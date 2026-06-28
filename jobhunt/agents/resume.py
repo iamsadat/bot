@@ -44,6 +44,18 @@ class ResumeInputs:
     max_keywords: int = 15
 
 
+# Deterministic bullet phrasings used when no LLM is wired (or as the fallback
+# when an LLM call fails). Picked by a stable per-keyword index so the same
+# keyword always renders the same bullet across runs (tests + reproducibility).
+_BULLET_TEMPLATES = [
+    "Delivered production features built on {kw}, from design through deployment.",
+    "Owned {kw} across the stack, improving reliability and developer velocity.",
+    "Built and scaled {kw}-based services running in production.",
+    "Applied {kw} to ship measurable improvements for users and the team.",
+    "Designed and maintained {kw} systems with a focus on correctness and speed.",
+]
+
+
 _STOP = {
     "the", "and", "for", "with", "you", "are", "our", "this", "that",
     "have", "has", "from", "will", "your", "should", "must", "into",
@@ -100,10 +112,15 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
         docs: list[TailoredDocument] = []
         for posting in inputs.postings:
             kws = extract_keywords(posting.jd_text, inputs.max_keywords)
-            matched, missing, bullets = self._map_evidence(kws, inputs.profile)
+            matched, missing, bullets = self._map_evidence(
+                kws, inputs.profile, posting
+            )
             coverage = len(matched) / max(1, len(kws))
 
-            resume_text = self._render_resume(inputs.profile, posting, bullets)
+            summary = self._summary(inputs.profile, posting, matched)
+            resume_text = self._render_resume(
+                inputs.profile, posting, bullets, summary
+            )
             cover = self._render_cover(inputs.profile, posting, matched)
 
             docs.append(
@@ -166,7 +183,7 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
     # ----- helpers ----------------------------------------------------------
 
     def _map_evidence(
-        self, keywords: list[str], profile: UserProfile
+        self, keywords: list[str], profile: UserProfile, posting: JobPosting,
     ) -> tuple[list[str], list[str], list[dict[str, str]]]:
         # Build evidence index from skills and experience descriptions.
         evidence: dict[str, dict[str, Any]] = {}
@@ -188,10 +205,13 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
                 missing.append(kw)
                 continue
             matched.append(kw)
-            text = f"Delivered work involving {kw} ({ev['text'][:80]})."
+            text = self._draft_bullet(kw, ev)
             if self.llm is not None:
                 try:
-                    improved = self.llm("rewrite_bullet", {"keyword": kw, "draft": text})
+                    improved = self.llm("rewrite_bullet", {
+                        "keyword": kw, "draft": text,
+                        "company": posting.company, "title": posting.title,
+                    })
                     if improved and isinstance(improved, str):
                         text = improved.strip()
                 except Exception:
@@ -201,14 +221,68 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
         return matched, missing, bullets
 
     @staticmethod
-    def _render_resume(
-        profile: UserProfile, posting: JobPosting, bullets: list[dict[str, str]]
+    def _draft_bullet(kw: str, ev: dict[str, Any]) -> str:
+        """A professional, deterministic bullet for one matched keyword.
+
+        Stable per keyword (no RNG / process-hash) so output is reproducible.
+        When the evidence is a real experience line, append a short snippet
+        for specificity — but the evidence_id (set by the caller) is what
+        guarantees no hallucination, not this text.
+        """
+        idx = sum(ord(c) for c in kw) % len(_BULLET_TEMPLATES)
+        base = _BULLET_TEMPLATES[idx].format(kw=kw)
+        if ev.get("kind") == "experience":
+            snippet = " ".join(str(ev.get("text", "")).split())
+            if snippet and snippet.lower() != kw.lower():
+                base = base.rstrip(".") + f" ({snippet[:80]})."
+        return base
+
+    def _summary(
+        self, profile: UserProfile, posting: JobPosting, matched: list[str],
     ) -> str:
-        header = f"{profile.name}\n{profile.email}\n"
-        title = f"\nTarget role: {posting.title} @ {posting.company}\n"
-        skills = "\nSkills: " + ", ".join(profile.skills)
-        body = "\nHighlights:\n" + "\n".join(f"- {b['text']}" for b in bullets)
-        return header + title + skills + body + "\n"
+        """Two-sentence professional summary; LLM-polished when available."""
+        skills = ", ".join(profile.skills[:6]) or "the role's core stack"
+        base = (
+            f"{profile.name} — engineer experienced in {skills}. "
+            f"Targeting {posting.title} at {posting.company}."
+        )
+        if self.llm is not None:
+            try:
+                improved = self.llm("summary", {
+                    "profile": profile.to_dict(),
+                    "posting_title": posting.title,
+                    "posting_company": posting.company,
+                    "keywords": matched,
+                })
+                if improved and isinstance(improved, str):
+                    base = improved.strip()
+            except Exception:
+                pass
+        return base
+
+    @staticmethod
+    def _render_resume(
+        profile: UserProfile, posting: JobPosting,
+        bullets: list[dict[str, str]], summary: str,
+    ) -> str:
+        out = [
+            profile.name,
+            profile.email,
+            "",
+            f"Target: {posting.title} @ {posting.company}",
+            "",
+            "SUMMARY",
+            summary,
+            "",
+        ]
+        if profile.skills:
+            out += ["KEY SKILLS", ", ".join(profile.skills), ""]
+        out.append("HIGHLIGHTS")
+        if bullets:
+            out += [f"- {b['text']}" for b in bullets]
+        else:
+            out.append("- Matching evidence will appear here as the profile grows.")
+        return "\n".join(out).rstrip() + "\n"
 
     @staticmethod
     def _render_cover(

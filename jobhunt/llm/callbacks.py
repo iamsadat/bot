@@ -16,10 +16,11 @@ from jobhunt.llm.anthropic_client import LLMClient
 _BULLET_SYSTEM = """\
 You rewrite resume bullets for ATS clarity and impact.
 Rules:
-- One sentence, ≤ 20 words.
-- Keep every factual claim from the draft — do NOT invent metrics.
-- Lead with an action verb; weave in the ATS keyword naturally.
-- Return only the rewritten bullet, no preamble."""
+- One sentence, ≤ 22 words.
+- Keep every factual claim from the draft — do NOT invent metrics or employers.
+- Lead with a strong action verb; weave in the ATS keyword naturally.
+- Tailor the emphasis to the target role/company when provided.
+- Return only the rewritten bullet, no preamble, no surrounding quotes."""
 
 _SUMMARY_SYSTEM = """\
 You write two-sentence resume summaries in third person.
@@ -49,8 +50,14 @@ def resume_callback(
         if action == "rewrite_bullet":
             keyword = payload.get("keyword", "")
             draft = payload.get("draft", "")
-            user = f"Keyword: {keyword}\nDraft bullet: {draft}"
-            return client.complete(_BULLET_SYSTEM, user, max_tokens=64, model=model)
+            company = payload.get("company", "")
+            title = payload.get("title", "")
+            ctx = (
+                f"\nTarget role: {title} at {company}"
+                if (title or company) else ""
+            )
+            user = f"Keyword: {keyword}\nDraft bullet: {draft}{ctx}"
+            return client.complete(_BULLET_SYSTEM, user, max_tokens=80, model=model)
 
         if action == "summary":
             profile = payload.get("profile", {})

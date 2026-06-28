@@ -338,6 +338,7 @@ def create_app(
     *,
     workspace_factory: Callable[[str], DashboardState] | None = None,
     access_code: str | None = None,
+    dev_nav: bool = False,
 ):
     if _FASTAPI_IMPORT_ERROR is not None:  # pragma: no cover
         raise RuntimeError(
@@ -446,6 +447,7 @@ def create_app(
 
     @app.get("/api/status")
     def get_status(state: DashboardState = Depends(get_state)) -> dict:
+        from jobhunt.llm.factory import describe_llm_from_env
         applied = sum(1 for j in state.jobs if j.get("status") in
                       ("Applied", "Assessment", "Interview", "Offer"))
         return {
@@ -458,6 +460,10 @@ def create_app(
             "ats_configured": any(state.ats_config.get(k) for k in (
                 "greenhouse_tokens", "lever_slugs", "ashby_slugs"
             )),
+            # UI flags: whether to show dev-only nav (tracker/demo), and which
+            # LLM (if any) will tone-polish resumes for this deployment.
+            "dev_nav": dev_nav,
+            "llm": describe_llm_from_env(),
         }
 
     # ---------------------------------------------------------------- onboarding
@@ -506,6 +512,54 @@ def create_app(
         }
         state.persist()
         return {"ok": True, "ats_config": state.ats_config}
+
+    # ------------------------------------------------------------------ profile
+
+    @app.get("/api/profile")
+    def get_profile(state: DashboardState = Depends(get_state)) -> dict:
+        if state.user_profile is None:
+            return {"profile": None}
+        return {"profile": state.user_profile.to_dict(), "ats_config": state.ats_config}
+
+    @app.put("/api/profile")
+    def update_profile(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        p = state.user_profile
+
+        def _as_list(key: str, current: list[str]) -> list[str]:
+            if key not in body:
+                return current
+            v = body[key]
+            if isinstance(v, list):
+                return [str(s).strip() for s in v if str(s).strip()]
+            return [s.strip() for s in str(v).split(",") if s.strip()]
+
+        if "name" in body:
+            name = str(body["name"]).strip()
+            if not name:
+                raise HTTPException(status_code=422, detail="name cannot be empty")
+            p.name = name
+        if "email" in body:
+            email = str(body["email"]).strip()
+            if "@" not in email:
+                raise HTTPException(status_code=422, detail="invalid email")
+            p.email = email.lower()
+        p.target_roles = _as_list("target_roles", p.target_roles)
+        p.locations = _as_list("locations", p.locations)
+        p.skills = [s.lower() for s in _as_list("skills", p.skills)]
+        p.veto_companies = _as_list("veto_companies", p.veto_companies)
+        p.culture_keywords = _as_list("culture_keywords", p.culture_keywords)
+        if "min_salary" in body:
+            p.min_salary = int(body["min_salary"]) if body["min_salary"] else None
+        if "remote_ok" in body:
+            p.remote_ok = bool(body["remote_ok"])
+        if "weekly_target" in body:
+            p.weekly_target = int(body["weekly_target"] or 10)
+
+        state.persist()
+        state.bus.publish("profile", p.user_id, "Profile updated.")
+        return {"ok": True, "profile": p.to_dict()}
 
     # ---------------------------------------------------------------- hunt control
 
@@ -602,57 +656,53 @@ def create_app(
         if kind not in ("resume", "cover"):
             raise HTTPException(status_code=400, detail="kind must be 'resume' or 'cover'")
 
+        from jobhunt.resume_renderer import (
+            RendererUnavailable, text_to_docx, text_to_pdf, text_to_styled_html,
+        )
+
         text = doc["resume_text"] if kind == "resume" else doc["cover_letter_text"]
         safe = f"{doc['company']}-{doc['title']}".replace(" ", "_").replace("/", "_")
         filename = f"{safe}-{kind}.{format}"
 
+        # The renderers take a heading + structured body. For a resume the
+        # first line is the candidate's name; promote it to the heading so the
+        # document isn't titled by the line twice. Cover letters get a synthetic
+        # heading since their body starts mid-salutation.
+        if kind == "resume":
+            lines = text.split("\n")
+            heading = lines[0].strip() if lines and lines[0].strip() else doc["title"]
+            body = "\n".join(lines[1:])
+        else:
+            heading = f"Cover letter — {doc['company']}"
+            body = text
+
+        def _attach(content: bytes, media: str) -> Any:
+            return Response(
+                content=content, media_type=media,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
         if format == "txt":
-            return Response(
-                content=text.encode("utf-8"),
-                media_type="text/plain; charset=utf-8",
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-            )
+            return _attach(text.encode("utf-8"), "text/plain; charset=utf-8")
         if format == "html":
-            html = _doc_to_simple_html(doc, kind)
-            return Response(
-                content=html.encode("utf-8"),
-                media_type="text/html; charset=utf-8",
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            html = text_to_styled_html(
+                heading, body, tab_title=f"{doc['company']} — {doc['title']}",
             )
+            return _attach(html.encode("utf-8"), "text/html; charset=utf-8")
         if format == "pdf":
             try:
-                from weasyprint import HTML  # type: ignore
-                html = _doc_to_simple_html(doc, kind)
-                pdf = HTML(string=html).write_pdf()
-                return Response(
-                    content=pdf,
-                    media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-                )
-            except ImportError:
-                raise HTTPException(
-                    status_code=503,
-                    detail="PDF unavailable — install weasyprint (pip install weasyprint)",
-                )
+                return _attach(text_to_pdf(heading, body), "application/pdf")
+            except RendererUnavailable as e:
+                raise HTTPException(status_code=503, detail=str(e))
         if format == "docx":
             try:
-                from docx import Document  # type: ignore
-                from io import BytesIO
-                d = Document()
-                for line in text.split("\n"):
-                    d.add_paragraph(line)
-                buf = BytesIO()
-                d.save(buf)
-                return Response(
-                    content=buf.getvalue(),
-                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+                return _attach(
+                    text_to_docx(heading, body),
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document",
                 )
-            except ImportError:
-                raise HTTPException(
-                    status_code=503,
-                    detail="DOCX unavailable — install python-docx (pip install python-docx)",
-                )
+            except RendererUnavailable as e:
+                raise HTTPException(status_code=503, detail=str(e))
         raise HTTPException(status_code=400, detail=f"unknown format: {format}")
 
     # ----------------------------------------------------------------- traces
@@ -669,6 +719,18 @@ def create_app(
         )
         traces = list(reversed(traces))[:limit]
         return {"traces": [_trace_to_dict(t) for t in traces]}
+
+    # ----------------------------------------------------------------- activity
+
+    @app.get("/api/activity")
+    def get_activity(
+        limit: int = 100, state: DashboardState = Depends(get_state),
+    ) -> dict:
+        # The ThoughtBus already keeps a rolling history of every published
+        # event (discovery, approval, submission, tracking, profile…). Surface
+        # it newest-first as a human-readable activity log.
+        events = list(reversed(state.bus.history()))[:limit]
+        return {"activity": events}
 
     # ----------------------------------------------------------------- approvals
 
@@ -798,19 +860,3 @@ def _trace_to_dict(trace) -> dict[str, Any]:
     }
 
 
-def _doc_to_simple_html(doc: dict, kind: str) -> str:
-    text = doc["resume_text"] if kind == "resume" else doc["cover_letter_text"]
-    body = "<br/>".join(
-        line if line.strip() else "&nbsp;" for line in text.split("\n")
-    )
-    return f"""<!doctype html><html><head><meta charset="utf-8">
-<title>{doc['company']} — {doc['title']}</title>
-<style>
-  body {{ font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
-          max-width: 720px; margin: 32px auto; padding: 0 16px;
-          color: #1a1a1a; line-height: 1.5; }}
-  h1 {{ font-size: 1.4em; }}
-</style></head><body>
-  <h1>{doc['company']} — {doc['title']}</h1>
-  <p>{body}</p>
-</body></html>"""

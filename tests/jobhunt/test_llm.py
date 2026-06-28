@@ -565,3 +565,36 @@ class TestCritiqueCallback:
         assert result["score"] == pytest.approx(0.9)
         assert result["flags"] == []
         assert result["suggestions"] == []
+
+
+class TestDescribeLlmFromEnv:
+    """describe_llm_from_env() probes env + installed packages, no API calls."""
+
+    def test_none_when_no_keys(self, monkeypatch):
+        from jobhunt.llm.factory import describe_llm_from_env
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        d = describe_llm_from_env()
+        assert d == {"active": False, "provider": None, "model": None, "reason": ""}
+
+    def test_gemini_active_when_key_and_pkg_present(self, monkeypatch):
+        import importlib.util
+        from jobhunt.llm import factory
+        monkeypatch.setenv("GEMINI_API_KEY", "x")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr(
+            factory.importlib.util, "find_spec",
+            lambda name: object() if name == "google.genai" else
+            importlib.util.find_spec(name),
+        )
+        d = factory.describe_llm_from_env()
+        assert d["active"] is True and d["provider"] == "gemini" and d["model"]
+
+    def test_gemini_key_but_pkg_missing_reports_reason(self, monkeypatch):
+        from jobhunt.llm import factory
+        monkeypatch.setenv("GEMINI_API_KEY", "x")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr(factory.importlib.util, "find_spec", lambda name: None)
+        d = factory.describe_llm_from_env()
+        assert d["active"] is False and d["provider"] == "gemini"
+        assert "google-genai" in d["reason"]
