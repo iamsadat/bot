@@ -142,6 +142,7 @@ def _profile_from_dict(d: dict) -> UserProfile:
         experiences=list(d.get("experiences", [])),
         veto_companies=list(d.get("veto_companies", [])),
         weekly_target=int(d.get("weekly_target", 10)),
+        application_answers=dict(d.get("application_answers", {})),
     )
 
 

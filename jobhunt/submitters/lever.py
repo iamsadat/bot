@@ -20,6 +20,11 @@ _LEVER_URL_RE = re.compile(
 
 _API_ENDPOINT = "https://api.lever.co/v0/postings/{site}/{posting_id}/apply"
 
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 JobHunt/1.0"
+)
+
 
 class LeverSubmitter:
     """Posts an application via the Lever public Apply API."""
@@ -43,7 +48,8 @@ class LeverSubmitter:
         api_url = _API_ENDPOINT.format(site=site, posting_id=posting_id)
 
         applicant = plan.get("applicant", {})
-        resume_bytes = plan.get("resume_text", "").encode()
+        # Prefer a real rendered PDF; fall back to encoding the plain text.
+        resume_bytes = plan.get("resume_pdf") or plan.get("resume_text", "").encode()
         resume_b64 = base64.b64encode(resume_bytes).decode()
 
         body = {
@@ -53,8 +59,19 @@ class LeverSubmitter:
             "resume": resume_b64,
             "comments": plan.get("cover_letter_text", ""),
         }
+        # Carry standard answers as best-effort extra fields (Lever ignores
+        # unknown keys; known ones like urls/links are picked up).
+        answers = plan.get("answers", {})
+        for key in ("linkedin", "website", "github"):
+            if answers.get(key):
+                body.setdefault("urls", {})[key] = answers[key]
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": _UA,
+            "Accept": "application/json, text/plain, */*",
+            "Referer": url,
+        }
         status, resp = self._poster.post_json(api_url, headers=headers, body=body)
 
         if 200 <= status < 300:
@@ -63,4 +80,5 @@ class LeverSubmitter:
                 submission_id=str(resp.get("id", "")),
                 detail="accepted",
             )
-        return SubmitResult(ok=False, detail=str(status))
+        err = resp.get("error") or resp.get("errors") or ""
+        return SubmitResult(ok=False, detail=f"{status}: {err}" if err else str(status))

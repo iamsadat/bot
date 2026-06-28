@@ -1268,6 +1268,37 @@
               </div>
             </div>
           </div>
+
+          <div class="full" style="border-top:1px solid var(--border); padding-top:16px;">
+            <div class="field-label" style="margin-bottom:4px;">Screening answers <span class="hint">used to auto-answer ATS custom questions</span></div>
+            <div class="tld" style="margin-bottom:12px;">Greenhouse boards often ask work-authorization / sponsorship questions. These let auto-apply answer them on your behalf.</div>
+            <div class="profile-grid" style="gap:12px;">
+              <div class="field" style="margin:0;">
+                <div class="field-label">Authorized to work?</div>
+                <select class="input" id="aa-workauth">
+                  <option value="">—</option><option>Yes</option><option>No</option>
+                </select>
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">Need visa sponsorship?</div>
+                <select class="input" id="aa-sponsor">
+                  <option value="">—</option><option>Yes</option><option>No</option>
+                </select>
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">Years of experience</div>
+                <input class="input" type="number" id="aa-years" min="0" max="50" />
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">LinkedIn URL</div>
+                <input class="input" type="url" id="aa-linkedin" placeholder="https://linkedin.com/in/…" />
+              </div>
+              <div class="field" style="margin:0;">
+                <div class="field-label">Website / portfolio</div>
+                <input class="input" type="url" id="aa-website" placeholder="https://…" />
+              </div>
+            </div>
+          </div>
         </div>
         <div style="display:flex; gap:10px; margin-top:18px;">
           <button class="btn btn-primary" id="btn-save-profile">Save changes</button>
@@ -2094,6 +2125,12 @@
     $('p-greenhouse').value = (ats.greenhouse_tokens || []).join(', ');
     $('p-lever').value = (ats.lever_slugs || []).join(', ');
     $('p-ashby').value = (ats.ashby_slugs || []).join(', ');
+    const aa = p.application_answers || {};
+    $('aa-workauth').value = aa.work_authorization || '';
+    $('aa-sponsor').value = aa.requires_sponsorship || '';
+    $('aa-years').value = aa.years_experience || '';
+    $('aa-linkedin').value = aa.linkedin || '';
+    $('aa-website').value = aa.website || '';
   }
   $('btn-save-profile').addEventListener('click', async () => {
     const btn = $('btn-save-profile'); btn.disabled = true; btn.textContent = 'Saving…';
@@ -2107,6 +2144,13 @@
         min_salary: parseInt($('p-salary').value) || null,
         weekly_target: parseInt($('p-weekly').value) || 10,
         remote_ok: profileState.remoteOk,
+        application_answers: {
+          work_authorization: $('aa-workauth').value,
+          requires_sponsorship: $('aa-sponsor').value,
+          years_experience: $('aa-years').value,
+          linkedin: $('aa-linkedin').value.trim(),
+          website: $('aa-website').value.trim(),
+        },
       });
       // ATS handles live in their own config (also feeds auto-submit routing).
       await api('POST', '/api/onboarding/ats', {

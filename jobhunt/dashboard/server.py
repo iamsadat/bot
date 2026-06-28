@@ -220,12 +220,18 @@ def _default_submitter_registry():
     a registry backed by ``FakePoster`` instead.
     """
     from jobhunt.submitters.base import UrllibPoster
-    from jobhunt.submitters.greenhouse import GreenhouseSubmitter
+    from jobhunt.submitters.greenhouse import (
+        GreenhouseSubmitter, _default_question_fetcher,
+    )
     from jobhunt.submitters.lever import LeverSubmitter
     from jobhunt.submitters.registry import SubmitterRegistry
 
     poster = UrllibPoster()
-    return SubmitterRegistry([GreenhouseSubmitter(poster), LeverSubmitter(poster)])
+    return SubmitterRegistry([
+        # Real fetcher so live submits answer the board's custom questions.
+        GreenhouseSubmitter(poster, question_fetcher=_default_question_fetcher),
+        LeverSubmitter(poster),
+    ])
 
 
 def _ats_connected(state: DashboardState) -> bool:
@@ -289,16 +295,28 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         return {"submitted": False, "manual": True}
 
     profile = state.user_profile
+    resume_text = doc.get("resume_text", "")
     plan = {
         "url": url, "job_id": job_id,
         "applicant": {
             "name": profile.name if profile else "",
             "email": profile.email if profile else "",
             "phone": getattr(profile, "phone", "") if profile else "",
+            "location": (profile.locations[0] if profile and profile.locations else ""),
         },
-        "resume_text": doc.get("resume_text", ""),
+        "resume_text": resume_text,
         "cover_letter_text": doc.get("cover_letter_text", ""),
+        # Standard answers to the board's custom screening questions.
+        "answers": getattr(profile, "application_answers", {}) if profile else {},
     }
+    # Render a real PDF so the upload is a valid file, not text mislabeled as PDF.
+    try:
+        from jobhunt.resume_renderer import text_to_pdf
+        lines = resume_text.split("\n")
+        heading = lines[0].strip() if lines and lines[0].strip() else company
+        plan["resume_pdf"] = text_to_pdf(heading, "\n".join(lines[1:]))
+    except Exception:
+        pass  # fpdf2 missing → submitters fall back to encoding the plain text
     try:
         result = registry.submit(plan)
         ok = bool(result and result.ok)
@@ -696,6 +714,11 @@ def create_app(
             p.remote_ok = bool(body["remote_ok"])
         if "weekly_target" in body:
             p.weekly_target = int(body["weekly_target"] or 10)
+        if "application_answers" in body and isinstance(body["application_answers"], dict):
+            p.application_answers = {
+                k: v for k, v in body["application_answers"].items()
+                if str(v).strip() != ""
+            }
 
         state.persist()
         state.bus.publish("profile", p.user_id, "Profile updated.")
