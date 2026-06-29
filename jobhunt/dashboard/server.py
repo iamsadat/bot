@@ -21,6 +21,9 @@ Endpoints:
   POST /api/digest/send           build + (optionally) send the activity digest
   GET  /api/approvals             approval queue
   POST /api/approve/{id}          human one-click decision
+  GET  /api/radar                 Career Radar hits + market-value history
+  GET  /api/radar/settings        read Career Radar profile fields
+  POST /api/radar/settings        update Career Radar profile fields
   WS   /ws/stream                 live thought stream
 """
 
@@ -100,6 +103,7 @@ class DashboardState:
     ats_config: dict = field(default_factory=dict)  # greenhouse_tokens / lever_slugs / ashby_slugs
     applies_today: dict = field(default_factory=dict)  # date-iso → count (autonomy daily cap)
     activity_days: list = field(default_factory=list)  # ISO date strings (streaks)
+    market_value: list = field(default_factory=list)  # Career Radar comp history
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
@@ -121,6 +125,7 @@ class DashboardState:
                 ats_config=self.ats_config,
                 applies_today=self.applies_today,
                 activity_days=self.activity_days,
+                market_value=self.market_value,
             )
         except Exception:
             pass  # never let persistence block the API
@@ -140,6 +145,7 @@ class DashboardState:
         self.ats_config = snap.get("ats_config", {})
         self.applies_today = snap.get("applies_today", {})
         self.activity_days = snap.get("activity_days", [])
+        self.market_value = snap.get("market_value", [])
         # Defensive: hunts that were mid-run when the server died → idle
         if self.hunt_status == "running":
             self.hunt_status = "idle"
@@ -506,6 +512,94 @@ def _merge_discovered(state: DashboardState, postings) -> int:
     return added
 
 
+# --------------------------------------------------------------------------- #
+# Career Radar — retention alerts for roles that beat comp/title or match a
+# keyword watchlist, plus a market-value (comp) tracker over time.
+# --------------------------------------------------------------------------- #
+
+_STEP_UP_TITLES = ("senior", "staff", "principal", "lead")
+
+
+def _is_radar_hit(profile: UserProfile, job: dict, doc: dict | None = None) -> bool:
+    """True when ``job`` is worth flagging on the user's Career Radar.
+
+    Independently unit-testable: takes plain data in, returns a bool, no I/O.
+    Any of the following trips it (radar must be enabled first):
+
+      a) the job's salary (min or max) beats ``current_salary``, when both
+         the job and the profile have a salary set;
+      b) a ``radar_keywords`` term (case-insensitive) appears in the job
+         title or in the tailored document's matched/missing keywords;
+      c) the job is a strong match (``relevance_score >= 0.6``) AND its
+         title reads as a step up (senior/staff/principal/lead) while the
+         user's current title doesn't already carry that level.
+    """
+    if not profile.radar_enabled:
+        return False
+
+    title = str(job.get("title", ""))
+    title_lower = title.lower()
+
+    if profile.current_salary:
+        salary_min = job.get("salary_min")
+        salary_max = job.get("salary_max")
+        beats = (salary_min and salary_min > profile.current_salary) or (
+            salary_max and salary_max > profile.current_salary)
+        if beats:
+            return True
+
+    if profile.radar_keywords:
+        doc = doc or {}
+        haystack = " ".join([
+            title_lower,
+            *(str(k) for k in doc.get("matched_keywords", [])),
+            *(str(k) for k in doc.get("missing_keywords", [])),
+        ]).lower()
+        if any(kw.strip().lower() in haystack for kw in profile.radar_keywords if kw.strip()):
+            return True
+
+    if float(job.get("relevance_score") or 0.0) >= 0.6:
+        current_lower = profile.current_title.lower()
+        is_step_up = any(t in title_lower for t in _STEP_UP_TITLES)
+        already_there = any(t in current_lower for t in _STEP_UP_TITLES)
+        if is_step_up and not already_there:
+            return True
+
+    return False
+
+
+def _update_market_value(state: DashboardState, salary_client) -> bool:
+    """Append today's comp estimate for the user's first target role.
+
+    No-ops (returns ``False``) when there's no salary client, no profile, or
+    no target role — and dedupes so at most one entry is recorded per day.
+    Returns ``True`` when a new entry was appended.
+    """
+    from datetime import date
+
+    if salary_client is None:
+        return False
+    profile = state.user_profile
+    if profile is None or not profile.target_roles:
+        return False
+
+    today = date.today().isoformat()
+    if any(e.get("date") == today for e in state.market_value):
+        return False
+
+    role = profile.target_roles[0]
+    location = profile.locations[0] if profile.locations else ""
+    try:
+        est = salary_client.estimate(role, location)
+    except Exception:
+        return False
+
+    state.market_value.append({
+        "date": today, "median": est.median, "currency": est.currency, "role": role,
+    })
+    return True
+
+
 def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg") -> int:
     """Store tailored docs + open approvals for any not already present.
 
@@ -727,9 +821,24 @@ def _discover_once(state: DashboardState, registry) -> dict:
     if added:
         _notify(state, "discovered", f"{added} new job match(es)",
                 f"{tailored} tailored and ready to review.")
+
+    radar_hits = 0
+    if added and state.user_profile.radar_enabled:
+        for job in state.jobs[-added:]:
+            doc = state.documents.get(job["job_id"])
+            if _is_radar_hit(state.user_profile, job, doc):
+                job["radar_hit"] = True
+                radar_hits += 1
+        if radar_hits:
+            _notify(state, "radar", f"{radar_hits} role(s) match your Career Radar",
+                    "Open the dashboard to compare against your current role.")
+
+    from jobhunt.integrations.market import build_salary_client_from_env
+    _update_market_value(state, build_salary_client_from_env())
+
     applied = _maybe_auto_apply_batch(state, registry)
     state.persist()
-    return {"added": added, "tailored": tailored, "applied": applied}
+    return {"added": added, "tailored": tailored, "applied": applied, "radar_hits": radar_hits}
 
 
 async def _run_hunt_bg(state: DashboardState, registry=None) -> None:
@@ -1691,6 +1800,56 @@ def create_app(
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"ok": True, **asdict(intel)}
+
+    # ----------------------------------------------------------------- radar
+
+    @app.get("/api/radar")
+    def get_radar(state: DashboardState = Depends(get_state)) -> dict:
+        profile = state.user_profile
+        return {
+            "market_value": state.market_value,
+            "hits": [j for j in state.jobs if j.get("radar_hit")],
+            "enabled": bool(profile and profile.radar_enabled),
+        }
+
+    @app.get("/api/radar/settings")
+    def get_radar_settings(state: DashboardState = Depends(get_state)) -> dict:
+        profile = state.user_profile
+        if profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        return {
+            "radar_enabled": profile.radar_enabled,
+            "current_salary": profile.current_salary,
+            "current_title": profile.current_title,
+            "radar_keywords": profile.radar_keywords,
+        }
+
+    @app.post("/api/radar/settings")
+    def update_radar_settings(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        profile = state.user_profile
+        if profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        if "radar_enabled" in body:
+            profile.radar_enabled = bool(body["radar_enabled"])
+        if "current_salary" in body:
+            raw = body["current_salary"]
+            profile.current_salary = int(raw) if raw else None
+        if "current_title" in body:
+            profile.current_title = str(body["current_title"]).strip()
+        if "radar_keywords" in body:
+            kws = body["radar_keywords"]
+            if isinstance(kws, list):
+                profile.radar_keywords = [str(k).strip() for k in kws if str(k).strip()]
+            else:
+                profile.radar_keywords = [s.strip() for s in str(kws).split(",") if s.strip()]
+        state.persist()
+        return {
+            "ok": True,
+            "radar_enabled": profile.radar_enabled,
+            "current_salary": profile.current_salary,
+            "current_title": profile.current_title,
+            "radar_keywords": profile.radar_keywords,
+        }
 
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:

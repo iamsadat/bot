@@ -100,6 +100,12 @@ class UserProfile:
     auto_apply: bool = False
     daily_apply_cap: int = 0
     relevance_floor: float = 0.0
+    # Career Radar: opt-in alerts for roles that beat current comp/title or
+    # match a watchlist of keywords — see jobhunt/dashboard/server.py.
+    radar_enabled: bool = False
+    current_salary: int | None = None
+    current_title: str = ""
+    radar_keywords: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
