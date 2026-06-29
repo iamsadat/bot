@@ -67,7 +67,9 @@ def _match_job(jobs: list, message) -> dict | None:
 
 def sync_inbox(state, source, *, since: float = 0.0, max_messages: int = 50) -> dict:
     """Fetch + classify mail and advance matched jobs. Returns a summary dict."""
-    from jobhunt.dashboard.server import _add_event  # local import avoids a cycle
+    # Local import avoids a cycle (server.py imports this module's
+    # build_inbox_from_env/sync_inbox at app-factory time).
+    from jobhunt.dashboard.server import _add_event, _record_outcome
 
     try:
         messages = source.fetch(since=since, max_messages=max_messages)
@@ -97,6 +99,8 @@ def sync_inbox(state, source, *, since: float = 0.0, max_messages: int = 50) -> 
         elif cal.has_link and getattr(cal, "link", ""):
             job["next_action"] = f"Schedule: {cal.link}"
         _add_event(state, job["job_id"], target, detail)
+        if target in ("Interview", "Offer"):
+            _record_outcome(state, job["job_id"])
         state.bus.publish(
             "inbox", job["job_id"],
             f"{job.get('company', '')}: {cls.label} email → {target}",

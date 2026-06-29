@@ -30,6 +30,11 @@ Endpoints:
   POST /api/interview/questions   AI interview prep — generate questions for a job
   POST /api/interview/feedback    AI interview prep — score a practice answer
   GET  /api/skills/gaps           skill-gap learning paths from missing ATS keywords
+  POST /api/contacts              create/update a Career CRM contact (upsert by id)
+  GET  /api/contacts              list contacts (?due=true → overdue follow-ups only)
+  DELETE /api/contacts/{id}       remove a contact
+  POST /api/contacts/{id}/nudge   fire a follow-up notification + draft email
+  GET  /api/analytics             funnel + résumé-strategy A/B experiment results
   WS   /ws/stream                 live thought stream
 """
 
@@ -47,6 +52,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from jobhunt.ab import Experiment, ExperimentRegistry, Variant
 from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
 from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue
 from jobhunt.digest import build_digest
@@ -92,6 +98,25 @@ _ATS_TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z+\-#0-9]{2,}")
 # Public résumé handles: lowercase slug + "-" + 6 hex chars, e.g. "ada-1a2b3c".
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# E4 — outcome analytics: a single standing A/B experiment over tailored-resume
+# strategy. Variants are illustrative copy/structure strategies; the real
+# difference lives in whichever resume-writing prompt/template consults
+# ``doc["variant"]`` (out of scope here — this wires up assignment + outcome
+# attribution end-to-end so that piece can be added later without touching
+# persistence or the analytics endpoint).
+_RESUME_EXPERIMENT_NAME = "resume_strategy"
+_RESUME_VARIANTS = ("concise", "keyword_rich", "impact_first")
+
+
+def _default_experiment_registry() -> ExperimentRegistry:
+    """Build the standing ``resume_strategy`` experiment with its variants."""
+    registry = ExperimentRegistry()
+    registry.register(Experiment(
+        name=_RESUME_EXPERIMENT_NAME,
+        target="resume",
+        variants=[Variant(name=v, params={}) for v in _RESUME_VARIANTS],
+    ))
+    return registry
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +141,8 @@ class DashboardState:
     applies_today: dict = field(default_factory=dict)  # date-iso → count (autonomy daily cap)
     activity_days: list = field(default_factory=list)  # ISO date strings (streaks)
     market_value: list = field(default_factory=list)  # Career Radar comp history
+    contacts: list = field(default_factory=list)  # Career CRM contacts
+    experiments: ExperimentRegistry = field(default_factory=_default_experiment_registry)
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
@@ -138,6 +165,8 @@ class DashboardState:
                 applies_today=self.applies_today,
                 activity_days=self.activity_days,
                 market_value=self.market_value,
+                contacts=self.contacts,
+                experiments=self.experiments.to_dict(),
             )
         except Exception:
             pass  # never let persistence block the API
@@ -158,6 +187,12 @@ class DashboardState:
         self.applies_today = snap.get("applies_today", {})
         self.activity_days = snap.get("activity_days", [])
         self.market_value = snap.get("market_value", [])
+        self.contacts = snap.get("contacts", [])
+        experiments_snap = snap.get("experiments") or {}
+        self.experiments = (
+            ExperimentRegistry.from_dict(experiments_snap)
+            if experiments_snap else _default_experiment_registry()
+        )
         # Defensive: hunts that were mid-run when the server died → idle
         if self.hunt_status == "running":
             self.hunt_status = "idle"
@@ -347,6 +382,82 @@ def _notify(state: DashboardState, kind: str, title: str, body: str = "", url: s
         notifier.notify(NotificationEvent(kind=kind, title=title, body=body, url=url))
     except Exception:
         pass
+
+
+def _resume_experiment(state: DashboardState) -> Experiment | None:
+    """Return the standing résumé-strategy experiment, registering it lazily.
+
+    Defensive: older/test ``DashboardState``s may have been constructed before
+    ``experiments`` existed (or with ``None``), so this never assumes the
+    field is populated.
+    """
+    registry = getattr(state, "experiments", None)
+    if registry is None:
+        registry = _default_experiment_registry()
+        state.experiments = registry
+    exp = registry.get(_RESUME_EXPERIMENT_NAME)
+    if exp is None:
+        exp = _default_experiment_registry().get(_RESUME_EXPERIMENT_NAME)
+        registry.register(exp)
+    return exp
+
+
+def _assign_variant(state: DashboardState, doc: dict) -> str:
+    """Deterministically assign a tailored ``doc`` to a résumé-strategy variant.
+
+    Stores the choice on ``doc["variant"]`` and records an impression against
+    that variant in the standing experiment, so :func:`_record_outcome` can
+    later attribute a success back to it. Deterministic by ``job_id`` (via
+    ``Experiment.assign``), so repeated calls for the same job are stable.
+    """
+    exp = _resume_experiment(state)
+    job_id = str(doc.get("job_id", ""))
+    if exp is None:
+        import hashlib
+        digest = int(hashlib.md5(job_id.encode("utf-8")).hexdigest(), 16)  # noqa: S324
+        variant_name = _RESUME_VARIANTS[digest % len(_RESUME_VARIANTS)]
+    else:
+        variant_name = exp.assign(job_id).name
+    doc["variant"] = variant_name
+    if exp is not None:
+        # Experiment.record() always bumps impressions and only bumps
+        # successes when success=True, so this is exactly "+1 impression,
+        # outcome pending" — the actual success is recorded later by
+        # _record_outcome() if/when the job reaches Interview/Offer.
+        exp.record(variant_name, success=False)
+    return variant_name
+
+
+def _record_outcome(state: DashboardState, job_id: str) -> None:
+    """Attribute a success to the variant assigned to ``job_id``'s document.
+
+    Called whenever a job's status advances to Interview/Offer. No-ops when
+    the job has no tailored document, the document was never assigned a
+    variant (e.g. it predates this feature), the experiment is missing, or
+    the outcome was already recorded for this job — so it is always safe to
+    call unconditionally and repeatedly from a status-change site (a job
+    that reaches Interview then later Offer must only count as one success).
+
+    ``_assign_variant`` already recorded one impression for this variant
+    (via ``Experiment.record(success=False)``), so this turns that existing
+    impression into a success directly on the ``Variant`` rather than
+    calling ``record()`` again — calling ``record()`` a second time would
+    count a brand-new impression instead of upgrading the existing one.
+    """
+    doc = state.documents.get(job_id)
+    if not doc:
+        return
+    variant_name = doc.get("variant")
+    if not variant_name or doc.get("outcome_recorded"):
+        return
+    exp = _resume_experiment(state)
+    if exp is None:
+        return
+    variant = next((v for v in exp.variants if v.name == variant_name), None)
+    if variant is None:
+        return  # unknown variant (registry/doc out of sync) — never crash a status update
+    variant.successes += 1
+    doc["outcome_recorded"] = True
 
 
 def _record_activity(state: DashboardState) -> None:
@@ -679,6 +790,7 @@ def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg"
             "bullets": doc.bullets,
             "draft": doc.draft,
         }
+        _assign_variant(state, state.documents[doc.job_id])
         state.approval_queue.submit(
             job_id=doc.job_id,
             document_id=f"doc-{doc.job_id}",
@@ -1515,6 +1627,8 @@ def create_app(
                     f"{j['company']} → {j['title']}: {old} → {new_status}",
                 )
                 _add_event(state, job_id, new_status, f"Moved {old} → {new_status}")
+                if new_status in ("Interview", "Offer"):
+                    _record_outcome(state, job_id)
                 state.persist()
                 return {"ok": True, "job": j}
         raise HTTPException(status_code=404, detail="job not found")
@@ -2015,6 +2129,100 @@ def create_app(
         )
         _inbox_since["ts"] = time.time()
         return res
+
+    # --------------------------------------------------------------------- crm
+    #
+    # Career CRM: lightweight contact book + overdue follow-up nudges. Plain
+    # dicts in ``state.contacts`` (persisted) — no new model module needed.
+
+    @app.post("/api/contacts")
+    def upsert_contact(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        email = str(body.get("email", "")).strip()
+        if "@" not in email:
+            raise HTTPException(status_code=422, detail="valid email is required")
+        contact_id = str(body.get("id", "")).strip() or secrets.token_hex(8)
+        existing = next((c for c in state.contacts if c["id"] == contact_id), None)
+        record = {
+            "id": contact_id,
+            "name": str(body.get("name", "")).strip(),
+            "email": email,
+            "company": str(body.get("company", "")).strip(),
+            "title": str(body.get("title", "")).strip(),
+            "last_contact": body.get("last_contact") or None,
+            "next_followup": body.get("next_followup") or None,
+            "notes": str(body.get("notes", "")).strip(),
+            "job_id": body.get("job_id") or None,
+        }
+        if existing is not None:
+            existing.update(record)
+        else:
+            state.contacts.append(record)
+        state.persist()
+        return {"ok": True, "contact": existing if existing is not None else record}
+
+    @app.get("/api/contacts")
+    def list_contacts(
+        due: bool = False, state: DashboardState = Depends(get_state),
+    ) -> dict:
+        from datetime import date
+
+        contacts = state.contacts
+        if due:
+            today = date.today().isoformat()
+            contacts = [
+                c for c in contacts
+                if c.get("next_followup") and str(c["next_followup"]) <= today
+            ]
+        return {"contacts": contacts}
+
+    @app.delete("/api/contacts/{contact_id}")
+    def delete_contact(contact_id: str, state: DashboardState = Depends(get_state)) -> dict:
+        before = len(state.contacts)
+        state.contacts = [c for c in state.contacts if c["id"] != contact_id]
+        if len(state.contacts) == before:
+            raise HTTPException(status_code=404, detail="unknown contact")
+        state.persist()
+        return {"ok": True}
+
+    @app.post("/api/contacts/{contact_id}/nudge")
+    def nudge_contact(contact_id: str, state: DashboardState = Depends(get_state)) -> dict:
+        contact = next((c for c in state.contacts if c["id"] == contact_id), None)
+        if contact is None:
+            raise HTTPException(status_code=404, detail="unknown contact")
+        name = contact.get("name") or contact.get("email", "this contact")
+        _notify(
+            state, "followup", f"Follow up with {name}",
+            f"It's time to follow up with {name} ({contact.get('company', '')}).",
+        )
+        draft = None
+        if contact.get("job_id"):
+            try:
+                subject, body = _email_template(state, str(contact["job_id"]), "follow_up")
+                draft = {"subject": subject, "body": body}
+            except Exception:
+                draft = None
+        return {"ok": True, "contact": contact, "draft": draft}
+
+    # ----------------------------------------------------------------- analytics
+
+    @app.get("/api/analytics")
+    def get_analytics(state: DashboardState = Depends(get_state)) -> dict:
+        exp = _resume_experiment(state)
+        winner = exp.winner() if exp is not None else None
+        return {
+            "funnel": compute_funnel(state),
+            "experiment": exp.to_dict() if exp is not None else None,
+            "winner": winner.name if winner is not None else None,
+            "variants": [
+                {
+                    "name": v.name,
+                    "impressions": v.impressions,
+                    "successes": v.successes,
+                    "success_rate": v.success_rate,
+                }
+                for v in (exp.variants if exp is not None else [])
+            ],
+        }
 
     # ----------------------------------------------------------------- approvals
 

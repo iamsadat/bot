@@ -41,6 +41,8 @@ class _Snapshot(_Base):
     applies_today_json = Column(JSON, default=dict)  # date-iso → count (autonomy cap)
     activity_days_json = Column(JSON, default=list)  # ISO date strings (streaks)
     market_value_json = Column(JSON, default=list)  # Career Radar comp history
+    contacts_json = Column(JSON, default=list)  # Career CRM contacts
+    experiments_json = Column(JSON, default=dict)  # ExperimentRegistry.to_dict()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -84,6 +86,8 @@ class DashboardStore:
                 "applies_today": dict(row.applies_today_json or {}),
                 "activity_days": list(row.activity_days_json or []),
                 "market_value": list(row.market_value_json or []),
+                "contacts": list(row.contacts_json or []),
+                "experiments": dict(row.experiments_json or {}),
             }
 
     # ------------------------------------------------------------------ save
@@ -103,6 +107,8 @@ class DashboardStore:
         applies_today: dict | None = None,
         activity_days: list | None = None,
         market_value: list | None = None,
+        contacts: list | None = None,
+        experiments: dict | None = None,
     ) -> None:
         """Upsert the snapshot row."""
         appr_dicts = [
@@ -129,6 +135,10 @@ class DashboardStore:
                 row.activity_days_json = activity_days
             if market_value is not None:
                 row.market_value_json = market_value
+            if contacts is not None:
+                row.contacts_json = contacts
+            if experiments is not None:
+                row.experiments_json = experiments
             s.commit()
 
     def clear(self) -> None:
