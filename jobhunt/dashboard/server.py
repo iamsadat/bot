@@ -804,24 +804,27 @@ def create_app(
 
     # ------------------------------------------------------------------ static
 
-    @app.get("/", response_class=HTMLResponse)
-    def index(_state: DashboardState = Depends(get_state)) -> str:
-        return (Path(__file__).parent / "client.html").read_text(
-            encoding="utf-8"
-        )
-
-    # ---- modern Next.js frontend (static export), served under /app -----------
-    # Built via `cd frontend && npm ci && npm run build` → frontend/out. Mounted
-    # only when present, so the offline test suite (no Node build) is unaffected
-    # and `/` keeps serving the legacy SPA. basePath/assetPrefix are /app so all
-    # asset + route URLs resolve under this mount.
+    # Modern Next.js frontend (static export → frontend/out), built via
+    # `cd frontend && npm ci && npm run build` (the Dockerfile does this). When
+    # present it is served at the site ROOT and the legacy single-file SPA moves
+    # to /legacy. When ABSENT (offline test suite / CI — no Node build), `/`
+    # keeps serving the legacy SPA so existing tests are unchanged.
     _frontend_dir = Path(
         os.environ.get("JOBHUNT_FRONTEND_DIR")
         or (Path(__file__).resolve().parents[2] / "frontend" / "out")
     )
-    if _frontend_dir.is_dir():
-        app.mount("/app", StaticFiles(directory=str(_frontend_dir), html=True),
-                  name="frontend")
+    _frontend_built = _frontend_dir.is_dir() and (_frontend_dir / "index.html").exists()
+
+    @app.get("/", response_class=HTMLResponse)
+    def index(_state: DashboardState = Depends(get_state)) -> str:
+        # Keep Depends(get_state) so the workspace cookie is still minted here.
+        if _frontend_built:
+            return (_frontend_dir / "index.html").read_text(encoding="utf-8")
+        return (Path(__file__).parent / "client.html").read_text(encoding="utf-8")
+
+    @app.get("/legacy", response_class=HTMLResponse)
+    def legacy_index(_state: DashboardState = Depends(get_state)) -> str:
+        return (Path(__file__).parent / "client.html").read_text(encoding="utf-8")
 
     # ---- static companions: cinematic demo, SSOT tracker, sample-data app ----
     _ROOT = Path(__file__).resolve().parent.parent  # jobhunt/
@@ -1404,6 +1407,13 @@ def create_app(
             return
         except Exception:  # pragma: no cover
             await ws.close()
+
+    # Modern frontend assets + client-routed pages (/_next, /dashboard/, …).
+    # Mounted LAST so every explicit API / companion / page route above wins;
+    # this catch-all only serves unmatched GETs from the static export.
+    if _frontend_built:
+        app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True),
+                  name="frontend")
 
     return app
 

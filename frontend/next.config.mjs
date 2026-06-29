@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Static export served by the FastAPI backend under /app (one service).
+  // Static export served at the site root by the FastAPI backend (one service).
   output: 'export',
-  basePath: '/app',
-  assetPrefix: '/app',
   trailingSlash: true,
   images: { unoptimized: true },
   // The app is a client-side SPA hitting the FastAPI REST + /ws/stream API.
