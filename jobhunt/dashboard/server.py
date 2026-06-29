@@ -1568,6 +1568,40 @@ def create_app(
         llm = resume_callback(llm_client) if llm_client is not None else None
         return {"ok": True, **draft_outreach(state.user_profile, job, doc, contact, llm=llm)}
 
+    # ----------------------------------------------------------------- autofill
+
+    @app.post("/api/autofill")
+    def autofill(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Real-browser autofill for a career-page URL (co-pilot by default).
+
+        Off unless JOBHUNT_AUTOFILL_ENABLED is set (browser automation is heavy
+        + ToS-sensitive). submit=false (default) fills the form and leaves the
+        final click to the user.
+        """
+        if os.environ.get("JOBHUNT_AUTOFILL_ENABLED", "").lower() not in ("1", "true", "yes"):
+            raise HTTPException(
+                status_code=400,
+                detail="autofill disabled — set JOBHUNT_AUTOFILL_ENABLED=1 (needs Playwright)")
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="complete onboarding first")
+        url = str(body.get("url", "")).strip()
+        if not url:
+            raise HTTPException(status_code=422, detail="url is required")
+        from jobhunt.autofill import autofill_application
+        try:
+            result = autofill_application(
+                url, state.user_profile,
+                getattr(state.user_profile, "application_answers", {}),
+                submit=bool(body.get("submit", False)),
+                headless=os.environ.get("JOBHUNT_AUTOFILL_HEADLESS", "1").lower()
+                in ("1", "true", "yes"))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"autofill error: {exc}")
+        return {"ok": result.success, "ats": result.ats, "url": result.url,
+                "filled": [f.label for f in result.filled],
+                "skipped": [f.label for f in result.skipped],
+                "requires_user": result.requires_user, "notes": result.notes}
+
     # --------------------------------------------------------------- market intel
 
     @app.get("/api/market/status")
