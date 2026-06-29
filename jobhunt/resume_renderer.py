@@ -421,8 +421,12 @@ def draft_to_pdf(draft: ResumeDraft) -> bytes:
     return bytes(pdf.output())
 
 
-def draft_to_styled_html(draft: ResumeDraft) -> str:
-    """Render a ResumeDraft to a self-contained single-column HTML page."""
+def draft_to_styled_html(draft: ResumeDraft, footer: str | None = None) -> str:
+    """Render a ResumeDraft to a self-contained single-column HTML page.
+
+    ``footer``, when set, renders as a small centered line at the bottom of
+    the page (e.g. a "Built with JobHunt" attribution on public share links).
+    """
     def runs_to_html(s: str) -> str:
         out = []
         for text, bold in _parse_runs(s):
@@ -461,6 +465,7 @@ def draft_to_styled_html(draft: ResumeDraft) -> str:
     contact = _esc(draft.contact_line())
     summary = f'<p class="summary">{_esc(draft.summary)}</p>' if draft.summary else ""
     inner = "\n  ".join(blocks)
+    footer_html = f'<div class="footer">{_esc(footer)}</div>' if footer else ""
     return f"""<!doctype html>
 <html><head><meta charset="utf-8">
 <title>{_esc(draft.candidate_name)} — {_esc(draft.target_role)}</title>
@@ -482,11 +487,14 @@ def draft_to_styled_html(draft: ResumeDraft) -> str:
   ul {{ margin: 3px 0 4px; padding-left: 18px; }}
   li {{ margin-bottom: 3px; font-size: 0.9em; }}
   p.skills {{ font-size: 0.9em; margin: 4px 0; }}
+  .footer {{ text-align:center; color: var(--muted); font-size: 0.78em;
+             margin-top: 28px; padding-top: 10px; border-top: 1px solid #e3e6ef; }}
 </style></head><body>
   <h1>{_esc(draft.candidate_name)}</h1>
   <div class="contact">{contact}</div>
   {summary}
   {inner}
+  {footer_html}
 </body></html>"""
 
 

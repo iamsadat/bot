@@ -24,6 +24,9 @@ Endpoints:
   GET  /api/radar                 Career Radar hits + market-value history
   GET  /api/radar/settings        read Career Radar profile fields
   POST /api/radar/settings        update Career Radar profile fields
+  POST /api/tools/ats-score       free, no-auth ATS keyword match score
+  POST /api/publish               publish a tailored draft to a public handle
+  GET  /p/{handle}                public, unauthenticated résumé page
   WS   /ws/stream                 live thought stream
 """
 
@@ -79,6 +82,12 @@ _VALID_STATUSES = {"Saved", "Applied", "Assessment", "Interview", "Offer", "Clos
 # component (path traversal defense-in-depth).
 WORKSPACE_COOKIE = "jh_ws"
 _SAFE_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+
+# Free ATS-score tool: lowercase-word tokenizer for the pasted résumé text.
+_ATS_TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z+\-#0-9]{2,}")
+
+# Public résumé handles: lowercase slug + "-" + 6 hex chars, e.g. "ada-1a2b3c".
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 
@@ -487,6 +496,50 @@ def _fingerprint(company: str, title: str, location: str) -> str:
     key = "|".join([company.strip().lower(), title.strip().lower(),
                     location.strip().lower()])
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+# --------------------------------------------------------------------------- #
+# Free ATS-score tool — top-of-funnel, no auth, no stored state.
+# --------------------------------------------------------------------------- #
+
+def _score_ats(resume_text: str, jd_text: str) -> dict[str, Any]:
+    """Score how many JD ATS keywords a pasted résumé covers.
+
+    A keyword counts as matched if it (or any of its taxonomy synonyms, e.g.
+    k8s ↔ kubernetes) appears among the résumé's lowercase word tokens.
+    """
+    from jobhunt.agents.resume import _best_keywords
+    from jobhunt.skills_taxonomy import expand_term
+
+    kws = _best_keywords(jd_text, 20)
+    resume_tokens = {t.lower() for t in _ATS_TOKEN_RE.findall(resume_text)}
+
+    matched: list[str] = []
+    missing: list[str] = []
+    for kw in kws:
+        forms = {kw.lower()}
+        try:
+            forms |= {s.lower() for s in expand_term(kw)}
+        except Exception:
+            pass
+        (matched if forms & resume_tokens else missing).append(kw)
+
+    score = round(len(matched) / max(1, len(kws)), 3)
+    return {
+        "score": score,
+        "matched": matched,
+        "missing": missing,
+        "suggestions": missing[:8],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Public résumé pages — unauthenticated "Built with JobHunt" share links.
+# --------------------------------------------------------------------------- #
+
+def _slugify(text: str) -> str:
+    slug = _SLUG_RE.sub("-", text.strip().lower()).strip("-")
+    return slug or "resume"
 
 
 def _merge_discovered(state: DashboardState, postings) -> int:
@@ -921,6 +974,14 @@ def create_app(
     registry = (
         submitter_registry if submitter_registry is not None
         else _default_submitter_registry()
+    )
+
+    # Public résumé pages: a small, app-scoped SQLite store (unauthenticated,
+    # shared across workspaces — published handles have no per-user owner
+    # check beyond "you had the job_id whose draft you're publishing").
+    from jobhunt.public_store import PublicProfileStore
+    public_store = PublicProfileStore(
+        db_path=os.environ.get("JOBHUNT_PUBLIC_DB_PATH", "jobhunt_public.db")
     )
 
     @asynccontextmanager
@@ -1850,6 +1911,50 @@ def create_app(
             "current_title": profile.current_title,
             "radar_keywords": profile.radar_keywords,
         }
+
+    # --------------------------------------------------------------- growth tools
+    #
+    # Top-of-funnel, no-auth, no-workspace-state endpoints: a free ATS-score
+    # checker and public "Built with JobHunt" résumé pages. Both must work with
+    # zero prior state, so neither depends on ``get_state``/a profile/a hunt.
+
+    @app.post("/api/tools/ats-score")
+    def ats_score(body: dict) -> dict:
+        resume_text = str(body.get("resume_text", ""))
+        jd_text = str(body.get("jd_text", ""))
+        if not resume_text.strip() and not jd_text.strip():
+            raise HTTPException(
+                status_code=422, detail="resume_text or jd_text is required"
+            )
+        return _score_ats(resume_text, jd_text)
+
+    @app.post("/api/publish")
+    def publish_resume(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        job_id = str(body.get("job_id", ""))
+        if not job_id:
+            raise HTTPException(status_code=422, detail="job_id is required")
+        doc = state.documents.get(job_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        draft = doc.get("draft")
+        if not draft:
+            raise HTTPException(status_code=404, detail="no résumé draft for this job")
+        name = str(draft.get("candidate_name") or "resume")
+        handle = f"{_slugify(name)}-{secrets.token_hex(3)}"
+        public_store.publish(handle, draft)
+        return {"ok": True, "handle": handle, "url": f"/p/{handle}"}
+
+    @app.get("/p/{handle}", response_class=HTMLResponse)
+    def public_resume_page(handle: str) -> str:
+        draft = public_store.get(handle)
+        if draft is None:
+            raise HTTPException(status_code=404, detail="unknown handle")
+        from jobhunt.resume_renderer import draft_to_styled_html
+        from jobhunt.resume_template import ResumeDraft
+        return draft_to_styled_html(
+            ResumeDraft.from_dict(draft),
+            footer="Built with JobHunt — https://github.com/iamsadat/bot",
+        )
 
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:
