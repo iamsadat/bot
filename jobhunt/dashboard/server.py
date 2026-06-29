@@ -27,6 +27,9 @@ Endpoints:
   POST /api/tools/ats-score       free, no-auth ATS keyword match score
   POST /api/publish               publish a tailored draft to a public handle
   GET  /p/{handle}                public, unauthenticated résumé page
+  POST /api/interview/questions   AI interview prep — generate questions for a job
+  POST /api/interview/feedback    AI interview prep — score a practice answer
+  GET  /api/skills/gaps           skill-gap learning paths from missing ATS keywords
   WS   /ws/stream                 live thought stream
 """
 
@@ -1955,6 +1958,49 @@ def create_app(
             ResumeDraft.from_dict(draft),
             footer="Built with JobHunt — https://github.com/iamsadat/bot",
         )
+
+    # ------------------------------------------------------------------ interview
+
+    @app.post("/api/interview/questions")
+    def interview_questions(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        from jobhunt.interview import generate_questions
+        from jobhunt.llm.callbacks import resume_callback
+        from jobhunt.llm.factory import build_llm_client_from_env
+
+        job_id = str(body.get("job_id", ""))
+        job = next((j for j in state.jobs if j["job_id"] == job_id), None)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown job_id")
+        doc = state.documents.get(job_id)
+
+        llm_client = build_llm_client_from_env()
+        llm_cb = resume_callback(llm_client) if llm_client is not None else None
+        questions = generate_questions(state.user_profile, job, doc, llm=llm_cb)
+        return {"questions": questions}
+
+    @app.post("/api/interview/feedback")
+    def interview_feedback(body: dict) -> dict:
+        from jobhunt.interview import answer_feedback
+        from jobhunt.llm.callbacks import resume_callback
+        from jobhunt.llm.factory import build_llm_client_from_env
+
+        question = str(body.get("question", ""))
+        answer = str(body.get("answer", ""))
+        if not question.strip() or not answer.strip():
+            raise HTTPException(
+                status_code=422, detail="question and answer are required"
+            )
+
+        llm_client = build_llm_client_from_env()
+        llm_cb = resume_callback(llm_client) if llm_client is not None else None
+        return answer_feedback(question, answer, llm=llm_cb)
+
+    # --------------------------------------------------------------------- skills
+
+    @app.get("/api/skills/gaps")
+    def skill_gaps(state: DashboardState = Depends(get_state)) -> dict:
+        from jobhunt.learning import compute_skill_gaps
+        return {"gaps": compute_skill_gaps(state)}
 
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:
