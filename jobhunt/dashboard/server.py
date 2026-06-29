@@ -93,6 +93,7 @@ class DashboardState:
     hunt_error: str = ""
     hunt_progress: dict[str, str] = field(default_factory=dict)
     ats_config: dict = field(default_factory=dict)  # greenhouse_tokens / lever_slugs / ashby_slugs
+    applies_today: dict = field(default_factory=dict)  # date-iso → count (autonomy daily cap)
     store: DashboardStore | None = None
 
     # ------------------------------------------------------------ persistence
@@ -111,6 +112,7 @@ class DashboardState:
                 hunt_status=self.hunt_status,
                 hunt_error=self.hunt_error,
                 ats_config=self.ats_config,
+                applies_today=self.applies_today,
             )
         except Exception:
             pass  # never let persistence block the API
@@ -128,6 +130,7 @@ class DashboardState:
         self.hunt_status = snap.get("hunt_status", "idle")
         self.hunt_error = snap.get("hunt_error", "")
         self.ats_config = snap.get("ats_config", {})
+        self.applies_today = snap.get("applies_today", {})
         # Defensive: hunts that were mid-run when the server died → idle
         if self.hunt_status == "running":
             self.hunt_status = "idle"
@@ -357,7 +360,106 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
     return {"submitted": False, "detail": detail}
 
 
-def _execute_hunt(state: DashboardState) -> None:
+def _job_dict_from_posting(p) -> dict:
+    """Build a dashboard job dict (with fingerprint) from a JobPosting."""
+    return {
+        "job_id": p.job_id,
+        "title": p.title,
+        "company": p.company,
+        "location": p.location,
+        "url": p.url,
+        "source": p.source,
+        "relevance_score": p.relevance_score,
+        "ghost_score": p.ghost_score,
+        "salary_min": p.salary_min,
+        "salary_max": p.salary_max,
+        "remote": p.remote,
+        "status": "Saved",
+        "posted_at": p.posted_at,
+        "fingerprint": p.fingerprint or p.compute_fingerprint(),
+        "events": [{
+            "ts": time.time(), "stage": "Discovered",
+            "detail": f"Found on {p.source}"
+            + (f" · {p.relevance_score:.0%} match" if p.relevance_score else ""),
+            "status": "done",
+        }],
+    }
+
+
+def _fingerprint(company: str, title: str, location: str) -> str:
+    import hashlib
+    key = "|".join([company.strip().lower(), title.strip().lower(),
+                    location.strip().lower()])
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+def _merge_discovered(state: DashboardState, postings) -> int:
+    """Append new postings to ``state.jobs`` by fingerprint. Never clears.
+
+    Returns the number of genuinely new jobs added. This is what makes the
+    continuous engine *accumulate* discoveries instead of replacing them on
+    every run (the one-shot hunt still resets via ``start_hunt``).
+    """
+    seen = {
+        j.get("fingerprint") or _fingerprint(
+            j.get("company", ""), j.get("title", ""), j.get("location", ""))
+        for j in state.jobs
+    }
+    added = 0
+    for p in postings:
+        fp = p.fingerprint or p.compute_fingerprint()
+        if fp in seen:
+            continue
+        seen.add(fp)
+        state.jobs.append(_job_dict_from_posting(p))
+        added += 1
+    return added
+
+
+def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg") -> int:
+    """Store tailored docs + open approvals for any not already present.
+
+    Idempotent by job_id, so it's safe to call repeatedly in continuous mode
+    without re-queuing the same resume. Returns the count newly tailored.
+    """
+    new = 0
+    for doc in docs:
+        if doc.job_id in state.documents:
+            continue
+        state.documents[doc.job_id] = {
+            "job_id": doc.job_id,
+            "company": doc.company,
+            "title": doc.title,
+            "url": doc.url,
+            "resume_text": doc.resume_text,
+            "cover_letter_text": doc.cover_letter_text,
+            "keyword_coverage": doc.keyword_coverage,
+            "matched_keywords": doc.matched_keywords,
+            "missing_keywords": doc.missing_keywords,
+            "bullets": doc.bullets,
+            "draft": doc.draft,
+        }
+        state.approval_queue.submit(
+            job_id=doc.job_id,
+            document_id=f"doc-{doc.job_id}",
+            company=doc.company,
+            title=doc.title,
+        )
+        state.bus.publish(
+            "approval", task,
+            f"Tailored resume ready: {doc.company} — {doc.title} "
+            f"(coverage {doc.keyword_coverage:.0%}). Awaiting your approval.",
+        )
+        _add_event(
+            state, doc.job_id, "Tailored",
+            f"Resume tailored · {doc.keyword_coverage:.0%} ATS coverage · awaiting approval",
+            status="running",
+        )
+        new += 1
+    return new
+
+
+def _execute_hunt(state: DashboardState, registry=None) -> None:
     """Runs the full orchestrator pipeline synchronously (called in a thread)."""
     from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
     from jobhunt.llm.callbacks import resume_callback
@@ -381,33 +483,10 @@ def _execute_hunt(state: DashboardState) -> None:
 
     state.plan = output.plan
 
-    # Populate jobs from discovery batch
+    # Populate jobs from discovery batch (one-shot hunt replaces wholesale).
     batch = output.results.get("discovery")
     if batch:
-        state.jobs = [
-            {
-                "job_id": p.job_id,
-                "title": p.title,
-                "company": p.company,
-                "location": p.location,
-                "url": p.url,
-                "source": p.source,
-                "relevance_score": p.relevance_score,
-                "ghost_score": p.ghost_score,
-                "salary_min": p.salary_min,
-                "salary_max": p.salary_max,
-                "remote": p.remote,
-                "status": "Saved",
-                "posted_at": p.posted_at,
-                "events": [{
-                    "ts": time.time(), "stage": "Discovered",
-                    "detail": f"Found on {p.source}"
-                    + (f" · {p.relevance_score:.0%} match" if p.relevance_score else ""),
-                    "status": "done",
-                }],
-            }
-            for p in batch.postings
-        ]
+        state.jobs = [_job_dict_from_posting(p) for p in batch.postings]
 
     # Populate submission packages
     subs = output.results.get("submission", [])
@@ -426,36 +505,7 @@ def _execute_hunt(state: DashboardState) -> None:
 
     # Persist tailored documents for download + approval
     docs = output.results.get("resume", [])
-    for doc in docs:
-        state.documents[doc.job_id] = {
-            "job_id": doc.job_id,
-            "company": doc.company,
-            "title": doc.title,
-            "url": doc.url,
-            "resume_text": doc.resume_text,
-            "cover_letter_text": doc.cover_letter_text,
-            "keyword_coverage": doc.keyword_coverage,
-            "matched_keywords": doc.matched_keywords,
-            "missing_keywords": doc.missing_keywords,
-            "bullets": doc.bullets,
-            "draft": doc.draft,
-        }
-        state.approval_queue.submit(
-            job_id=doc.job_id,
-            document_id=f"doc-{doc.job_id}",
-            company=doc.company,
-            title=doc.title,
-        )
-        state.bus.publish(
-            "approval", "hunt-bg",
-            f"Tailored resume ready: {doc.company} — {doc.title} "
-            f"(coverage {doc.keyword_coverage:.0%}). Awaiting your approval.",
-        )
-        _add_event(
-            state, doc.job_id, "Tailored",
-            f"Resume tailored · {doc.keyword_coverage:.0%} ATS coverage · awaiting approval",
-            status="running",
-        )
+    _persist_tailored_docs(state, docs)
 
     # Backfill application titles from documents
     for app in state.applications:
@@ -465,13 +515,134 @@ def _execute_hunt(state: DashboardState) -> None:
     for step in output.plan.steps:
         state.hunt_progress[step.step_id] = step.status
 
+    if registry is not None:
+        _maybe_auto_apply_batch(state, registry)
 
-async def _run_hunt_bg(state: DashboardState) -> None:
+
+# --------------------------------------------------------------------------- #
+# Continuous discovery + autonomous auto-apply
+# --------------------------------------------------------------------------- #
+
+def _autonomy_enabled(state: DashboardState) -> bool:
+    p = state.user_profile
+    if p is not None and p.auto_apply:
+        return True
+    return os.environ.get("JOBHUNT_AUTO_APPLY", "").lower() in ("1", "true", "yes")
+
+
+def _daily_cap(state: DashboardState) -> int:
+    p = state.user_profile
+    cap = p.daily_apply_cap if p and p.daily_apply_cap else 0
+    env = os.environ.get("JOBHUNT_DAILY_APPLY_CAP")
+    if env:
+        try:
+            cap = int(env)
+        except ValueError:
+            pass
+    return cap if cap > 0 else 20  # sensible safety default when enabled
+
+
+def _applied_today(state: DashboardState) -> int:
+    from datetime import date
+    return int(state.applies_today.get(date.today().isoformat(), 0))
+
+
+def _maybe_auto_apply_batch(state: DashboardState, registry) -> int:
+    """Autonomously approve + submit pending resumes, capped per day.
+
+    Fires only when autonomy is enabled AND a real ATS is connected AND a
+    submitter supports the job URL AND the job clears the relevance floor — so
+    fixtures and disconnected boards are never auto-submitted. Returns the count
+    actually submitted.
+    """
+    from datetime import date
+
+    if not _autonomy_enabled(state) or not _ats_connected(state):
+        return 0
+    cap = _daily_cap(state)
+    today = date.today().isoformat()
+    used = int(state.applies_today.get(today, 0))
+    remaining = cap - used
+    if remaining <= 0:
+        return 0
+    floor = state.user_profile.relevance_floor if state.user_profile else 0.0
+
+    applied = 0
+    for req in list(state.approval_queue.pending()):
+        if applied >= remaining:
+            break
+        job = next((j for j in state.jobs if j["job_id"] == req.job_id), None)
+        doc = state.documents.get(req.job_id)
+        if job is None or doc is None or job.get("submitted"):
+            continue
+        if registry.for_url(job.get("url", "")) is None:
+            continue  # not a real-submittable board → leave for manual review
+        if float(job.get("relevance_score") or 0.0) < floor:
+            continue
+        try:
+            state.approval_queue.transition(
+                req.request_id, ApprovalState.APPROVED, reviewer="auto")
+        except InvalidTransition:
+            continue
+        if job.get("status") == "Saved":
+            job["status"] = "Applied"
+        _add_event(state, req.job_id, "Approved", "Auto-approved (autonomous mode)")
+        res = _auto_apply(state, registry, req, job, doc)
+        if res and res.get("submitted"):
+            applied += 1
+
+    if applied:
+        state.applies_today[today] = used + applied
+        state.bus.publish(
+            "autonomy", "auto",
+            f"Autonomously applied to {applied} role(s) "
+            f"({used + applied}/{cap} today).",
+        )
+        state.persist()
+    return applied
+
+
+def _discover_once(state: DashboardState, registry) -> dict:
+    """One continuous-mode cycle: discover → merge → tailor new → auto-apply.
+
+    Unlike ``_execute_hunt`` this MERGES into existing state (never clears) and
+    only tailors jobs it hasn't seen, so the dashboard accumulates over time.
+    """
+    from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
+    from jobhunt.llm.callbacks import resume_callback
+    from jobhunt.llm.factory import build_llm_client_from_env
+
+    if state.user_profile is None:
+        return {"added": 0, "tailored": 0, "applied": 0}
+
+    sources = _build_sources(state.ats_config)
+    llm_client = build_llm_client_from_env()
+    llm_cb = resume_callback(llm_client) if llm_client is not None else None
+    orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)
+    result = orch.run(
+        OrchestratorInputs(profile=state.user_profile, sources=sources),
+        task_id="discover-bg",
+    )
+    output = result.output
+    if output is None:
+        return {"added": 0, "tailored": 0, "applied": 0}
+
+    state.plan = output.plan
+    batch = output.results.get("discovery")
+    added = _merge_discovered(state, batch.postings) if batch else 0
+    tailored = _persist_tailored_docs(state, output.results.get("resume", []),
+                                      task="discover-bg")
+    applied = _maybe_auto_apply_batch(state, registry)
+    state.persist()
+    return {"added": added, "tailored": tailored, "applied": applied}
+
+
+async def _run_hunt_bg(state: DashboardState, registry=None) -> None:
     state.hunt_status = "running"
     state.bus.publish("orchestrator", "hunt-bg", "Hunt started — running all agents.")
     state.persist()
     try:
-        await asyncio.to_thread(_execute_hunt, state)
+        await asyncio.to_thread(_execute_hunt, state, registry)
         state.hunt_status = "complete"
         state.bus.publish(
             "orchestrator", "hunt-bg",
@@ -513,11 +684,20 @@ def create_app(
     inbox_source = build_inbox_from_env()
     _inbox_since = {"ts": 0.0}
 
+    # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
+    # Lever submitters; tests inject one backed by FakePoster. Defined before
+    # the lifespan so the continuous-discovery loop can reach it.
+    registry = (
+        submitter_registry if submitter_registry is not None
+        else _default_submitter_registry()
+    )
+
     @asynccontextmanager
     async def lifespan(app):
         if state is not None:
             state.bus.set_loop(asyncio.get_event_loop())
         poll_task = None
+        disc_task = None
         if state is not None and inbox_source is not None:
             interval = int(os.environ.get("JOBHUNT_IMAP_POLL_SECONDS", "300"))
 
@@ -535,20 +715,39 @@ def create_app(
                         )
 
             poll_task = asyncio.create_task(_poll_loop())
+
+        # Continuous discovery: single-tenant serve mode only, off unless a
+        # non-zero interval is set (so tests + the one-shot hunt are unchanged).
+        if state is not None:
+            disc_interval = int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0"))
+            if disc_interval > 0:
+                async def _disc_loop():
+                    while True:
+                        await asyncio.sleep(disc_interval)
+                        try:
+                            res = await asyncio.to_thread(_discover_once, state, registry)
+                            if res.get("added") or res.get("applied"):
+                                state.bus.publish(
+                                    "discovery", "poll",
+                                    f"Continuous sweep: +{res.get('added', 0)} jobs, "
+                                    f"{res.get('tailored', 0)} tailored, "
+                                    f"{res.get('applied', 0)} auto-applied.",
+                                )
+                        except Exception as exc:  # never let the loop die
+                            state.bus.publish(
+                                "discovery", "poll",
+                                f"Continuous discovery error: {exc!r}",
+                            )
+
+                disc_task = asyncio.create_task(_disc_loop())
         try:
             yield
         finally:
-            if poll_task is not None:
-                poll_task.cancel()
+            for t in (poll_task, disc_task):
+                if t is not None:
+                    t.cancel()
 
     app = FastAPI(title="JobHunt Dashboard", version="0.3.0", lifespan=lifespan)
-
-    # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
-    # Lever submitters; tests inject one backed by FakePoster.
-    registry = (
-        submitter_registry if submitter_registry is not None
-        else _default_submitter_registry()
-    )
 
     # ------------------------------------------------------------- per-request state
 
@@ -659,6 +858,10 @@ def create_app(
             "dev_nav": dev_nav,
             "llm": describe_llm_from_env(),
             "inbox_connected": inbox_source is not None,
+            "auto_apply": (state.user_profile.auto_apply
+                           if state.user_profile else False),
+            "applied_today": _applied_today(state),
+            "continuous": int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0")) > 0,
         }
 
     # ---------------------------------------------------------------- onboarding
@@ -829,8 +1032,51 @@ def create_app(
         # publishing now, just before the orchestrator starts running in a
         # worker thread via asyncio.to_thread.
         state.bus.set_loop(asyncio.get_event_loop())
-        asyncio.create_task(_run_hunt_bg(state))
+        asyncio.create_task(_run_hunt_bg(state, registry))
         return {"ok": True, "hunt_status": "running"}
+
+    @app.post("/api/discover")
+    async def discover_now(state: DashboardState = Depends(get_state)) -> dict:
+        """Run a single continuous-style sweep now (merge, don't clear)."""
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="complete onboarding first")
+        state.bus.set_loop(asyncio.get_event_loop())
+        res = await asyncio.to_thread(_discover_once, state, registry)
+        return {"ok": True, **res}
+
+    @app.get("/api/autonomy")
+    def get_autonomy(state: DashboardState = Depends(get_state)) -> dict:
+        p = state.user_profile
+        return {
+            "auto_apply": bool(p.auto_apply) if p else False,
+            "daily_apply_cap": int(p.daily_apply_cap) if p else 0,
+            "relevance_floor": float(p.relevance_floor) if p else 0.0,
+            "ats_connected": _ats_connected(state),
+            "applied_today": _applied_today(state),
+            "effective_cap": _daily_cap(state) if _autonomy_enabled(state) else 0,
+            "continuous": int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0")) > 0,
+        }
+
+    @app.post("/api/autonomy")
+    def set_autonomy(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="complete onboarding first")
+        p = state.user_profile
+        if "auto_apply" in body:
+            p.auto_apply = bool(body["auto_apply"])
+        if "daily_apply_cap" in body:
+            p.daily_apply_cap = max(0, int(body["daily_apply_cap"] or 0))
+        if "relevance_floor" in body:
+            p.relevance_floor = max(0.0, min(1.0, float(body["relevance_floor"] or 0.0)))
+        state.persist()
+        state.bus.publish(
+            "autonomy", p.user_id,
+            f"Autonomy {'on' if p.auto_apply else 'off'} "
+            f"(cap {p.daily_apply_cap or 'default'}, floor {p.relevance_floor:.0%}).",
+        )
+        return {"ok": True, "auto_apply": p.auto_apply,
+                "daily_apply_cap": p.daily_apply_cap,
+                "relevance_floor": p.relevance_floor}
 
     @app.post("/api/hunt/reset")
     def reset_hunt(state: DashboardState = Depends(get_state)) -> dict:

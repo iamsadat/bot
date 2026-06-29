@@ -38,6 +38,7 @@ class _Snapshot(_Base):
     hunt_status = Column(String(20), default="idle")
     hunt_error = Column(Text, default="")
     ats_config_json = Column(JSON, default=dict)
+    applies_today_json = Column(JSON, default=dict)  # date-iso → count (autonomy cap)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -78,6 +79,7 @@ class DashboardStore:
                 "hunt_status": row.hunt_status or "idle",
                 "hunt_error": row.hunt_error or "",
                 "ats_config": dict(row.ats_config_json or {}),
+                "applies_today": dict(row.applies_today_json or {}),
             }
 
     # ------------------------------------------------------------------ save
@@ -94,6 +96,7 @@ class DashboardStore:
         hunt_error: str = "",
         ats_config: dict | None = None,
         documents: dict | None = None,
+        applies_today: dict | None = None,
     ) -> None:
         """Upsert the snapshot row."""
         appr_dicts = [
@@ -114,6 +117,8 @@ class DashboardStore:
             row.hunt_error = hunt_error
             if ats_config is not None:
                 row.ats_config_json = ats_config
+            if applies_today is not None:
+                row.applies_today_json = applies_today
             s.commit()
 
     def clear(self) -> None:

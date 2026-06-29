@@ -16,6 +16,7 @@ without touching the supervisor.
 
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -39,10 +40,21 @@ from jobhunt.models import (
 from jobhunt.trace import ThoughtBus, TraceStore
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
 @dataclass
 class OrchestratorInputs:
     profile: UserProfile
     sources: list[JobSource]
+    # How many postings to tailor resumes for per run (was a hardcoded 3).
+    shortlist_cap: int = field(default_factory=lambda: _env_int("JOBHUNT_SHORTLIST_CAP", 10))
+    # Optional override for the vetting pass threshold (None → agent default 0.5).
+    vetting_threshold: float | None = None
 
 
 @dataclass
@@ -208,8 +220,11 @@ class Orchestrator(BaseAgent[OrchestratorInputs, OrchestratorOutput]):
             out.results["discovery"] = result.output
         elif step.agent == "vetting":
             batch: DiscoveryBatch = out.results["discovery"]
+            vetting_inputs = VettingInputs(profile=inputs.profile, batch=batch)
+            if inputs.vetting_threshold is not None:
+                vetting_inputs.threshold = inputs.vetting_threshold
             result = self.vetting.run(
-                VettingInputs(profile=inputs.profile, batch=batch),
+                vetting_inputs,
                 task_id=task_id,
                 parent_trace=parent.trace_id,
             )
@@ -217,8 +232,12 @@ class Orchestrator(BaseAgent[OrchestratorInputs, OrchestratorOutput]):
         elif step.agent == "resume":
             batch = out.results["discovery"]
             vetted = out.results.get("vetting", [])
+            cap = max(1, inputs.shortlist_cap)
             allowed_companies = {s.company_id for s in vetted if s.pass_threshold}
-            shortlisted = [p for p in batch.postings if p.company in allowed_companies] or batch.postings[:3]
+            shortlisted = (
+                [p for p in batch.postings if p.company in allowed_companies][:cap]
+                or batch.postings[:cap]
+            )
             result = self.resume.run(
                 ResumeInputs(profile=inputs.profile, postings=shortlisted),
                 task_id=task_id,
