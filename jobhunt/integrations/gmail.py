@@ -19,7 +19,7 @@ import binascii
 import re
 
 from jobhunt.inbox.sources import InboxMessage, _company_from_email
-from jobhunt.integrations.google_auth import TokenProvider, Transport
+from jobhunt.integrations.google_auth import GoogleAPIError, TokenProvider, Transport
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 
@@ -219,3 +219,30 @@ class GmailInboxSource:
         token = self._tokens.get_access_token()
         headers = {"Authorization": f"Bearer {token}"}
         return self._transport.request(method, url, headers=headers, body=body)
+
+
+class GmailSender:
+    """Send plain-text email via the Gmail API (follow-ups / thank-yous).
+
+    Uses the same injectable TokenProvider + Transport as the inbox source, so
+    it's fully offline-testable with a FakeTransport.
+    """
+
+    def __init__(self, token_provider: TokenProvider, transport: Transport,
+                 *, from_addr: str = "me") -> None:
+        self._tokens = token_provider
+        self._transport = transport
+        self._from = from_addr
+
+    def send(self, to: str, subject: str, body: str) -> str:
+        """Send an email; returns the Gmail message id (or "" on failure)."""
+        raw = (f"To: {to}\r\nSubject: {subject}\r\n"
+               "Content-Type: text/plain; charset=UTF-8\r\n\r\n" + body)
+        b64 = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+        token = self._tokens.get_access_token()
+        status, payload = self._transport.request(
+            "POST", f"{GMAIL_API_BASE}/messages/send",
+            headers={"Authorization": f"Bearer {token}"}, body={"raw": b64})
+        if status >= 400:
+            raise GoogleAPIError(f"gmail send failed ({status}): {payload}")
+        return payload.get("id", "")

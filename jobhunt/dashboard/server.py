@@ -55,6 +55,7 @@ try:
         WebSocket, WebSocketDisconnect,
     )
     from fastapi.responses import HTMLResponse, JSONResponse, Response
+    from fastapi.staticfiles import StaticFiles
     _FASTAPI_IMPORT_ERROR: ImportError | None = None
 except ImportError as _exc:  # pragma: no cover
     _FASTAPI_IMPORT_ERROR = _exc
@@ -93,7 +94,9 @@ class DashboardState:
     hunt_error: str = ""
     hunt_progress: dict[str, str] = field(default_factory=dict)
     ats_config: dict = field(default_factory=dict)  # greenhouse_tokens / lever_slugs / ashby_slugs
+    applies_today: dict = field(default_factory=dict)  # date-iso → count (autonomy daily cap)
     store: DashboardStore | None = None
+    notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
     # ------------------------------------------------------------ persistence
     def persist(self) -> None:
@@ -111,6 +114,7 @@ class DashboardState:
                 hunt_status=self.hunt_status,
                 hunt_error=self.hunt_error,
                 ats_config=self.ats_config,
+                applies_today=self.applies_today,
             )
         except Exception:
             pass  # never let persistence block the API
@@ -128,6 +132,7 @@ class DashboardState:
         self.hunt_status = snap.get("hunt_status", "idle")
         self.hunt_error = snap.get("hunt_error", "")
         self.ats_config = snap.get("ats_config", {})
+        self.applies_today = snap.get("applies_today", {})
         # Defensive: hunts that were mid-run when the server died → idle
         if self.hunt_status == "running":
             self.hunt_status = "idle"
@@ -189,19 +194,39 @@ class WorkspaceManager:
 def _build_sources(ats_config: dict):
     """Construct JobSources from the user's ATS handles, fixture fallback."""
     from jobhunt.adapters import (
-        AshbySource, FixtureSource, GreenhouseSource, LeverSource,
+        AdzunaSource, AshbySource, FixtureSource, GreenhouseSource, LeverSource,
+        PersonioSource, RecruiteeSource, USAJobsSource, WorkableSource,
     )
 
+    def _slugs(key: str) -> list[str]:
+        return [s.strip() for s in ats_config.get(key, []) if s.strip()]
+
     sources = []
-    gh = [s.strip() for s in ats_config.get("greenhouse_tokens", []) if s.strip()]
-    lv = [s.strip() for s in ats_config.get("lever_slugs", []) if s.strip()]
-    ab = [s.strip() for s in ats_config.get("ashby_slugs", []) if s.strip()]
+    gh, lv, ab = _slugs("greenhouse_tokens"), _slugs("lever_slugs"), _slugs("ashby_slugs")
+    rc, wk, pn = _slugs("recruitee_slugs"), _slugs("workable_slugs"), _slugs("personio_slugs")
     if gh:
         sources.append(GreenhouseSource(board_tokens=gh))
     if lv:
         sources.append(LeverSource(companies=lv))
     if ab:
         sources.append(AshbySource(companies=ab))
+    if rc:
+        sources.append(RecruiteeSource(companies=rc))
+    if wk:
+        sources.append(WorkableSource(accounts=wk))
+    if pn:
+        sources.append(PersonioSource(companies=pn))
+
+    # Aggregators with native search use env-configured API keys (not per-user
+    # ATS handles), so they augment whatever boards are connected.
+    adz_id, adz_key = os.environ.get("ADZUNA_APP_ID"), os.environ.get("ADZUNA_APP_KEY")
+    if adz_id and adz_key:
+        sources.append(AdzunaSource(
+            app_id=adz_id, app_key=adz_key,
+            country=os.environ.get("ADZUNA_COUNTRY", "us")))
+    usa_email, usa_key = os.environ.get("USAJOBS_EMAIL"), os.environ.get("USAJOBS_API_KEY")
+    if usa_email and usa_key:
+        sources.append(USAJobsSource(email=usa_email, api_key=usa_key))
 
     if not sources:
         # Offline fallback — uses fixture jobs so the demo always has data
@@ -267,6 +292,52 @@ def _add_event(
             break
 
 
+def _email_template(state: DashboardState, job_id: str, kind: str) -> tuple[str, str]:
+    """Build a (subject, body) follow-up / thank-you for a job from templates."""
+    doc = state.documents.get(job_id, {})
+    job = next((j for j in state.jobs if j["job_id"] == job_id), {})
+    company = doc.get("company") or job.get("company", "the team")
+    title = doc.get("title") or job.get("title", "the role")
+    name = state.user_profile.name if state.user_profile else ""
+    if kind == "thank_you":
+        subject = f"Thank you — {title}"
+        body = (f"Hi,\n\nThank you for taking the time to discuss the {title} "
+                f"role at {company}. I enjoyed the conversation and am very "
+                f"excited about the opportunity to contribute.\n\nBest,\n{name}")
+    else:  # follow_up
+        subject = f"Following up — {title}"
+        body = (f"Hi,\n\nI wanted to follow up on my application for the {title} "
+                f"role at {company}. I remain very interested and would welcome "
+                f"the chance to discuss how I can help the team.\n\nBest,\n{name}")
+    return subject, body
+
+
+def _notify(state: DashboardState, kind: str, title: str, body: str = "", url: str = "") -> None:
+    """Fire a notification if a notifier is configured (best-effort)."""
+    notifier = getattr(state, "notifier", None)
+    if not notifier:
+        return
+    try:
+        from jobhunt.notify import NotificationEvent
+        notifier.notify(NotificationEvent(kind=kind, title=title, body=body, url=url))
+    except Exception:
+        pass
+
+
+def _apply_parsed_resume(profile, result: dict) -> None:
+    """Merge parsed résumé output into a profile: union skills, fill-empty
+    structured sections (never clobber user edits), add new links."""
+    profile.skills = sorted(set(profile.skills) | set(result.get("skills", [])))
+    if not profile.experiences and result.get("experiences"):
+        profile.experiences = result["experiences"]
+    if not profile.education and result.get("education"):
+        profile.education = result["education"]
+    if not profile.projects and result.get("projects"):
+        profile.projects = result["projects"]
+    for k, v in (result.get("links") or {}).items():
+        profile.links.setdefault(k, v)
+
+
 def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
     """Attempt real submission for a just-approved job. Returns a status dict.
 
@@ -311,11 +382,18 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         "answers": getattr(profile, "application_answers", {}) if profile else {},
     }
     # Render a real PDF so the upload is a valid file, not text mislabeled as PDF.
+    # Prefer the structured single-column layout when a draft is available.
     try:
-        from jobhunt.resume_renderer import text_to_pdf
-        lines = resume_text.split("\n")
-        heading = lines[0].strip() if lines and lines[0].strip() else company
-        plan["resume_pdf"] = text_to_pdf(heading, "\n".join(lines[1:]))
+        draft_dict = doc.get("draft")
+        if draft_dict:
+            from jobhunt.resume_renderer import draft_to_pdf
+            from jobhunt.resume_template import ResumeDraft
+            plan["resume_pdf"] = draft_to_pdf(ResumeDraft.from_dict(draft_dict))
+        else:
+            from jobhunt.resume_renderer import text_to_pdf
+            lines = resume_text.split("\n")
+            heading = lines[0].strip() if lines and lines[0].strip() else company
+            plan["resume_pdf"] = text_to_pdf(heading, "\n".join(lines[1:]))
     except Exception:
         pass  # fpdf2 missing → submitters fall back to encoding the plain text
     try:
@@ -350,7 +428,106 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
     return {"submitted": False, "detail": detail}
 
 
-def _execute_hunt(state: DashboardState) -> None:
+def _job_dict_from_posting(p) -> dict:
+    """Build a dashboard job dict (with fingerprint) from a JobPosting."""
+    return {
+        "job_id": p.job_id,
+        "title": p.title,
+        "company": p.company,
+        "location": p.location,
+        "url": p.url,
+        "source": p.source,
+        "relevance_score": p.relevance_score,
+        "ghost_score": p.ghost_score,
+        "salary_min": p.salary_min,
+        "salary_max": p.salary_max,
+        "remote": p.remote,
+        "status": "Saved",
+        "posted_at": p.posted_at,
+        "fingerprint": p.fingerprint or p.compute_fingerprint(),
+        "events": [{
+            "ts": time.time(), "stage": "Discovered",
+            "detail": f"Found on {p.source}"
+            + (f" · {p.relevance_score:.0%} match" if p.relevance_score else ""),
+            "status": "done",
+        }],
+    }
+
+
+def _fingerprint(company: str, title: str, location: str) -> str:
+    import hashlib
+    key = "|".join([company.strip().lower(), title.strip().lower(),
+                    location.strip().lower()])
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+def _merge_discovered(state: DashboardState, postings) -> int:
+    """Append new postings to ``state.jobs`` by fingerprint. Never clears.
+
+    Returns the number of genuinely new jobs added. This is what makes the
+    continuous engine *accumulate* discoveries instead of replacing them on
+    every run (the one-shot hunt still resets via ``start_hunt``).
+    """
+    seen = {
+        j.get("fingerprint") or _fingerprint(
+            j.get("company", ""), j.get("title", ""), j.get("location", ""))
+        for j in state.jobs
+    }
+    added = 0
+    for p in postings:
+        fp = p.fingerprint or p.compute_fingerprint()
+        if fp in seen:
+            continue
+        seen.add(fp)
+        state.jobs.append(_job_dict_from_posting(p))
+        added += 1
+    return added
+
+
+def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg") -> int:
+    """Store tailored docs + open approvals for any not already present.
+
+    Idempotent by job_id, so it's safe to call repeatedly in continuous mode
+    without re-queuing the same resume. Returns the count newly tailored.
+    """
+    new = 0
+    for doc in docs:
+        if doc.job_id in state.documents:
+            continue
+        state.documents[doc.job_id] = {
+            "job_id": doc.job_id,
+            "company": doc.company,
+            "title": doc.title,
+            "url": doc.url,
+            "resume_text": doc.resume_text,
+            "cover_letter_text": doc.cover_letter_text,
+            "keyword_coverage": doc.keyword_coverage,
+            "matched_keywords": doc.matched_keywords,
+            "missing_keywords": doc.missing_keywords,
+            "bullets": doc.bullets,
+            "draft": doc.draft,
+        }
+        state.approval_queue.submit(
+            job_id=doc.job_id,
+            document_id=f"doc-{doc.job_id}",
+            company=doc.company,
+            title=doc.title,
+        )
+        state.bus.publish(
+            "approval", task,
+            f"Tailored resume ready: {doc.company} — {doc.title} "
+            f"(coverage {doc.keyword_coverage:.0%}). Awaiting your approval.",
+        )
+        _add_event(
+            state, doc.job_id, "Tailored",
+            f"Resume tailored · {doc.keyword_coverage:.0%} ATS coverage · awaiting approval",
+            status="running",
+        )
+        new += 1
+    return new
+
+
+def _execute_hunt(state: DashboardState, registry=None) -> None:
     """Runs the full orchestrator pipeline synchronously (called in a thread)."""
     from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
     from jobhunt.llm.callbacks import resume_callback
@@ -374,33 +551,10 @@ def _execute_hunt(state: DashboardState) -> None:
 
     state.plan = output.plan
 
-    # Populate jobs from discovery batch
+    # Populate jobs from discovery batch (one-shot hunt replaces wholesale).
     batch = output.results.get("discovery")
     if batch:
-        state.jobs = [
-            {
-                "job_id": p.job_id,
-                "title": p.title,
-                "company": p.company,
-                "location": p.location,
-                "url": p.url,
-                "source": p.source,
-                "relevance_score": p.relevance_score,
-                "ghost_score": p.ghost_score,
-                "salary_min": p.salary_min,
-                "salary_max": p.salary_max,
-                "remote": p.remote,
-                "status": "Saved",
-                "posted_at": p.posted_at,
-                "events": [{
-                    "ts": time.time(), "stage": "Discovered",
-                    "detail": f"Found on {p.source}"
-                    + (f" · {p.relevance_score:.0%} match" if p.relevance_score else ""),
-                    "status": "done",
-                }],
-            }
-            for p in batch.postings
-        ]
+        state.jobs = [_job_dict_from_posting(p) for p in batch.postings]
 
     # Populate submission packages
     subs = output.results.get("submission", [])
@@ -419,35 +573,7 @@ def _execute_hunt(state: DashboardState) -> None:
 
     # Persist tailored documents for download + approval
     docs = output.results.get("resume", [])
-    for doc in docs:
-        state.documents[doc.job_id] = {
-            "job_id": doc.job_id,
-            "company": doc.company,
-            "title": doc.title,
-            "url": doc.url,
-            "resume_text": doc.resume_text,
-            "cover_letter_text": doc.cover_letter_text,
-            "keyword_coverage": doc.keyword_coverage,
-            "matched_keywords": doc.matched_keywords,
-            "missing_keywords": doc.missing_keywords,
-            "bullets": doc.bullets,
-        }
-        state.approval_queue.submit(
-            job_id=doc.job_id,
-            document_id=f"doc-{doc.job_id}",
-            company=doc.company,
-            title=doc.title,
-        )
-        state.bus.publish(
-            "approval", "hunt-bg",
-            f"Tailored resume ready: {doc.company} — {doc.title} "
-            f"(coverage {doc.keyword_coverage:.0%}). Awaiting your approval.",
-        )
-        _add_event(
-            state, doc.job_id, "Tailored",
-            f"Resume tailored · {doc.keyword_coverage:.0%} ATS coverage · awaiting approval",
-            status="running",
-        )
+    _persist_tailored_docs(state, docs)
 
     # Backfill application titles from documents
     for app in state.applications:
@@ -457,13 +583,139 @@ def _execute_hunt(state: DashboardState) -> None:
     for step in output.plan.steps:
         state.hunt_progress[step.step_id] = step.status
 
+    if registry is not None:
+        _maybe_auto_apply_batch(state, registry)
 
-async def _run_hunt_bg(state: DashboardState) -> None:
+
+# --------------------------------------------------------------------------- #
+# Continuous discovery + autonomous auto-apply
+# --------------------------------------------------------------------------- #
+
+def _autonomy_enabled(state: DashboardState) -> bool:
+    p = state.user_profile
+    if p is not None and p.auto_apply:
+        return True
+    return os.environ.get("JOBHUNT_AUTO_APPLY", "").lower() in ("1", "true", "yes")
+
+
+def _daily_cap(state: DashboardState) -> int:
+    p = state.user_profile
+    cap = p.daily_apply_cap if p and p.daily_apply_cap else 0
+    env = os.environ.get("JOBHUNT_DAILY_APPLY_CAP")
+    if env:
+        try:
+            cap = int(env)
+        except ValueError:
+            pass
+    return cap if cap > 0 else 20  # sensible safety default when enabled
+
+
+def _applied_today(state: DashboardState) -> int:
+    from datetime import date
+    return int(state.applies_today.get(date.today().isoformat(), 0))
+
+
+def _maybe_auto_apply_batch(state: DashboardState, registry) -> int:
+    """Autonomously approve + submit pending resumes, capped per day.
+
+    Fires only when autonomy is enabled AND a real ATS is connected AND a
+    submitter supports the job URL AND the job clears the relevance floor — so
+    fixtures and disconnected boards are never auto-submitted. Returns the count
+    actually submitted.
+    """
+    from datetime import date
+
+    if not _autonomy_enabled(state) or not _ats_connected(state):
+        return 0
+    cap = _daily_cap(state)
+    today = date.today().isoformat()
+    used = int(state.applies_today.get(today, 0))
+    remaining = cap - used
+    if remaining <= 0:
+        return 0
+    floor = state.user_profile.relevance_floor if state.user_profile else 0.0
+
+    applied = 0
+    for req in list(state.approval_queue.pending()):
+        if applied >= remaining:
+            break
+        job = next((j for j in state.jobs if j["job_id"] == req.job_id), None)
+        doc = state.documents.get(req.job_id)
+        if job is None or doc is None or job.get("submitted"):
+            continue
+        if registry.for_url(job.get("url", "")) is None:
+            continue  # not a real-submittable board → leave for manual review
+        if float(job.get("relevance_score") or 0.0) < floor:
+            continue
+        try:
+            state.approval_queue.transition(
+                req.request_id, ApprovalState.APPROVED, reviewer="auto")
+        except InvalidTransition:
+            continue
+        if job.get("status") == "Saved":
+            job["status"] = "Applied"
+        _add_event(state, req.job_id, "Approved", "Auto-approved (autonomous mode)")
+        res = _auto_apply(state, registry, req, job, doc)
+        if res and res.get("submitted"):
+            applied += 1
+
+    if applied:
+        state.applies_today[today] = used + applied
+        state.bus.publish(
+            "autonomy", "auto",
+            f"Autonomously applied to {applied} role(s) "
+            f"({used + applied}/{cap} today).",
+        )
+        _notify(state, "applied", f"Auto-applied to {applied} role(s)",
+                f"{used + applied}/{cap} applications today.")
+        state.persist()
+    return applied
+
+
+def _discover_once(state: DashboardState, registry) -> dict:
+    """One continuous-mode cycle: discover → merge → tailor new → auto-apply.
+
+    Unlike ``_execute_hunt`` this MERGES into existing state (never clears) and
+    only tailors jobs it hasn't seen, so the dashboard accumulates over time.
+    """
+    from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
+    from jobhunt.llm.callbacks import resume_callback
+    from jobhunt.llm.factory import build_llm_client_from_env
+
+    if state.user_profile is None:
+        return {"added": 0, "tailored": 0, "applied": 0}
+
+    sources = _build_sources(state.ats_config)
+    llm_client = build_llm_client_from_env()
+    llm_cb = resume_callback(llm_client) if llm_client is not None else None
+    orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)
+    result = orch.run(
+        OrchestratorInputs(profile=state.user_profile, sources=sources),
+        task_id="discover-bg",
+    )
+    output = result.output
+    if output is None:
+        return {"added": 0, "tailored": 0, "applied": 0}
+
+    state.plan = output.plan
+    batch = output.results.get("discovery")
+    added = _merge_discovered(state, batch.postings) if batch else 0
+    tailored = _persist_tailored_docs(state, output.results.get("resume", []),
+                                      task="discover-bg")
+    if added:
+        _notify(state, "discovered", f"{added} new job match(es)",
+                f"{tailored} tailored and ready to review.")
+    applied = _maybe_auto_apply_batch(state, registry)
+    state.persist()
+    return {"added": added, "tailored": tailored, "applied": applied}
+
+
+async def _run_hunt_bg(state: DashboardState, registry=None) -> None:
     state.hunt_status = "running"
     state.bus.publish("orchestrator", "hunt-bg", "Hunt started — running all agents.")
     state.persist()
     try:
-        await asyncio.to_thread(_execute_hunt, state)
+        await asyncio.to_thread(_execute_hunt, state, registry)
         state.hunt_status = "complete"
         state.bus.publish(
             "orchestrator", "hunt-bg",
@@ -505,11 +757,47 @@ def create_app(
     inbox_source = build_inbox_from_env()
     _inbox_since = {"ts": 0.0}
 
+    # Outbound notifications (Slack/Discord/Telegram/webhook/email). Attached to
+    # the single-tenant state so the continuous/autonomy helpers can fire them.
+    from jobhunt.notify import build_notifier_from_env
+    notifier = build_notifier_from_env()
+    if state is not None and notifier is not None:
+        state.notifier = notifier
+
+    # Google: Gmail sender (follow-ups/thank-yous) + Calendar (interview holds).
+    # Built from env OAuth creds; None when unconfigured. (Gmail inbox is wired
+    # via build_inbox_from_env above, which prefers Gmail over IMAP.)
+    from jobhunt.integrations.google_factory import (
+        build_calendar_from_env, build_gmail_sender_from_env,
+    )
+    gmail_sender = build_gmail_sender_from_env()
+    calendar = build_calendar_from_env()
+
+    # Recruiter-contact enrichment (Hunter/Apollo/PDL) for outreach.
+    from jobhunt.integrations.enrichment import build_contact_finder_from_env
+    contact_finder = build_contact_finder_from_env()
+
+    # Salary intelligence (Adzuna histogram) + company news intel (NewsAPI).
+    from jobhunt.integrations.market import (
+        build_news_client_from_env, build_salary_client_from_env,
+    )
+    salary_client = build_salary_client_from_env()
+    news_client = build_news_client_from_env()
+
+    # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
+    # Lever submitters; tests inject one backed by FakePoster. Defined before
+    # the lifespan so the continuous-discovery loop can reach it.
+    registry = (
+        submitter_registry if submitter_registry is not None
+        else _default_submitter_registry()
+    )
+
     @asynccontextmanager
     async def lifespan(app):
         if state is not None:
             state.bus.set_loop(asyncio.get_event_loop())
         poll_task = None
+        disc_task = None
         if state is not None and inbox_source is not None:
             interval = int(os.environ.get("JOBHUNT_IMAP_POLL_SECONDS", "300"))
 
@@ -525,22 +813,55 @@ def create_app(
                             "inbox", "poll",
                             f"Inbox sync: {res['updates']} application(s) updated.",
                         )
+                        _notify(state, "interview",
+                                f"{res['updates']} application update(s) from email",
+                                "Check your pipeline for new interview/assessment status.")
 
             poll_task = asyncio.create_task(_poll_loop())
+
+        # Continuous discovery: single-tenant serve mode only, off unless a
+        # non-zero interval is set (so tests + the one-shot hunt are unchanged).
+        if state is not None:
+            disc_interval = int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0"))
+            if disc_interval > 0:
+                async def _disc_loop():
+                    while True:
+                        await asyncio.sleep(disc_interval)
+                        try:
+                            res = await asyncio.to_thread(_discover_once, state, registry)
+                            if res.get("added") or res.get("applied"):
+                                state.bus.publish(
+                                    "discovery", "poll",
+                                    f"Continuous sweep: +{res.get('added', 0)} jobs, "
+                                    f"{res.get('tailored', 0)} tailored, "
+                                    f"{res.get('applied', 0)} auto-applied.",
+                                )
+                        except Exception as exc:  # never let the loop die
+                            state.bus.publish(
+                                "discovery", "poll",
+                                f"Continuous discovery error: {exc!r}",
+                            )
+
+                disc_task = asyncio.create_task(_disc_loop())
         try:
             yield
         finally:
-            if poll_task is not None:
-                poll_task.cancel()
+            for t in (poll_task, disc_task):
+                if t is not None:
+                    t.cancel()
 
     app = FastAPI(title="JobHunt Dashboard", version="0.3.0", lifespan=lifespan)
 
-    # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
-    # Lever submitters; tests inject one backed by FakePoster.
-    registry = (
-        submitter_registry if submitter_registry is not None
-        else _default_submitter_registry()
-    )
+    # Local-dev CORS: the Next.js dev server (next dev on :3000) is a different
+    # origin. In production the frontend is static-exported and served from this
+    # same app, so no CORS is needed there. Comma-separated origins, opt-in.
+    _cors = [o.strip() for o in os.environ.get("JOBHUNT_CORS_ORIGINS", "").split(",") if o.strip()]
+    if _cors:
+        from fastapi.middleware.cors import CORSMiddleware
+        app.add_middleware(
+            CORSMiddleware, allow_origins=_cors, allow_credentials=True,
+            allow_methods=["*"], allow_headers=["*"],
+        )
 
     # ------------------------------------------------------------- per-request state
 
@@ -585,11 +906,27 @@ def create_app(
 
     # ------------------------------------------------------------------ static
 
+    # Modern Next.js frontend (static export → frontend/out), built via
+    # `cd frontend && npm ci && npm run build` (the Dockerfile does this). When
+    # present it is served at the site ROOT and the legacy single-file SPA moves
+    # to /legacy. When ABSENT (offline test suite / CI — no Node build), `/`
+    # keeps serving the legacy SPA so existing tests are unchanged.
+    _frontend_dir = Path(
+        os.environ.get("JOBHUNT_FRONTEND_DIR")
+        or (Path(__file__).resolve().parents[2] / "frontend" / "out")
+    )
+    _frontend_built = _frontend_dir.is_dir() and (_frontend_dir / "index.html").exists()
+
     @app.get("/", response_class=HTMLResponse)
     def index(_state: DashboardState = Depends(get_state)) -> str:
-        return (Path(__file__).parent / "client.html").read_text(
-            encoding="utf-8"
-        )
+        # Keep Depends(get_state) so the workspace cookie is still minted here.
+        if _frontend_built:
+            return (_frontend_dir / "index.html").read_text(encoding="utf-8")
+        return (Path(__file__).parent / "client.html").read_text(encoding="utf-8")
+
+    @app.get("/legacy", response_class=HTMLResponse)
+    def legacy_index(_state: DashboardState = Depends(get_state)) -> str:
+        return (Path(__file__).parent / "client.html").read_text(encoding="utf-8")
 
     # ---- static companions: cinematic demo, SSOT tracker, sample-data app ----
     _ROOT = Path(__file__).resolve().parent.parent  # jobhunt/
@@ -651,6 +988,11 @@ def create_app(
             "dev_nav": dev_nav,
             "llm": describe_llm_from_env(),
             "inbox_connected": inbox_source is not None,
+            "auto_apply": (state.user_profile.auto_apply
+                           if state.user_profile else False),
+            "applied_today": _applied_today(state),
+            "continuous": int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0")) > 0,
+            "notify_channels": [s.name for s in notifier.sinks] if notifier else [],
         }
 
     # ---------------------------------------------------------------- onboarding
@@ -678,9 +1020,7 @@ def create_app(
             raise HTTPException(status_code=422, detail="resume text is required")
         result = parse_resume_text(text)
         if state.user_profile is not None:
-            existing = set(state.user_profile.skills)
-            merged = sorted(existing | set(result["skills"]))
-            state.user_profile.skills = merged
+            _apply_parsed_resume(state.user_profile, result)
             state.persist()
         return result
 
@@ -696,6 +1036,9 @@ def create_app(
             "greenhouse_tokens": _parse_list("greenhouse_tokens"),
             "lever_slugs": _parse_list("lever_slugs"),
             "ashby_slugs": _parse_list("ashby_slugs"),
+            "recruitee_slugs": _parse_list("recruitee_slugs"),
+            "workable_slugs": _parse_list("workable_slugs"),
+            "personio_slugs": _parse_list("personio_slugs"),
         }
         state.persist()
         return {"ok": True, "ats_config": state.ats_config}
@@ -750,10 +1093,101 @@ def create_app(
                 k: v for k, v in body["application_answers"].items()
                 if str(v).strip() != ""
             }
+        if "links" in body and isinstance(body["links"], dict):
+            p.links = {k: str(v).strip() for k, v in body["links"].items()
+                       if str(v).strip()}
+        if "auto_apply" in body:
+            p.auto_apply = bool(body["auto_apply"])
+        if "daily_apply_cap" in body:
+            p.daily_apply_cap = max(0, int(body["daily_apply_cap"] or 0))
+        if "relevance_floor" in body:
+            p.relevance_floor = max(0.0, min(1.0, float(body["relevance_floor"] or 0.0)))
 
         state.persist()
         state.bus.publish("profile", p.user_id, "Profile updated.")
         return {"ok": True, "profile": p.to_dict()}
+
+    @app.put("/api/profile/structured")
+    def update_structured(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Replace the structured resume sections from the builder UI.
+
+        Accepts ``experiences``/``education``/``projects`` arrays and a
+        ``links`` map. Each is replaced wholesale (the builder owns them).
+        """
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        p = state.user_profile
+
+        def _list_of_dicts(key: str, current: list) -> list:
+            v = body.get(key)
+            if v is None:
+                return current
+            if not isinstance(v, list):
+                raise HTTPException(status_code=422, detail=f"{key} must be a list")
+            return [dict(item) for item in v if isinstance(item, dict)]
+
+        p.experiences = _list_of_dicts("experiences", p.experiences)
+        p.education = _list_of_dicts("education", p.education)
+        p.projects = _list_of_dicts("projects", p.projects)
+        if "links" in body and isinstance(body["links"], dict):
+            p.links = {k: str(v).strip() for k, v in body["links"].items()
+                       if str(v).strip()}
+        state.persist()
+        state.bus.publish("profile", p.user_id, "Resume sections updated.")
+        return {"ok": True, "profile": p.to_dict()}
+
+    @app.post("/api/profile/parse-resume-file")
+    def parse_resume_file(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Parse an uploaded résumé file (base64 JSON — no multipart dep).
+
+        Body: ``{"filename": "cv.docx", "content_base64": "..."}``. Extracts
+        text (.txt/.docx/.pdf) then runs the same structured parse + fill-empty
+        merge as the paste endpoint.
+        """
+        import base64
+
+        from jobhunt.onboarding import ResumeFileError, extract_resume_text
+
+        b64 = body.get("content_base64", "")
+        if not b64:
+            raise HTTPException(status_code=422, detail="content_base64 is required")
+        try:
+            data = base64.b64decode(b64)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"invalid base64: {exc}")
+        try:
+            text = extract_resume_text(body.get("filename", ""), data)
+        except ResumeFileError as exc:
+            raise HTTPException(status_code=415, detail=str(exc))
+        result = parse_resume_text(text)
+        if state.user_profile is not None:
+            _apply_parsed_resume(state.user_profile, result)
+            state.persist()
+        return result
+
+    @app.post("/api/profile/import-github")
+    def import_github(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Import a GitHub user's public repos as Project entries."""
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        username = str(body.get("username", "")).strip().lstrip("@")
+        if not username:
+            raise HTTPException(status_code=422, detail="username is required")
+        from jobhunt.integrations import GitHubClient, GitHubError, repos_to_projects
+        try:
+            repos = GitHubClient().fetch_repos(username)
+        except GitHubError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        projects = repos_to_projects(repos)
+        p = state.user_profile
+        seen = {str(pr.get("name", "")).lower() for pr in p.projects}
+        added = [pr for pr in projects if pr["name"].lower() not in seen]
+        p.projects = list(p.projects) + added
+        p.links.setdefault("github", f"https://github.com/{username}")
+        state.persist()
+        state.bus.publish("profile", p.user_id,
+                          f"Imported {len(added)} project(s) from GitHub.")
+        return {"ok": True, "added": len(added), "projects": p.projects}
 
     # ---------------------------------------------------------------- hunt control
 
@@ -773,8 +1207,51 @@ def create_app(
         # publishing now, just before the orchestrator starts running in a
         # worker thread via asyncio.to_thread.
         state.bus.set_loop(asyncio.get_event_loop())
-        asyncio.create_task(_run_hunt_bg(state))
+        asyncio.create_task(_run_hunt_bg(state, registry))
         return {"ok": True, "hunt_status": "running"}
+
+    @app.post("/api/discover")
+    async def discover_now(state: DashboardState = Depends(get_state)) -> dict:
+        """Run a single continuous-style sweep now (merge, don't clear)."""
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="complete onboarding first")
+        state.bus.set_loop(asyncio.get_event_loop())
+        res = await asyncio.to_thread(_discover_once, state, registry)
+        return {"ok": True, **res}
+
+    @app.get("/api/autonomy")
+    def get_autonomy(state: DashboardState = Depends(get_state)) -> dict:
+        p = state.user_profile
+        return {
+            "auto_apply": bool(p.auto_apply) if p else False,
+            "daily_apply_cap": int(p.daily_apply_cap) if p else 0,
+            "relevance_floor": float(p.relevance_floor) if p else 0.0,
+            "ats_connected": _ats_connected(state),
+            "applied_today": _applied_today(state),
+            "effective_cap": _daily_cap(state) if _autonomy_enabled(state) else 0,
+            "continuous": int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0")) > 0,
+        }
+
+    @app.post("/api/autonomy")
+    def set_autonomy(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="complete onboarding first")
+        p = state.user_profile
+        if "auto_apply" in body:
+            p.auto_apply = bool(body["auto_apply"])
+        if "daily_apply_cap" in body:
+            p.daily_apply_cap = max(0, int(body["daily_apply_cap"] or 0))
+        if "relevance_floor" in body:
+            p.relevance_floor = max(0.0, min(1.0, float(body["relevance_floor"] or 0.0)))
+        state.persist()
+        state.bus.publish(
+            "autonomy", p.user_id,
+            f"Autonomy {'on' if p.auto_apply else 'off'} "
+            f"(cap {p.daily_apply_cap or 'default'}, floor {p.relevance_floor:.0%}).",
+        )
+        return {"ok": True, "auto_apply": p.auto_apply,
+                "daily_apply_cap": p.daily_apply_cap,
+                "relevance_floor": p.relevance_floor}
 
     @app.post("/api/hunt/reset")
     def reset_hunt(state: DashboardState = Depends(get_state)) -> dict:
@@ -874,17 +1351,25 @@ def create_app(
             raise HTTPException(status_code=400, detail="kind must be 'resume' or 'cover'")
 
         from jobhunt.resume_renderer import (
-            RendererUnavailable, text_to_docx, text_to_pdf, text_to_styled_html,
+            RendererUnavailable, draft_to_docx, draft_to_pdf, draft_to_styled_html,
+            text_to_docx, text_to_pdf, text_to_styled_html,
         )
+        from jobhunt.resume_template import ResumeDraft
 
         text = doc["resume_text"] if kind == "resume" else doc["cover_letter_text"]
         safe = f"{doc['company']}-{doc['title']}".replace(" ", "_").replace("/", "_")
         filename = f"{safe}-{kind}.{format}"
 
-        # The renderers take a heading + structured body. For a resume the
-        # first line is the candidate's name; promote it to the heading so the
-        # document isn't titled by the line twice. Cover letters get a synthetic
-        # heading since their body starts mid-salutation.
+        # Prefer the structured single-column layout when a draft is present and
+        # we're rendering the resume (cover letters stay plain-text bodies).
+        draft = None
+        if kind == "resume" and doc.get("draft"):
+            try:
+                draft = ResumeDraft.from_dict(doc["draft"])
+            except Exception:
+                draft = None
+
+        # Legacy heading/body split for the text-based renderers (fallback path).
         if kind == "resume":
             lines = text.split("\n")
             heading = lines[0].strip() if lines and lines[0].strip() else doc["title"]
@@ -902,19 +1387,24 @@ def create_app(
         if format == "txt":
             return _attach(text.encode("utf-8"), "text/plain; charset=utf-8")
         if format == "html":
-            html = text_to_styled_html(
-                heading, body, tab_title=f"{doc['company']} — {doc['title']}",
-            )
+            if draft is not None:
+                html = draft_to_styled_html(draft)
+            else:
+                html = text_to_styled_html(
+                    heading, body, tab_title=f"{doc['company']} — {doc['title']}",
+                )
             return _attach(html.encode("utf-8"), "text/html; charset=utf-8")
         if format == "pdf":
             try:
-                return _attach(text_to_pdf(heading, body), "application/pdf")
+                pdf = draft_to_pdf(draft) if draft is not None else text_to_pdf(heading, body)
+                return _attach(pdf, "application/pdf")
             except RendererUnavailable as e:
                 raise HTTPException(status_code=503, detail=str(e))
         if format == "docx":
             try:
+                docx = draft_to_docx(draft) if draft is not None else text_to_docx(heading, body)
                 return _attach(
-                    text_to_docx(heading, body),
+                    docx,
                     "application/vnd.openxmlformats-officedocument."
                     "wordprocessingml.document",
                 )
@@ -943,17 +1433,206 @@ def create_app(
     def get_activity(
         limit: int = 100, state: DashboardState = Depends(get_state),
     ) -> dict:
-        # The ThoughtBus already keeps a rolling history of every published
-        # event (discovery, approval, submission, tracking, profile…). Surface
-        # it newest-first as a human-readable activity log.
+        # The ThoughtBus keeps a rolling history of every published event,
+        # carrying structured reasoning fields (phase/considered/rejected/
+        # confidence/decision) when emitted via an agent's emit(). Surface it
+        # newest-first, plus a grouping by (agent, task_id) for the reasoning UI.
         events = list(reversed(state.bus.history()))[:limit]
-        return {"activity": events}
+        grouped: dict[str, list[dict]] = {}
+        for ev in events:
+            key = f"{ev.get('agent', '')}:{ev.get('task_id', '')}"
+            grouped.setdefault(key, []).append(ev)
+        return {"activity": events, "grouped": grouped}
 
     # ----------------------------------------------------------------- inbox
 
     @app.get("/api/inbox/status")
     def inbox_status() -> dict:
         return {"connected": inbox_source is not None}
+
+    # ----------------------------------------------------------------- notify
+
+    @app.get("/api/notify/status")
+    def notify_status() -> dict:
+        channels = [s.name for s in notifier.sinks] if notifier else []
+        return {"configured": bool(notifier), "channels": channels}
+
+    @app.post("/api/notify/test")
+    def notify_test() -> dict:
+        if not notifier:
+            raise HTTPException(
+                status_code=400,
+                detail="no channels configured — set JOBHUNT_SLACK_WEBHOOK / "
+                       "JOBHUNT_DISCORD_WEBHOOK / JOBHUNT_TELEGRAM_* / "
+                       "JOBHUNT_WEBHOOK_URLS",
+            )
+        from jobhunt.notify import NotificationEvent
+        delivered = notifier.notify(NotificationEvent(
+            kind="test", title="JobHunt test notification",
+            body="If you can read this, your channel is wired up. 🎯"))
+        return {"ok": True, "delivered": delivered,
+                "channels": [s.name for s in notifier.sinks]}
+
+    # ----------------------------------------------------------------- google
+
+    @app.get("/api/google/status")
+    def google_status() -> dict:
+        return {"gmail_send": gmail_sender is not None,
+                "calendar": calendar is not None,
+                "gmail_inbox": getattr(inbox_source, "name", "") == "gmail"}
+
+    @app.post("/api/email/send")
+    def email_send(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Send a follow-up / thank-you via Gmail. Body: {to, subject?, body?,
+        job_id?, kind?}. When job_id+kind given and body omitted, a template is
+        filled from the job/profile."""
+        if gmail_sender is None:
+            raise HTTPException(status_code=400,
+                                detail="Gmail not configured — set JOBHUNT_GOOGLE_*")
+        to = str(body.get("to", "")).strip()
+        if "@" not in to:
+            raise HTTPException(status_code=422, detail="valid 'to' address required")
+        subject = body.get("subject", "")
+        text = body.get("body", "")
+        if not text and body.get("job_id") and body.get("kind"):
+            subject, text = _email_template(
+                state, str(body["job_id"]), str(body["kind"]))
+        if not text:
+            raise HTTPException(status_code=422, detail="'body' or job_id+kind required")
+        try:
+            mid = gmail_sender.send(to, subject or "Following up", text)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"send failed: {exc}")
+        return {"ok": True, "message_id": mid}
+
+    @app.post("/api/calendar/hold")
+    def calendar_hold(body: dict) -> dict:
+        """Create a Google Calendar event. Body: {summary, start, end,
+        description?, attendees?} with ISO-8601 start/end."""
+        if calendar is None:
+            raise HTTPException(status_code=400,
+                                detail="Calendar not configured — set JOBHUNT_GOOGLE_*")
+        if not (body.get("summary") and body.get("start") and body.get("end")):
+            raise HTTPException(status_code=422, detail="summary/start/end required")
+        try:
+            ev = calendar.create_event(
+                summary=body["summary"], start_iso=body["start"], end_iso=body["end"],
+                description=body.get("description", ""),
+                attendees=body.get("attendees") or None)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"calendar error: {exc}")
+        return {"ok": True, "event_id": ev.id, "html_link": ev.html_link}
+
+    # ----------------------------------------------------------------- outreach
+
+    @app.get("/api/outreach/status")
+    def outreach_status() -> dict:
+        return {"configured": contact_finder is not None,
+                "provider": getattr(contact_finder, "name", "")}
+
+    @app.post("/api/outreach/find")
+    def outreach_find(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Find recruiter contacts for a job (or company/domain)."""
+        if contact_finder is None:
+            raise HTTPException(status_code=400,
+                                detail="no contact provider — set JOBHUNT_HUNTER_API_KEY")
+        from jobhunt.integrations.enrichment import domain_from_url
+        job = next((j for j in state.jobs if j["job_id"] == body.get("job_id")), {})
+        company = body.get("company") or job.get("company", "")
+        domain = body.get("domain") or domain_from_url(job.get("url", ""))
+        if not domain:
+            raise HTTPException(status_code=422,
+                                detail="could not infer company domain — pass 'domain'")
+        try:
+            contacts = contact_finder.find(company, domain)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"ok": True, "company": company, "domain": domain,
+                "contacts": [vars(c) for c in contacts]}
+
+    @app.post("/api/outreach/draft")
+    def outreach_draft(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Draft an evidence-bound outreach email for a job + contact."""
+        job_id = str(body.get("job_id", ""))
+        job = next((j for j in state.jobs if j["job_id"] == job_id), {})
+        doc = state.documents.get(job_id, {})
+        if not job and not doc:
+            raise HTTPException(status_code=404, detail="unknown job_id")
+        from jobhunt.integrations.enrichment import Contact, draft_outreach
+        from jobhunt.llm.callbacks import resume_callback
+        from jobhunt.llm.factory import build_llm_client_from_env
+        contact = Contact(name=body.get("contact_name", ""),
+                          email=body.get("contact_email", ""),
+                          title=body.get("contact_title", ""))
+        llm_client = build_llm_client_from_env()
+        llm = resume_callback(llm_client) if llm_client is not None else None
+        return {"ok": True, **draft_outreach(state.user_profile, job, doc, contact, llm=llm)}
+
+    # ----------------------------------------------------------------- autofill
+
+    @app.post("/api/autofill")
+    def autofill(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Real-browser autofill for a career-page URL (co-pilot by default).
+
+        Off unless JOBHUNT_AUTOFILL_ENABLED is set (browser automation is heavy
+        + ToS-sensitive). submit=false (default) fills the form and leaves the
+        final click to the user.
+        """
+        if os.environ.get("JOBHUNT_AUTOFILL_ENABLED", "").lower() not in ("1", "true", "yes"):
+            raise HTTPException(
+                status_code=400,
+                detail="autofill disabled — set JOBHUNT_AUTOFILL_ENABLED=1 (needs Playwright)")
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="complete onboarding first")
+        url = str(body.get("url", "")).strip()
+        if not url:
+            raise HTTPException(status_code=422, detail="url is required")
+        from jobhunt.autofill import autofill_application
+        try:
+            result = autofill_application(
+                url, state.user_profile,
+                getattr(state.user_profile, "application_answers", {}),
+                submit=bool(body.get("submit", False)),
+                headless=os.environ.get("JOBHUNT_AUTOFILL_HEADLESS", "1").lower()
+                in ("1", "true", "yes"))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"autofill error: {exc}")
+        return {"ok": result.success, "ats": result.ats, "url": result.url,
+                "filled": [f.label for f in result.filled],
+                "skipped": [f.label for f in result.skipped],
+                "requires_user": result.requires_user, "notes": result.notes}
+
+    # --------------------------------------------------------------- market intel
+
+    @app.get("/api/market/status")
+    def market_status() -> dict:
+        return {"salary": salary_client is not None, "news": news_client is not None}
+
+    @app.get("/api/salary")
+    def salary(role: str, location: str = "") -> dict:
+        if salary_client is None:
+            raise HTTPException(status_code=400,
+                                detail="salary intel needs Adzuna keys (ADZUNA_APP_ID/KEY)")
+        if not role.strip():
+            raise HTTPException(status_code=422, detail="role is required")
+        try:
+            est = salary_client.estimate(role, location)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"ok": True, **asdict(est)}
+
+    @app.get("/api/company/intel")
+    def company_intel(company: str) -> dict:
+        if news_client is None:
+            raise HTTPException(status_code=400,
+                                detail="company news needs JOBHUNT_NEWSAPI_KEY")
+        if not company.strip():
+            raise HTTPException(status_code=422, detail="company is required")
+        try:
+            intel = news_client.company_intel(company)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"ok": True, **asdict(intel)}
 
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:
@@ -1059,6 +1738,13 @@ def create_app(
             return
         except Exception:  # pragma: no cover
             await ws.close()
+
+    # Modern frontend assets + client-routed pages (/_next, /dashboard/, …).
+    # Mounted LAST so every explicit API / companion / page route above wins;
+    # this catch-all only serves unmatched GETs from the static export.
+    if _frontend_built:
+        app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True),
+                  name="frontend")
 
     return app
 

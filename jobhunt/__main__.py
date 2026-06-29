@@ -194,11 +194,16 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--port", default=8765, type=int)
     p_serve.add_argument("--db-path", default="jobhunt.db",
                          help="SQLite path for dashboard persistence")
+    sub.add_parser("mcp", help="run the MCP server (agent-callable tools) over stdio")
     args = parser.parse_args(argv)
     if args.cmd == "demo":
         return cmd_demo(args)
     if args.cmd == "serve":
         return cmd_serve(args)
+    if args.cmd == "mcp":
+        from jobhunt.mcp_server import serve_stdio
+        serve_stdio()
+        return 0
     return 2  # pragma: no cover
 
 

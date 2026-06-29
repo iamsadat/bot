@@ -73,16 +73,33 @@ class VettingAgent(BaseAgent[VettingInputs, list[RiskRewardScorecard]]):
             seen.setdefault(p.company, p)
 
         cards: list[RiskRewardScorecard] = []
+        passed: list[str] = []
+        rejected: list[dict[str, str]] = []
         for company, posting in seen.items():
             score, rationale = self._score_posting(posting, inputs)
+            ok = score >= inputs.threshold
             cards.append(
                 RiskRewardScorecard(
                     company_id=company,
                     score=round(score, 3),
                     rationale=rationale,
-                    pass_threshold=score >= inputs.threshold,
+                    pass_threshold=ok,
                 )
             )
+            if ok:
+                passed.append(company)
+            else:
+                rejected.append({
+                    "item": company,
+                    "reason": f"weighted score {score:.0%} < {inputs.threshold:.0%}",
+                })
+        self.emit(
+            trace, "act",
+            f"vetted {len(cards)} companies; {len(passed)} passed threshold",
+            considered=passed[:8],
+            rejected=rejected[:8],
+            confidence=round(len(passed) / max(1, len(cards)), 3),
+        )
         return cards
 
     # ----- scoring entry-point ----------------------------------------------

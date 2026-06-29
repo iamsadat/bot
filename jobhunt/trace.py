@@ -48,6 +48,15 @@ class TraceStore:
         # Defensive copy of thoughts so later mutations don't change history.
         trace.thoughts = [redact(t) for t in trace.thoughts]
         trace.decision = redact(trace.decision)
+        for ev in trace.events:
+            ev.summary = redact(ev.summary)
+            ev.decision = redact(ev.decision)
+            ev.considered = [redact(c) for c in ev.considered]
+            ev.rejected = [
+                {"item": redact(str(r.get("item", ""))),
+                 "reason": redact(str(r.get("reason", "")))}
+                for r in ev.rejected
+            ]
         self._traces.append(trace)
 
     def all(self) -> list[ReasoningTrace]:
@@ -79,8 +88,26 @@ class ThoughtBus:
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
 
-    def publish(self, agent: str, task_id: str, thought: str) -> None:
+    def publish(
+        self, agent: str, task_id: str, thought: str,
+        *, event: dict | None = None,
+    ) -> None:
         payload = {"agent": agent, "task_id": task_id, "thought": redact(thought)}
+        if event is not None:
+            # Structured reasoning fields (phase/considered/rejected/confidence/
+            # decision). Capped + redacted by the caller (emit). Old WS consumers
+            # that only read ``thought`` keep working.
+            payload.update({
+                "phase": event.get("phase", "act"),
+                "considered": [redact(str(c)) for c in event.get("considered", [])][:8],
+                "rejected": [
+                    {"item": redact(str(r.get("item", ""))),
+                     "reason": redact(str(r.get("reason", "")))}
+                    for r in event.get("rejected", [])
+                ][:8],
+                "confidence": event.get("confidence"),
+                "decision": redact(str(event.get("decision", ""))),
+            })
         self._history.append(payload)
         if len(self._history) > self._max_history:
             self._history = self._history[-self._max_history:]

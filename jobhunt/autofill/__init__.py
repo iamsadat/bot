@@ -14,6 +14,7 @@ from jobhunt.autofill.base import (
     FormField,
     Page,
 )
+from jobhunt.autofill.driver import PlaywrightPage, autofill_application
 from jobhunt.autofill.generic import GenericAutofiller
 from jobhunt.autofill.icims import IcimsAutofiller
 from jobhunt.autofill.mapper import map_profile_to_fields
@@ -30,6 +31,8 @@ __all__ = [
     "GenericAutofiller",
     "IcimsAutofiller",
     "Page",
+    "PlaywrightPage",
     "WorkdayAutofiller",
+    "autofill_application",
     "map_profile_to_fields",
 ]

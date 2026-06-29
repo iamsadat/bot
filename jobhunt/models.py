@@ -7,6 +7,7 @@ SQLAlchemy when wiring Postgres in Phase 1.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import time
 import uuid
@@ -26,6 +27,52 @@ def _now() -> float:
 # --------------------------------------------------------------------- user
 
 @dataclass
+class Experience:
+    """One structured work-history entry, used to render a real resume."""
+
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    start: str = ""
+    end: str = ""
+    bullets: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Education:
+    school: str = ""
+    degree: str = ""
+    field: str = ""
+    start: str = ""
+    end: str = ""
+    location: str = ""
+
+
+@dataclass
+class Project:
+    name: str = ""
+    description: str = ""
+    bullets: list[str] = field(default_factory=list)
+    link: str = ""
+    skills: list[str] = field(default_factory=list)
+
+
+def _coerce(cls: type, item: Any) -> Any:
+    """Coerce a (possibly partial / legacy free-form) dict into ``cls``.
+
+    Tolerates missing keys and ignores unknown ones so old snapshots and
+    hand-written experience dicts keep loading after the schema grew.
+    """
+    if isinstance(item, cls):
+        return item
+    if not isinstance(item, dict):
+        return cls()
+    fields = {f.name for f in dataclasses.fields(cls)}
+    return cls(**{k: v for k, v in item.items() if k in fields})
+
+
+@dataclass
 class UserProfile:
     user_id: str
     name: str
@@ -38,15 +85,34 @@ class UserProfile:
     culture_keywords: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
     experiences: list[dict[str, Any]] = field(default_factory=list)
+    education: list[dict[str, Any]] = field(default_factory=list)
+    projects: list[dict[str, Any]] = field(default_factory=list)
+    links: dict[str, str] = field(default_factory=dict)
     veto_companies: list[str] = field(default_factory=list)
     weekly_target: int = 10
     # Standard answers to common ATS screening / custom questions, used when
     # auto-submitting (work authorization, sponsorship, years of experience,
     # LinkedIn/website, optional EEO). Free-form so new keys can be added.
     application_answers: dict[str, Any] = field(default_factory=dict)
+    # Autonomy controls: when ``auto_apply`` is on and a real ATS is connected,
+    # the engine auto-submits matches at/above ``relevance_floor`` up to
+    # ``daily_apply_cap`` applications per day. Intent only — never a secret.
+    auto_apply: bool = False
+    daily_apply_cap: int = 0
+    relevance_floor: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    # --- structured accessors (storage stays plain dicts for JSON simplicity) -
+    def structured_experiences(self) -> list[Experience]:
+        return [_coerce(Experience, e) for e in self.experiences]
+
+    def structured_education(self) -> list[Education]:
+        return [_coerce(Education, e) for e in self.education]
+
+    def structured_projects(self) -> list[Project]:
+        return [_coerce(Project, p) for p in self.projects]
 
 
 # ----------------------------------------------------------------- planning
@@ -187,6 +253,26 @@ class ToolCall:
 
 
 @dataclass
+class TraceEvent:
+    """A substantive reasoning step — not just a status line.
+
+    Captures what an agent *considered*, what it *rejected* and why, its
+    *confidence*, and the *decision* it reached, so the dashboard can render a
+    genuine reasoning feed instead of a flat activity log. ``phase`` is one of
+    deliberate | act | critique | decide.
+    """
+
+    phase: str
+    summary: str
+    considered: list[str] = field(default_factory=list)
+    rejected: list[dict[str, str]] = field(default_factory=list)  # {item, reason}
+    confidence: float | None = None
+    decision: str = ""
+    data: dict[str, Any] = field(default_factory=dict)
+    created_at: float = field(default_factory=_now)
+
+
+@dataclass
 class ReasoningTrace:
     trace_id: str
     agent: str
@@ -197,6 +283,7 @@ class ReasoningTrace:
     decision: str = ""
     confidence: float = 0.0
     parent_trace_id: str | None = None
+    events: list[TraceEvent] = field(default_factory=list)
     created_at: float = field(default_factory=_now)
 
     @staticmethod

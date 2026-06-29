@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar
 
-from jobhunt.models import ReasoningTrace
+from jobhunt.models import ReasoningTrace, TraceEvent
 from jobhunt.tools import ToolRegistry, call_tool
 from jobhunt.trace import ThoughtBus, TraceStore
 
@@ -80,8 +80,44 @@ class BaseAgent(Generic[I, O]):
     # ----- machinery --------------------------------------------------------
 
     def think(self, trace: ReasoningTrace, line: str) -> None:
-        trace.thoughts.append(line)
-        self.bus.publish(self.name, trace.task_id, line)
+        # Thin wrapper over emit() for plain status lines (phase=act).
+        self.emit(trace, "act", line)
+
+    def emit(
+        self,
+        trace: ReasoningTrace,
+        phase: str,
+        summary: str,
+        *,
+        considered: list[str] | None = None,
+        rejected: list[dict[str, str]] | None = None,
+        confidence: float | None = None,
+        decision: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a substantive reasoning step + publish it to the bus.
+
+        Appends a structured ``TraceEvent`` (what was considered/rejected/why,
+        confidence, decision) AND mirrors ``summary`` into ``trace.thoughts`` so
+        anything reading the old flat shape keeps working.
+        """
+        ev = TraceEvent(
+            phase=phase, summary=summary,
+            considered=list(considered or []),
+            rejected=list(rejected or []),
+            confidence=confidence, decision=decision,
+            data=dict(data or {}),
+        )
+        trace.events.append(ev)
+        trace.thoughts.append(summary)
+        self.bus.publish(
+            self.name, trace.task_id, summary,
+            event={
+                "phase": phase, "considered": ev.considered,
+                "rejected": ev.rejected, "confidence": confidence,
+                "decision": decision,
+            },
+        )
 
     def call_tool(
         self,
@@ -112,12 +148,19 @@ class BaseAgent(Generic[I, O]):
         # Pre-action deliberation.
         bullets = self.deliberate(inputs, trace)
         for b in bullets:
-            self.think(trace, b)
+            self.emit(trace, "deliberate", b)
 
         # Act + critique + (optional) refine.
         output = self.act(inputs, trace)
         scores = self.critique(inputs, output, trace)
         trace.self_critique = dict(scores)
+        if scores:
+            self.emit(
+                trace, "critique",
+                "self-review: " + ", ".join(f"{k}={v:.2f}" for k, v in scores.items()),
+                confidence=round(sum(scores.values()) / len(scores), 3),
+                data={"scores": scores},
+            )
 
         refined = 0
         while (
@@ -138,6 +181,8 @@ class BaseAgent(Generic[I, O]):
         decision, confidence = self.decide(inputs, output, scores, trace)
         trace.decision = decision
         trace.confidence = confidence
+        self.emit(trace, "decide", f"decision: {decision}",
+                  confidence=confidence, decision=decision)
 
         degraded = any(tc.fallback_used or not tc.ok for tc in trace.tool_calls)
 

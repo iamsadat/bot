@@ -301,6 +301,250 @@ def text_to_docx(heading: str, body: str) -> bytes:
     return buf.getvalue()
 
 
+# ---------------------------------------------------------- draft-aware layout
+#
+# These consume a ResumeDraft's structured ``rows`` directly (no text parsing)
+# to produce the clean single-column template: centered name + contact, bold
+# section headers with rules, left title/company with right-aligned dates,
+# bullet lists, right-aligned project links, comma-list skills, education lines.
+
+
+def _parse_runs(s: str) -> list[tuple[str, bool]]:
+    """Split a ``**bold**``-marked string into (text, is_bold) runs."""
+    runs: list[tuple[str, bool]] = []
+    bold = False
+    for i, part in enumerate(s.split("**")):
+        if part:
+            runs.append((part, bold))
+        bold = not bold if i < len(s.split("**")) - 1 else bold
+    return runs or [("", False)]
+
+
+def draft_to_pdf(draft: ResumeDraft) -> bytes:
+    """Render a structured ResumeDraft to the single-column template PDF."""
+    try:
+        from fpdf import FPDF  # type: ignore
+    except ImportError as e:
+        raise RendererUnavailable("fpdf2 not installed; pip install fpdf2") from e
+
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.set_margins(16, 14, 16)
+    pdf.add_page()
+    epw = pdf.w - pdf.l_margin - pdf.r_margin
+
+    # Header: centered name + contact line.
+    pdf.set_text_color(15, 15, 22)
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.cell(0, 10, _latin1(draft.candidate_name), align="C",
+             new_x="LMARGIN", new_y="NEXT")
+    contact = draft.contact_line()
+    if contact:
+        pdf.set_font("Helvetica", size=9.5)
+        pdf.set_text_color(90, 92, 110)
+        pdf.cell(0, 5, _latin1(contact), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    if draft.summary:
+        pdf.set_text_color(40, 40, 48)
+        pdf.set_font("Helvetica", size=9.5)
+        pdf.multi_cell(0, 4.6, _latin1(draft.summary), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
+
+    def section_header(title: str) -> None:
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(15, 15, 22)
+        pdf.cell(0, 6, _latin1(title), new_x="LMARGIN", new_y="NEXT")
+        y = pdf.get_y()
+        pdf.set_draw_color(40, 40, 48)
+        pdf.set_line_width(0.4)
+        pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+        pdf.ln(1.5)
+
+    def row(left_md: str, right: str, size: float = 10.0) -> None:
+        y = pdf.get_y()
+        pdf.set_font("Helvetica", size=size)
+        rw = (pdf.get_string_width(_latin1(right)) + 1) if right else 0.0
+        max_left = epw - rw - 2
+        # Render left runs inline (bold/regular), clipped to max_left.
+        pdf.set_xy(pdf.l_margin, y)
+        used = 0.0
+        for text, bold in _parse_runs(left_md):
+            pdf.set_font("Helvetica", "B" if bold else "", size)
+            t = _latin1(text)
+            w = pdf.get_string_width(t)
+            if used + w > max_left:
+                # truncate this run to fit
+                while t and used + pdf.get_string_width(t) > max_left:
+                    t = t[:-1]
+                w = pdf.get_string_width(t)
+            if t:
+                pdf.cell(w, 5.4, t, new_x="RIGHT", new_y="TOP")
+                used += w
+            if used >= max_left:
+                break
+        if right:
+            pdf.set_font("Helvetica", size=size)
+            pdf.set_text_color(90, 92, 110)
+            pdf.set_xy(pdf.w - pdf.r_margin - rw, y)
+            pdf.cell(rw, 5.4, _latin1(right), align="R",
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(40, 40, 48)
+        else:
+            pdf.set_xy(pdf.l_margin, y + 5.4)
+
+    for sec in draft.sections:
+        if sec.kind == "summary":
+            continue
+        section_header(sec.title)
+        pdf.set_text_color(40, 40, 48)
+        if sec.kind == "skills" and sec.body:
+            pdf.set_font("Helvetica", size=10)
+            pdf.multi_cell(0, 5, _latin1(sec.body), new_x="LMARGIN", new_y="NEXT")
+            continue
+        if sec.body:
+            pdf.set_font("Helvetica", size=10)
+            pdf.multi_cell(0, 5, _latin1(sec.body), new_x="LMARGIN", new_y="NEXT")
+        for r in sec.rows:
+            right = str(r.get("right") or r.get("link") or "")
+            row(str(r.get("left", "")), right)
+            pdf.set_font("Helvetica", size=9.5)
+            pdf.set_text_color(45, 45, 55)
+            for b in r.get("bullets", []):
+                text = b["text"] if isinstance(b, dict) else str(b)
+                pdf.set_x(pdf.l_margin + 3)
+                pdf.multi_cell(epw - 3, 4.6, _latin1("•  " + text),
+                               new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1.2)
+
+    return bytes(pdf.output())
+
+
+def draft_to_styled_html(draft: ResumeDraft) -> str:
+    """Render a ResumeDraft to a self-contained single-column HTML page."""
+    def runs_to_html(s: str) -> str:
+        out = []
+        for text, bold in _parse_runs(s):
+            t = _esc(text)
+            out.append(f"<strong>{t}</strong>" if bold else t)
+        return "".join(out)
+
+    blocks: list[str] = []
+    for sec in draft.sections:
+        if sec.kind == "summary":
+            continue
+        blocks.append(f"<h2>{_esc(sec.title)}</h2>")
+        if sec.kind == "skills" and sec.body:
+            blocks.append(f'<p class="skills">{_esc(sec.body)}</p>')
+            continue
+        if sec.body:
+            blocks.append(f"<p>{_esc(sec.body)}</p>")
+        for r in sec.rows:
+            right = str(r.get("right") or "")
+            link = str(r.get("link") or "")
+            right_html = (f'<a href="{_esc(link)}">{_esc(right or link)}</a>'
+                          if link else _esc(right))
+            blocks.append(
+                '<div class="row"><span class="left">'
+                f'{runs_to_html(str(r.get("left", "")))}</span>'
+                f'<span class="right">{right_html}</span></div>'
+            )
+            bullets = r.get("bullets", [])
+            if bullets:
+                lis = "".join(
+                    f"<li>{_esc(b['text'] if isinstance(b, dict) else str(b))}</li>"
+                    for b in bullets
+                )
+                blocks.append(f"<ul>{lis}</ul>")
+
+    contact = _esc(draft.contact_line())
+    summary = f'<p class="summary">{_esc(draft.summary)}</p>' if draft.summary else ""
+    inner = "\n  ".join(blocks)
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8">
+<title>{_esc(draft.candidate_name)} — {_esc(draft.target_role)}</title>
+<style>
+  :root {{ --ink:#14161f; --muted:#5b6478; --rule:#14161f; }}
+  body {{ font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+          max-width: 740px; margin: 40px auto; padding: 0 28px;
+          color: var(--ink); line-height: 1.45; }}
+  h1 {{ text-align:center; font-size: 2.0em; margin: 0 0 2px; letter-spacing:-0.01em; }}
+  .contact {{ text-align:center; color: var(--muted); font-size: 0.86em; margin-bottom: 14px; }}
+  .summary {{ font-size: 0.92em; margin: 0 0 6px; }}
+  h2 {{ font-size: 1.05em; margin: 18px 0 2px; padding-bottom: 3px;
+        border-bottom: 1.5px solid var(--rule); }}
+  .row {{ display:flex; justify-content:space-between; gap:12px;
+          margin-top: 8px; font-size: 0.92em; }}
+  .row .left strong {{ font-weight: 700; }}
+  .row .right {{ color: var(--muted); white-space: nowrap; font-size: 0.92em; }}
+  .row .right a {{ color: var(--muted); text-decoration: none; }}
+  ul {{ margin: 3px 0 4px; padding-left: 18px; }}
+  li {{ margin-bottom: 3px; font-size: 0.9em; }}
+  p.skills {{ font-size: 0.9em; margin: 4px 0; }}
+</style></head><body>
+  <h1>{_esc(draft.candidate_name)}</h1>
+  <div class="contact">{contact}</div>
+  {summary}
+  {inner}
+</body></html>"""
+
+
+def draft_to_docx(draft: ResumeDraft) -> bytes:
+    """Render a ResumeDraft to a .docx matching the single-column template."""
+    try:
+        from docx import Document  # type: ignore
+        from docx.enum.text import WD_TAB_ALIGNMENT
+        from docx.shared import Inches, Pt
+    except ImportError as e:
+        raise RendererUnavailable(
+            "python-docx not installed; pip install python-docx"
+        ) from e
+
+    doc = Document()
+    name = doc.add_paragraph()
+    name.alignment = 1  # center
+    run = name.add_run(draft.candidate_name)
+    run.bold = True
+    run.font.size = Pt(20)
+    contact = draft.contact_line()
+    if contact:
+        c = doc.add_paragraph()
+        c.alignment = 1
+        c.add_run(contact).font.size = Pt(9)
+    if draft.summary:
+        doc.add_paragraph(draft.summary)
+
+    right_tab = Inches(6.5)
+    for sec in draft.sections:
+        if sec.kind == "summary":
+            continue
+        h = doc.add_heading(sec.title, level=2)
+        h.paragraph_format.space_before = Pt(8)
+        if sec.kind == "skills" and sec.body:
+            doc.add_paragraph(sec.body)
+            continue
+        if sec.body:
+            doc.add_paragraph(sec.body)
+        for r in sec.rows:
+            p = doc.add_paragraph()
+            p.paragraph_format.tab_stops.add_tab_stop(
+                right_tab, WD_TAB_ALIGNMENT.RIGHT)
+            for text, bold in _parse_runs(str(r.get("left", ""))):
+                run = p.add_run(text)
+                run.bold = bold
+            right = str(r.get("right") or r.get("link") or "")
+            if right:
+                p.add_run("\t" + right)
+            for b in r.get("bullets", []):
+                text = b["text"] if isinstance(b, dict) else str(b)
+                doc.add_paragraph(text, style="List Bullet")
+
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------- factory
 
 
