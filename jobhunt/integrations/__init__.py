@@ -16,14 +16,23 @@ from jobhunt.integrations.google_auth import (
     Transport,
     UrllibTransport,
 )
-from jobhunt.integrations.gmail import GmailInboxSource
+from jobhunt.integrations.gmail import GmailInboxSource, GmailSender
 from jobhunt.integrations.gcal import CalendarEvent, GoogleCalendarClient
 from jobhunt.integrations.github import GitHubClient, GitHubError, repos_to_projects
+from jobhunt.integrations.google_factory import (
+    build_calendar_from_env, build_gmail_sender_from_env,
+    build_gmail_source_from_env, google_configured,
+)
 
 __all__ = [
     "GitHubClient",
     "GitHubError",
     "repos_to_projects",
+    "GmailSender",
+    "build_calendar_from_env",
+    "build_gmail_sender_from_env",
+    "build_gmail_source_from_env",
+    "google_configured",
     "FakeTransport",
     "GoogleAPIError",
     "GoogleCredentials",

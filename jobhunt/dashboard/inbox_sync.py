@@ -29,7 +29,15 @@ _RANK = {"Saved": 0, "Applied": 1, "Assessment": 2, "Interview": 3, "Offer": 4, 
 
 
 def build_inbox_from_env():
-    """Return an ``IMAPInboxSource`` from env vars, or ``None`` if unconfigured."""
+    """Return an inbox source from env, or ``None`` if unconfigured.
+
+    Prefers **Gmail API** (richer than IMAP, OAuth) when Google credentials are
+    set, else falls back to IMAP. Both satisfy the same fetch/InboxSource surface.
+    """
+    from jobhunt.integrations.google_factory import build_gmail_source_from_env
+    gmail = build_gmail_source_from_env()
+    if gmail is not None:
+        return gmail
     host = os.environ.get("JOBHUNT_IMAP_HOST")
     user = os.environ.get("JOBHUNT_IMAP_USER")
     pw = os.environ.get("JOBHUNT_IMAP_PASSWORD")

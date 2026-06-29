@@ -292,6 +292,26 @@ def _add_event(
             break
 
 
+def _email_template(state: DashboardState, job_id: str, kind: str) -> tuple[str, str]:
+    """Build a (subject, body) follow-up / thank-you for a job from templates."""
+    doc = state.documents.get(job_id, {})
+    job = next((j for j in state.jobs if j["job_id"] == job_id), {})
+    company = doc.get("company") or job.get("company", "the team")
+    title = doc.get("title") or job.get("title", "the role")
+    name = state.user_profile.name if state.user_profile else ""
+    if kind == "thank_you":
+        subject = f"Thank you — {title}"
+        body = (f"Hi,\n\nThank you for taking the time to discuss the {title} "
+                f"role at {company}. I enjoyed the conversation and am very "
+                f"excited about the opportunity to contribute.\n\nBest,\n{name}")
+    else:  # follow_up
+        subject = f"Following up — {title}"
+        body = (f"Hi,\n\nI wanted to follow up on my application for the {title} "
+                f"role at {company}. I remain very interested and would welcome "
+                f"the chance to discuss how I can help the team.\n\nBest,\n{name}")
+    return subject, body
+
+
 def _notify(state: DashboardState, kind: str, title: str, body: str = "", url: str = "") -> None:
     """Fire a notification if a notifier is configured (best-effort)."""
     notifier = getattr(state, "notifier", None)
@@ -743,6 +763,15 @@ def create_app(
     notifier = build_notifier_from_env()
     if state is not None and notifier is not None:
         state.notifier = notifier
+
+    # Google: Gmail sender (follow-ups/thank-yous) + Calendar (interview holds).
+    # Built from env OAuth creds; None when unconfigured. (Gmail inbox is wired
+    # via build_inbox_from_env above, which prefers Gmail over IMAP.)
+    from jobhunt.integrations.google_factory import (
+        build_calendar_from_env, build_gmail_sender_from_env,
+    )
+    gmail_sender = build_gmail_sender_from_env()
+    calendar = build_calendar_from_env()
 
     # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
     # Lever submitters; tests inject one backed by FakePoster. Defined before
@@ -1432,6 +1461,56 @@ def create_app(
             body="If you can read this, your channel is wired up. 🎯"))
         return {"ok": True, "delivered": delivered,
                 "channels": [s.name for s in notifier.sinks]}
+
+    # ----------------------------------------------------------------- google
+
+    @app.get("/api/google/status")
+    def google_status() -> dict:
+        return {"gmail_send": gmail_sender is not None,
+                "calendar": calendar is not None,
+                "gmail_inbox": getattr(inbox_source, "name", "") == "gmail"}
+
+    @app.post("/api/email/send")
+    def email_send(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Send a follow-up / thank-you via Gmail. Body: {to, subject?, body?,
+        job_id?, kind?}. When job_id+kind given and body omitted, a template is
+        filled from the job/profile."""
+        if gmail_sender is None:
+            raise HTTPException(status_code=400,
+                                detail="Gmail not configured — set JOBHUNT_GOOGLE_*")
+        to = str(body.get("to", "")).strip()
+        if "@" not in to:
+            raise HTTPException(status_code=422, detail="valid 'to' address required")
+        subject = body.get("subject", "")
+        text = body.get("body", "")
+        if not text and body.get("job_id") and body.get("kind"):
+            subject, text = _email_template(
+                state, str(body["job_id"]), str(body["kind"]))
+        if not text:
+            raise HTTPException(status_code=422, detail="'body' or job_id+kind required")
+        try:
+            mid = gmail_sender.send(to, subject or "Following up", text)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"send failed: {exc}")
+        return {"ok": True, "message_id": mid}
+
+    @app.post("/api/calendar/hold")
+    def calendar_hold(body: dict) -> dict:
+        """Create a Google Calendar event. Body: {summary, start, end,
+        description?, attendees?} with ISO-8601 start/end."""
+        if calendar is None:
+            raise HTTPException(status_code=400,
+                                detail="Calendar not configured — set JOBHUNT_GOOGLE_*")
+        if not (body.get("summary") and body.get("start") and body.get("end")):
+            raise HTTPException(status_code=422, detail="summary/start/end required")
+        try:
+            ev = calendar.create_event(
+                summary=body["summary"], start_iso=body["start"], end_iso=body["end"],
+                description=body.get("description", ""),
+                attendees=body.get("attendees") or None)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"calendar error: {exc}")
+        return {"ok": True, "event_id": ev.id, "html_link": ev.html_link}
 
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:
