@@ -53,11 +53,23 @@ function ResumeDoc({ d }: { d: ResumeDraft }) {
   );
 }
 
+function money(n: number, ccy: string) {
+  return `${ccy === 'USD' ? '$' : ccy === 'GBP' ? '£' : ccy + ' '}${Math.round(n / 1000)}k`;
+}
+
 export default function ResumePreview({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const [doc, setDoc] = useState<Doc | null>(null);
+  const [salary, setSalary] = useState<any>(null);
   useEffect(() => {
     setDoc(null);
-    if (job) api.document(job.job_id).then((r) => setDoc(r.document)).catch(() => setDoc(null));
+    setSalary(null);
+    if (job) {
+      api.document(job.job_id).then((r) => setDoc(r.document)).catch(() => setDoc(null));
+      // Salary intel is optional (needs Adzuna keys) — silently skip if off.
+      api.salary(job.title, job.location || '')
+        .then((s) => { if (s.sample > 0) setSalary(s); })
+        .catch(() => {});
+    }
   }, [job]);
 
   return (
@@ -81,6 +93,18 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               </div>
               <button onClick={onClose} className="glass rounded-full px-3 py-1 text-sm">✕</button>
             </div>
+
+            {salary && (
+              <div className="glass rounded-xl2 p-3 text-sm">
+                <span className="text-muted">Market pay </span>
+                <span className="font-semibold text-ink">
+                  {money(salary.p10, salary.currency)}–{money(salary.p90, salary.currency)}
+                </span>
+                <span className="text-muted"> · median </span>
+                <span className="font-semibold text-grad">{money(salary.median, salary.currency)}</span>
+                <span className="text-muted"> ({salary.sample} postings)</span>
+              </div>
+            )}
 
             <div className="flex flex-wrap gap-2">
               {['pdf', 'docx', 'html', 'txt'].map((f) => (

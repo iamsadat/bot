@@ -777,6 +777,13 @@ def create_app(
     from jobhunt.integrations.enrichment import build_contact_finder_from_env
     contact_finder = build_contact_finder_from_env()
 
+    # Salary intelligence (Adzuna histogram) + company news intel (NewsAPI).
+    from jobhunt.integrations.market import (
+        build_news_client_from_env, build_salary_client_from_env,
+    )
+    salary_client = build_salary_client_from_env()
+    news_client = build_news_client_from_env()
+
     # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
     # Lever submitters; tests inject one backed by FakePoster. Defined before
     # the lifespan so the continuous-discovery loop can reach it.
@@ -1560,6 +1567,38 @@ def create_app(
         llm_client = build_llm_client_from_env()
         llm = resume_callback(llm_client) if llm_client is not None else None
         return {"ok": True, **draft_outreach(state.user_profile, job, doc, contact, llm=llm)}
+
+    # --------------------------------------------------------------- market intel
+
+    @app.get("/api/market/status")
+    def market_status() -> dict:
+        return {"salary": salary_client is not None, "news": news_client is not None}
+
+    @app.get("/api/salary")
+    def salary(role: str, location: str = "") -> dict:
+        if salary_client is None:
+            raise HTTPException(status_code=400,
+                                detail="salary intel needs Adzuna keys (ADZUNA_APP_ID/KEY)")
+        if not role.strip():
+            raise HTTPException(status_code=422, detail="role is required")
+        try:
+            est = salary_client.estimate(role, location)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"ok": True, **asdict(est)}
+
+    @app.get("/api/company/intel")
+    def company_intel(company: str) -> dict:
+        if news_client is None:
+            raise HTTPException(status_code=400,
+                                detail="company news needs JOBHUNT_NEWSAPI_KEY")
+        if not company.strip():
+            raise HTTPException(status_code=422, detail="company is required")
+        try:
+            intel = news_client.company_intel(company)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"ok": True, **asdict(intel)}
 
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:

@@ -40,6 +40,9 @@ export const api = {
     req<any>('POST', `/api/approve/${id}?decision=${decision}`),
   downloadUrl: (jobId: string, fmt: string, kind = 'resume') =>
     `${API_BASE}/api/documents/${jobId}/download?format=${fmt}&kind=${kind}`,
+  salary: (role: string, location = '') =>
+    req<{ currency: string; p10: number; median: number; p90: number; sample: number }>(
+      'GET', `/api/salary?role=${encodeURIComponent(role)}&location=${encodeURIComponent(location)}`),
 };
 
 export function wsUrl(): string {
