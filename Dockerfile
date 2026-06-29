@@ -1,7 +1,17 @@
 # JobHunt dashboard — production container.
 # Build:  docker build -t jobhunt .
 # Run:    docker run -p 8000:8000 jobhunt
-# Then open http://localhost:8000
+# Then open http://localhost:8000  (modern UI at /app, legacy at /)
+
+# ---- stage 1: build the Next.js frontend → static export (frontend/out) ----
+FROM node:22-slim AS frontend
+WORKDIR /fe
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci || npm install
+COPY frontend/ ./
+RUN npm run build
+
+# ---- stage 2: python app ----
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -18,6 +28,8 @@ RUN pip install --upgrade pip && \
 
 # App source
 COPY . .
+# Bring in the built static frontend so FastAPI serves it under /app.
+COPY --from=frontend /fe/out ./frontend/out
 RUN pip install -e .
 
 EXPOSE 8000

@@ -55,6 +55,7 @@ try:
         WebSocket, WebSocketDisconnect,
     )
     from fastapi.responses import HTMLResponse, JSONResponse, Response
+    from fastapi.staticfiles import StaticFiles
     _FASTAPI_IMPORT_ERROR: ImportError | None = None
 except ImportError as _exc:  # pragma: no cover
     _FASTAPI_IMPORT_ERROR = _exc
@@ -749,6 +750,17 @@ def create_app(
 
     app = FastAPI(title="JobHunt Dashboard", version="0.3.0", lifespan=lifespan)
 
+    # Local-dev CORS: the Next.js dev server (next dev on :3000) is a different
+    # origin. In production the frontend is static-exported and served from this
+    # same app, so no CORS is needed there. Comma-separated origins, opt-in.
+    _cors = [o.strip() for o in os.environ.get("JOBHUNT_CORS_ORIGINS", "").split(",") if o.strip()]
+    if _cors:
+        from fastapi.middleware.cors import CORSMiddleware
+        app.add_middleware(
+            CORSMiddleware, allow_origins=_cors, allow_credentials=True,
+            allow_methods=["*"], allow_headers=["*"],
+        )
+
     # ------------------------------------------------------------- per-request state
 
     def get_state(request: Request, response: FastAPIResponse) -> DashboardState:
@@ -797,6 +809,19 @@ def create_app(
         return (Path(__file__).parent / "client.html").read_text(
             encoding="utf-8"
         )
+
+    # ---- modern Next.js frontend (static export), served under /app -----------
+    # Built via `cd frontend && npm ci && npm run build` → frontend/out. Mounted
+    # only when present, so the offline test suite (no Node build) is unaffected
+    # and `/` keeps serving the legacy SPA. basePath/assetPrefix are /app so all
+    # asset + route URLs resolve under this mount.
+    _frontend_dir = Path(
+        os.environ.get("JOBHUNT_FRONTEND_DIR")
+        or (Path(__file__).resolve().parents[2] / "frontend" / "out")
+    )
+    if _frontend_dir.is_dir():
+        app.mount("/app", StaticFiles(directory=str(_frontend_dir), html=True),
+                  name="frontend")
 
     # ---- static companions: cinematic demo, SSOT tracker, sample-data app ----
     _ROOT = Path(__file__).resolve().parent.parent  # jobhunt/
