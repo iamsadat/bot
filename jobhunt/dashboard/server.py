@@ -311,11 +311,18 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         "answers": getattr(profile, "application_answers", {}) if profile else {},
     }
     # Render a real PDF so the upload is a valid file, not text mislabeled as PDF.
+    # Prefer the structured single-column layout when a draft is available.
     try:
-        from jobhunt.resume_renderer import text_to_pdf
-        lines = resume_text.split("\n")
-        heading = lines[0].strip() if lines and lines[0].strip() else company
-        plan["resume_pdf"] = text_to_pdf(heading, "\n".join(lines[1:]))
+        draft_dict = doc.get("draft")
+        if draft_dict:
+            from jobhunt.resume_renderer import draft_to_pdf
+            from jobhunt.resume_template import ResumeDraft
+            plan["resume_pdf"] = draft_to_pdf(ResumeDraft.from_dict(draft_dict))
+        else:
+            from jobhunt.resume_renderer import text_to_pdf
+            lines = resume_text.split("\n")
+            heading = lines[0].strip() if lines and lines[0].strip() else company
+            plan["resume_pdf"] = text_to_pdf(heading, "\n".join(lines[1:]))
     except Exception:
         pass  # fpdf2 missing → submitters fall back to encoding the plain text
     try:
@@ -431,6 +438,7 @@ def _execute_hunt(state: DashboardState) -> None:
             "matched_keywords": doc.matched_keywords,
             "missing_keywords": doc.missing_keywords,
             "bullets": doc.bullets,
+            "draft": doc.draft,
         }
         state.approval_queue.submit(
             job_id=doc.job_id,
@@ -678,9 +686,19 @@ def create_app(
             raise HTTPException(status_code=422, detail="resume text is required")
         result = parse_resume_text(text)
         if state.user_profile is not None:
-            existing = set(state.user_profile.skills)
-            merged = sorted(existing | set(result["skills"]))
-            state.user_profile.skills = merged
+            p = state.user_profile
+            existing = set(p.skills)
+            p.skills = sorted(existing | set(result["skills"]))
+            # Fill-empty only: never clobber structured data the user already
+            # entered or edited. The builder UI is the source of truth.
+            if not p.experiences and result.get("experiences"):
+                p.experiences = result["experiences"]
+            if not p.education and result.get("education"):
+                p.education = result["education"]
+            if not p.projects and result.get("projects"):
+                p.projects = result["projects"]
+            for k, v in (result.get("links") or {}).items():
+                p.links.setdefault(k, v)
             state.persist()
         return result
 
@@ -750,9 +768,47 @@ def create_app(
                 k: v for k, v in body["application_answers"].items()
                 if str(v).strip() != ""
             }
+        if "links" in body and isinstance(body["links"], dict):
+            p.links = {k: str(v).strip() for k, v in body["links"].items()
+                       if str(v).strip()}
+        if "auto_apply" in body:
+            p.auto_apply = bool(body["auto_apply"])
+        if "daily_apply_cap" in body:
+            p.daily_apply_cap = max(0, int(body["daily_apply_cap"] or 0))
+        if "relevance_floor" in body:
+            p.relevance_floor = max(0.0, min(1.0, float(body["relevance_floor"] or 0.0)))
 
         state.persist()
         state.bus.publish("profile", p.user_id, "Profile updated.")
+        return {"ok": True, "profile": p.to_dict()}
+
+    @app.put("/api/profile/structured")
+    def update_structured(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Replace the structured resume sections from the builder UI.
+
+        Accepts ``experiences``/``education``/``projects`` arrays and a
+        ``links`` map. Each is replaced wholesale (the builder owns them).
+        """
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        p = state.user_profile
+
+        def _list_of_dicts(key: str, current: list) -> list:
+            v = body.get(key)
+            if v is None:
+                return current
+            if not isinstance(v, list):
+                raise HTTPException(status_code=422, detail=f"{key} must be a list")
+            return [dict(item) for item in v if isinstance(item, dict)]
+
+        p.experiences = _list_of_dicts("experiences", p.experiences)
+        p.education = _list_of_dicts("education", p.education)
+        p.projects = _list_of_dicts("projects", p.projects)
+        if "links" in body and isinstance(body["links"], dict):
+            p.links = {k: str(v).strip() for k, v in body["links"].items()
+                       if str(v).strip()}
+        state.persist()
+        state.bus.publish("profile", p.user_id, "Resume sections updated.")
         return {"ok": True, "profile": p.to_dict()}
 
     # ---------------------------------------------------------------- hunt control
@@ -874,17 +930,25 @@ def create_app(
             raise HTTPException(status_code=400, detail="kind must be 'resume' or 'cover'")
 
         from jobhunt.resume_renderer import (
-            RendererUnavailable, text_to_docx, text_to_pdf, text_to_styled_html,
+            RendererUnavailable, draft_to_docx, draft_to_pdf, draft_to_styled_html,
+            text_to_docx, text_to_pdf, text_to_styled_html,
         )
+        from jobhunt.resume_template import ResumeDraft
 
         text = doc["resume_text"] if kind == "resume" else doc["cover_letter_text"]
         safe = f"{doc['company']}-{doc['title']}".replace(" ", "_").replace("/", "_")
         filename = f"{safe}-{kind}.{format}"
 
-        # The renderers take a heading + structured body. For a resume the
-        # first line is the candidate's name; promote it to the heading so the
-        # document isn't titled by the line twice. Cover letters get a synthetic
-        # heading since their body starts mid-salutation.
+        # Prefer the structured single-column layout when a draft is present and
+        # we're rendering the resume (cover letters stay plain-text bodies).
+        draft = None
+        if kind == "resume" and doc.get("draft"):
+            try:
+                draft = ResumeDraft.from_dict(doc["draft"])
+            except Exception:
+                draft = None
+
+        # Legacy heading/body split for the text-based renderers (fallback path).
         if kind == "resume":
             lines = text.split("\n")
             heading = lines[0].strip() if lines and lines[0].strip() else doc["title"]
@@ -902,19 +966,24 @@ def create_app(
         if format == "txt":
             return _attach(text.encode("utf-8"), "text/plain; charset=utf-8")
         if format == "html":
-            html = text_to_styled_html(
-                heading, body, tab_title=f"{doc['company']} — {doc['title']}",
-            )
+            if draft is not None:
+                html = draft_to_styled_html(draft)
+            else:
+                html = text_to_styled_html(
+                    heading, body, tab_title=f"{doc['company']} — {doc['title']}",
+                )
             return _attach(html.encode("utf-8"), "text/html; charset=utf-8")
         if format == "pdf":
             try:
-                return _attach(text_to_pdf(heading, body), "application/pdf")
+                pdf = draft_to_pdf(draft) if draft is not None else text_to_pdf(heading, body)
+                return _attach(pdf, "application/pdf")
             except RendererUnavailable as e:
                 raise HTTPException(status_code=503, detail=str(e))
         if format == "docx":
             try:
+                docx = draft_to_docx(draft) if draft is not None else text_to_docx(heading, body)
                 return _attach(
-                    text_to_docx(heading, body),
+                    docx,
                     "application/vnd.openxmlformats-officedocument."
                     "wordprocessingml.document",
                 )

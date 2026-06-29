@@ -140,9 +140,15 @@ def _profile_from_dict(d: dict) -> UserProfile:
         culture_keywords=list(d.get("culture_keywords", [])),
         skills=list(d.get("skills", [])),
         experiences=list(d.get("experiences", [])),
+        education=list(d.get("education", [])),
+        projects=list(d.get("projects", [])),
+        links=dict(d.get("links", {})),
         veto_companies=list(d.get("veto_companies", [])),
         weekly_target=int(d.get("weekly_target", 10)),
         application_answers=dict(d.get("application_answers", {})),
+        auto_apply=bool(d.get("auto_apply", False)),
+        daily_apply_cap=int(d.get("daily_apply_cap", 0)),
+        relevance_floor=float(d.get("relevance_floor", 0.0)),
     )
 
 

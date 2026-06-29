@@ -14,7 +14,7 @@ ever fails — which prevents a flunked draft from leaving the agent.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from jobhunt.agents.base import BaseAgent
@@ -35,6 +35,9 @@ class TailoredDocument:
     missing_keywords: list[str]
     bullets: list[dict[str, str]] = field(default_factory=list)  # {text, evidence_id}
     requires_human_approval: bool = True
+    # asdict(ResumeDraft) for the layout-aware renderer + UI preview. None when
+    # the profile has no structured history (legacy templated-text fallback).
+    draft: dict[str, Any] | None = None
 
 
 @dataclass
@@ -149,18 +152,44 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
     def act(
         self, inputs: ResumeInputs, trace: ReasoningTrace
     ) -> list[TailoredDocument]:
+        from jobhunt.resume_template import build_tailored_resume
+
         docs: list[TailoredDocument] = []
         for posting in inputs.postings:
             kws = _best_keywords(posting.jd_text, inputs.max_keywords)
-            matched, missing, bullets = self._map_evidence(
-                kws, inputs.profile, posting
-            )
-            coverage = len(matched) / max(1, len(kws))
+            draft_dict: dict[str, Any] | None = None
 
-            summary = self._summary(inputs.profile, posting, matched)
-            resume_text = self._render_resume(
-                inputs.profile, posting, bullets, summary
+            # Preferred path: render the user's REAL structured history, tailored.
+            draft = build_tailored_resume(
+                inputs.profile, posting,
+                max_keywords=inputs.max_keywords, llm=self.llm,
             )
+            # Only prefer the structured path when there are real bullets to
+            # tailor; a profile with metadata-only experiences (no bullet lines)
+            # falls back to the legacy templated path so coverage stays useful.
+            has_structure = any(
+                r.get("bullets")
+                for s in draft.sections if s.kind in ("experience", "projects")
+                for r in s.rows
+            )
+            if has_structure:
+                matched = draft.matched_keywords
+                missing = draft.missing_keywords
+                bullets = [{"text": b.text, "evidence_id": b.evidence_id}
+                           for b in draft.all_bullets()]
+                resume_text = draft.to_text()
+                draft_dict = asdict(draft)
+            else:
+                # Legacy fallback: no structured history yet → templated bullets.
+                matched, missing, bullets = self._map_evidence(
+                    kws, inputs.profile, posting
+                )
+                summary = self._summary(inputs.profile, posting, matched)
+                resume_text = self._render_resume(
+                    inputs.profile, posting, bullets, summary
+                )
+
+            coverage = len(matched) / max(1, len(matched) + len(missing))
             cover = self._render_cover(inputs.profile, posting, matched)
 
             docs.append(
@@ -175,6 +204,7 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
                     matched_keywords=matched,
                     missing_keywords=missing,
                     bullets=bullets,
+                    draft=draft_dict,
                 )
             )
             self.think(
