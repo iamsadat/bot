@@ -773,6 +773,10 @@ def create_app(
     gmail_sender = build_gmail_sender_from_env()
     calendar = build_calendar_from_env()
 
+    # Recruiter-contact enrichment (Hunter/Apollo/PDL) for outreach.
+    from jobhunt.integrations.enrichment import build_contact_finder_from_env
+    contact_finder = build_contact_finder_from_env()
+
     # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
     # Lever submitters; tests inject one backed by FakePoster. Defined before
     # the lifespan so the continuous-discovery loop can reach it.
@@ -1511,6 +1515,51 @@ def create_app(
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"calendar error: {exc}")
         return {"ok": True, "event_id": ev.id, "html_link": ev.html_link}
+
+    # ----------------------------------------------------------------- outreach
+
+    @app.get("/api/outreach/status")
+    def outreach_status() -> dict:
+        return {"configured": contact_finder is not None,
+                "provider": getattr(contact_finder, "name", "")}
+
+    @app.post("/api/outreach/find")
+    def outreach_find(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Find recruiter contacts for a job (or company/domain)."""
+        if contact_finder is None:
+            raise HTTPException(status_code=400,
+                                detail="no contact provider — set JOBHUNT_HUNTER_API_KEY")
+        from jobhunt.integrations.enrichment import domain_from_url
+        job = next((j for j in state.jobs if j["job_id"] == body.get("job_id")), {})
+        company = body.get("company") or job.get("company", "")
+        domain = body.get("domain") or domain_from_url(job.get("url", ""))
+        if not domain:
+            raise HTTPException(status_code=422,
+                                detail="could not infer company domain — pass 'domain'")
+        try:
+            contacts = contact_finder.find(company, domain)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"ok": True, "company": company, "domain": domain,
+                "contacts": [vars(c) for c in contacts]}
+
+    @app.post("/api/outreach/draft")
+    def outreach_draft(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Draft an evidence-bound outreach email for a job + contact."""
+        job_id = str(body.get("job_id", ""))
+        job = next((j for j in state.jobs if j["job_id"] == job_id), {})
+        doc = state.documents.get(job_id, {})
+        if not job and not doc:
+            raise HTTPException(status_code=404, detail="unknown job_id")
+        from jobhunt.integrations.enrichment import Contact, draft_outreach
+        from jobhunt.llm.callbacks import resume_callback
+        from jobhunt.llm.factory import build_llm_client_from_env
+        contact = Contact(name=body.get("contact_name", ""),
+                          email=body.get("contact_email", ""),
+                          title=body.get("contact_title", ""))
+        llm_client = build_llm_client_from_env()
+        llm = resume_callback(llm_client) if llm_client is not None else None
+        return {"ok": True, **draft_outreach(state.user_profile, job, doc, contact, llm=llm)}
 
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:
