@@ -17,6 +17,8 @@ Endpoints:
   GET  /api/documents/{job_id}/download
                                   download artifact (txt / pdf / docx)
   GET  /api/traces                reasoning traces (paginated)
+  GET  /api/metrics               funnel + streak + callback-rate metrics
+  POST /api/digest/send           build + (optionally) send the activity digest
   GET  /api/approvals             approval queue
   POST /api/approve/{id}          human one-click decision
   WS   /ws/stream                 live thought stream
@@ -38,6 +40,8 @@ from typing import Any, Callable
 
 from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
 from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue
+from jobhunt.digest import build_digest
+from jobhunt.metrics import compute_funnel
 from jobhunt.models import JobHuntPlan, UserProfile
 from jobhunt.onboarding import build_user_profile, parse_resume_text
 from jobhunt.trace import ThoughtBus, TraceStore
@@ -95,6 +99,7 @@ class DashboardState:
     hunt_progress: dict[str, str] = field(default_factory=dict)
     ats_config: dict = field(default_factory=dict)  # greenhouse_tokens / lever_slugs / ashby_slugs
     applies_today: dict = field(default_factory=dict)  # date-iso → count (autonomy daily cap)
+    activity_days: list = field(default_factory=list)  # ISO date strings (streaks)
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
@@ -115,6 +120,7 @@ class DashboardState:
                 hunt_error=self.hunt_error,
                 ats_config=self.ats_config,
                 applies_today=self.applies_today,
+                activity_days=self.activity_days,
             )
         except Exception:
             pass  # never let persistence block the API
@@ -133,6 +139,7 @@ class DashboardState:
         self.hunt_error = snap.get("hunt_error", "")
         self.ats_config = snap.get("ats_config", {})
         self.applies_today = snap.get("applies_today", {})
+        self.activity_days = snap.get("activity_days", [])
         # Defensive: hunts that were mid-run when the server died → idle
         if self.hunt_status == "running":
             self.hunt_status = "idle"
@@ -324,6 +331,19 @@ def _notify(state: DashboardState, kind: str, title: str, body: str = "", url: s
         pass
 
 
+def _record_activity(state: DashboardState) -> None:
+    """Record today as an active day (dedup) — powers streaks (M0/R2).
+
+    Appends ``date.today().isoformat()`` only when it isn't already the last
+    entry, so repeated applies on the same day count once. Cheap + idempotent,
+    so it's safe to call from every "actually applied" code path.
+    """
+    from datetime import date
+    today = date.today().isoformat()
+    if not state.activity_days or state.activity_days[-1] != today:
+        state.activity_days.append(today)
+
+
 def _apply_parsed_resume(profile, result: dict) -> None:
     """Merge parsed résumé output into a profile: union skills, fill-empty
     structured sections (never clobber user edits), add new links."""
@@ -364,6 +384,7 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
             f"{company} → {title}: marked Applied "
             f"(open the posting to finish on the company site).",
         )
+        _record_activity(state)
         return {"submitted": False, "manual": True}
 
     profile = state.user_profile
@@ -416,6 +437,7 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         state.bus.publish(
             "submission", job_id, f"{company} → {title}: auto-submitted{suffix}.",
         )
+        _record_activity(state)
         return {"submitted": True, "submission_id": sub_id}
 
     _add_event(
@@ -798,6 +820,7 @@ def create_app(
             state.bus.set_loop(asyncio.get_event_loop())
         poll_task = None
         disc_task = None
+        digest_task = None
         if state is not None and inbox_source is not None:
             interval = int(os.environ.get("JOBHUNT_IMAP_POLL_SECONDS", "300"))
 
@@ -843,10 +866,29 @@ def create_app(
                             )
 
                 disc_task = asyncio.create_task(_disc_loop())
+
+        # Scheduled digest: off unless a non-zero interval is set (so tests +
+        # the default deployment are unchanged). Best-effort, never crashes.
+        if state is not None:
+            digest_interval = int(os.environ.get("JOBHUNT_DIGEST_INTERVAL_SECONDS", "0"))
+            if digest_interval > 0:
+                async def _digest_loop():
+                    while True:
+                        await asyncio.sleep(digest_interval)
+                        try:
+                            digest = build_digest(state)
+                            if state.notifier:
+                                _notify(state, "digest", digest["subject"], digest["body"])
+                        except Exception as exc:  # never let the loop die
+                            state.bus.publish(
+                                "digest", "poll", f"Digest send error: {exc!r}",
+                            )
+
+                digest_task = asyncio.create_task(_digest_loop())
         try:
             yield
         finally:
-            for t in (poll_task, disc_task):
+            for t in (poll_task, disc_task, digest_task):
                 if t is not None:
                     t.cancel()
 
@@ -1444,6 +1486,22 @@ def create_app(
             grouped.setdefault(key, []).append(ev)
         return {"activity": events, "grouped": grouped}
 
+    # ----------------------------------------------------------------- metrics
+
+    @app.get("/api/metrics")
+    def get_metrics(state: DashboardState = Depends(get_state)) -> dict:
+        return compute_funnel(state)
+
+    # ----------------------------------------------------------------- digest
+
+    @app.post("/api/digest/send")
+    def send_digest(state: DashboardState = Depends(get_state)) -> dict:
+        digest = build_digest(state)
+        sent = bool(state.notifier)
+        if sent:
+            _notify(state, "digest", digest["subject"], digest["body"])
+        return {"ok": True, "sent": sent, **digest}
+
     # ----------------------------------------------------------------- inbox
 
     @app.get("/api/inbox/status")
@@ -1692,6 +1750,7 @@ def create_app(
             doc = state.documents.get(req.job_id)
             if job is not None and job.get("status") == "Saved":
                 job["status"] = "Applied"
+                _record_activity(state)
             _add_event(state, req.job_id, "Approved",
                        f"Resume approved by {reviewer or 'you'}")
             submission = _auto_apply(state, registry, req, job, doc)

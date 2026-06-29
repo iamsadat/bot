@@ -39,6 +39,7 @@ class _Snapshot(_Base):
     hunt_error = Column(Text, default="")
     ats_config_json = Column(JSON, default=dict)
     applies_today_json = Column(JSON, default=dict)  # date-iso → count (autonomy cap)
+    activity_days_json = Column(JSON, default=list)  # ISO date strings (streaks)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -80,6 +81,7 @@ class DashboardStore:
                 "hunt_error": row.hunt_error or "",
                 "ats_config": dict(row.ats_config_json or {}),
                 "applies_today": dict(row.applies_today_json or {}),
+                "activity_days": list(row.activity_days_json or []),
             }
 
     # ------------------------------------------------------------------ save
@@ -97,6 +99,7 @@ class DashboardStore:
         ats_config: dict | None = None,
         documents: dict | None = None,
         applies_today: dict | None = None,
+        activity_days: list | None = None,
     ) -> None:
         """Upsert the snapshot row."""
         appr_dicts = [
@@ -119,6 +122,8 @@ class DashboardStore:
                 row.ats_config_json = ats_config
             if applies_today is not None:
                 row.applies_today_json = applies_today
+            if activity_days is not None:
+                row.activity_days_json = activity_days
             s.commit()
 
     def clear(self) -> None:
