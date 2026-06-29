@@ -207,11 +207,13 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
                     draft=draft_dict,
                 )
             )
-            self.think(
-                trace,
-                f"{posting.company} :: {posting.title} → "
-                f"keyword coverage {coverage:.2f}, "
-                f"missing={missing[:3]}{'…' if len(missing) > 3 else ''}.",
+            self.emit(
+                trace, "act",
+                f"{posting.company} :: {posting.title} → coverage {coverage:.0%}",
+                considered=matched[:8],
+                rejected=[{"item": m, "reason": "no backing evidence in profile"}
+                          for m in missing[:8]],
+                confidence=round(coverage, 3),
             )
         return docs
 

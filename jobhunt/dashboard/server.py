@@ -1258,11 +1258,16 @@ def create_app(
     def get_activity(
         limit: int = 100, state: DashboardState = Depends(get_state),
     ) -> dict:
-        # The ThoughtBus already keeps a rolling history of every published
-        # event (discovery, approval, submission, tracking, profile…). Surface
-        # it newest-first as a human-readable activity log.
+        # The ThoughtBus keeps a rolling history of every published event,
+        # carrying structured reasoning fields (phase/considered/rejected/
+        # confidence/decision) when emitted via an agent's emit(). Surface it
+        # newest-first, plus a grouping by (agent, task_id) for the reasoning UI.
         events = list(reversed(state.bus.history()))[:limit]
-        return {"activity": events}
+        grouped: dict[str, list[dict]] = {}
+        for ev in events:
+            key = f"{ev.get('agent', '')}:{ev.get('task_id', '')}"
+            grouped.setdefault(key, []).append(ev)
+        return {"activity": events, "grouped": grouped}
 
     # ----------------------------------------------------------------- inbox
 

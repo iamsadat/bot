@@ -169,12 +169,22 @@ class DiscoveryAgent(BaseAgent[DiscoveryInputs, DiscoveryBatch]):
         self.think(trace, f"after dedupe: {len(all_postings)} (-{before - len(all_postings)})")
 
         ranked: list[JobPosting] = []
+        rejected: list[dict[str, str]] = []
         for p in all_postings:
             p.relevance_score = relevance(p, inputs.profile)
             p.ghost_score = ghost_score(p)
             if p.relevance_score < inputs.min_relevance:
+                rejected.append({
+                    "item": f"{p.company} — {p.title}",
+                    "reason": f"low relevance {p.relevance_score:.0%} "
+                              f"< {inputs.min_relevance:.0%}",
+                })
                 continue
             if p.ghost_score > inputs.max_ghost:
+                rejected.append({
+                    "item": f"{p.company} — {p.title}",
+                    "reason": f"ghost-job signal {p.ghost_score:.0%}",
+                })
                 continue
             ranked.append(p)
 
@@ -182,7 +192,15 @@ class DiscoveryAgent(BaseAgent[DiscoveryInputs, DiscoveryBatch]):
         ranked.sort(
             key=lambda p: (p.relevance_score, p.posted_at or 0.0), reverse=True
         )
-        self.think(trace, f"after relevance/ghost filtering: {len(ranked)}")
+        kept = len(ranked)
+        coverage = kept / max(1, before)
+        self.emit(
+            trace, "act",
+            f"kept {kept} of {before} postings after relevance/ghost filtering",
+            considered=[s.name for s in inputs.sources],
+            rejected=rejected[:8],
+            confidence=round(coverage, 3),
+        )
 
         return DiscoveryBatch(
             batch_id=uuid.uuid4().hex,

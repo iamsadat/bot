@@ -253,6 +253,26 @@ class ToolCall:
 
 
 @dataclass
+class TraceEvent:
+    """A substantive reasoning step — not just a status line.
+
+    Captures what an agent *considered*, what it *rejected* and why, its
+    *confidence*, and the *decision* it reached, so the dashboard can render a
+    genuine reasoning feed instead of a flat activity log. ``phase`` is one of
+    deliberate | act | critique | decide.
+    """
+
+    phase: str
+    summary: str
+    considered: list[str] = field(default_factory=list)
+    rejected: list[dict[str, str]] = field(default_factory=list)  # {item, reason}
+    confidence: float | None = None
+    decision: str = ""
+    data: dict[str, Any] = field(default_factory=dict)
+    created_at: float = field(default_factory=_now)
+
+
+@dataclass
 class ReasoningTrace:
     trace_id: str
     agent: str
@@ -263,6 +283,7 @@ class ReasoningTrace:
     decision: str = ""
     confidence: float = 0.0
     parent_trace_id: str | None = None
+    events: list[TraceEvent] = field(default_factory=list)
     created_at: float = field(default_factory=_now)
 
     @staticmethod
