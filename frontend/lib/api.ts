@@ -28,6 +28,10 @@ export const api = {
   document: (jobId: string) => req<{ document: Doc }>('GET', `/api/documents/${jobId}`),
   profile: () => req<{ profile: Profile | null }>('GET', '/api/profile'),
   parseResume: (text: string) => req<ParsedResume>('POST', '/api/onboarding/resume', { text }),
+  parseResumeFile: (filename: string, content_base64: string) =>
+    req<ParsedResume>('POST', '/api/profile/parse-resume-file', { filename, content_base64 }),
+  importGithub: (username: string) =>
+    req<{ added: number; projects: any[] }>('POST', '/api/profile/import-github', { username }),
   saveProfile: (p: any) => req<any>('POST', '/api/onboarding/profile', p),
   saveStructured: (p: any) => req<any>('PUT', '/api/profile/structured', p),
   startHunt: () => req<any>('POST', '/api/hunt/start'),

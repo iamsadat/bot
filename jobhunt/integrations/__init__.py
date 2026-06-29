@@ -18,8 +18,12 @@ from jobhunt.integrations.google_auth import (
 )
 from jobhunt.integrations.gmail import GmailInboxSource
 from jobhunt.integrations.gcal import CalendarEvent, GoogleCalendarClient
+from jobhunt.integrations.github import GitHubClient, GitHubError, repos_to_projects
 
 __all__ = [
+    "GitHubClient",
+    "GitHubError",
+    "repos_to_projects",
     "FakeTransport",
     "GoogleAPIError",
     "GoogleCredentials",

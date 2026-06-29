@@ -291,6 +291,20 @@ def _add_event(
             break
 
 
+def _apply_parsed_resume(profile, result: dict) -> None:
+    """Merge parsed résumé output into a profile: union skills, fill-empty
+    structured sections (never clobber user edits), add new links."""
+    profile.skills = sorted(set(profile.skills) | set(result.get("skills", [])))
+    if not profile.experiences and result.get("experiences"):
+        profile.experiences = result["experiences"]
+    if not profile.education and result.get("education"):
+        profile.education = result["education"]
+    if not profile.projects and result.get("projects"):
+        profile.projects = result["projects"]
+    for k, v in (result.get("links") or {}).items():
+        profile.links.setdefault(k, v)
+
+
 def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
     """Attempt real submission for a just-approved job. Returns a status dict.
 
@@ -937,19 +951,7 @@ def create_app(
             raise HTTPException(status_code=422, detail="resume text is required")
         result = parse_resume_text(text)
         if state.user_profile is not None:
-            p = state.user_profile
-            existing = set(p.skills)
-            p.skills = sorted(existing | set(result["skills"]))
-            # Fill-empty only: never clobber structured data the user already
-            # entered or edited. The builder UI is the source of truth.
-            if not p.experiences and result.get("experiences"):
-                p.experiences = result["experiences"]
-            if not p.education and result.get("education"):
-                p.education = result["education"]
-            if not p.projects and result.get("projects"):
-                p.projects = result["projects"]
-            for k, v in (result.get("links") or {}).items():
-                p.links.setdefault(k, v)
+            _apply_parsed_resume(state.user_profile, result)
             state.persist()
         return result
 
@@ -1064,6 +1066,59 @@ def create_app(
         state.persist()
         state.bus.publish("profile", p.user_id, "Resume sections updated.")
         return {"ok": True, "profile": p.to_dict()}
+
+    @app.post("/api/profile/parse-resume-file")
+    def parse_resume_file(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Parse an uploaded résumé file (base64 JSON — no multipart dep).
+
+        Body: ``{"filename": "cv.docx", "content_base64": "..."}``. Extracts
+        text (.txt/.docx/.pdf) then runs the same structured parse + fill-empty
+        merge as the paste endpoint.
+        """
+        import base64
+
+        from jobhunt.onboarding import ResumeFileError, extract_resume_text
+
+        b64 = body.get("content_base64", "")
+        if not b64:
+            raise HTTPException(status_code=422, detail="content_base64 is required")
+        try:
+            data = base64.b64decode(b64)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"invalid base64: {exc}")
+        try:
+            text = extract_resume_text(body.get("filename", ""), data)
+        except ResumeFileError as exc:
+            raise HTTPException(status_code=415, detail=str(exc))
+        result = parse_resume_text(text)
+        if state.user_profile is not None:
+            _apply_parsed_resume(state.user_profile, result)
+            state.persist()
+        return result
+
+    @app.post("/api/profile/import-github")
+    def import_github(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Import a GitHub user's public repos as Project entries."""
+        if state.user_profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        username = str(body.get("username", "")).strip().lstrip("@")
+        if not username:
+            raise HTTPException(status_code=422, detail="username is required")
+        from jobhunt.integrations import GitHubClient, GitHubError, repos_to_projects
+        try:
+            repos = GitHubClient().fetch_repos(username)
+        except GitHubError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        projects = repos_to_projects(repos)
+        p = state.user_profile
+        seen = {str(pr.get("name", "")).lower() for pr in p.projects}
+        added = [pr for pr in projects if pr["name"].lower() not in seen]
+        p.projects = list(p.projects) + added
+        p.links.setdefault("github", f"https://github.com/{username}")
+        state.persist()
+        state.bus.publish("profile", p.user_id,
+                          f"Imported {len(added)} project(s) from GitHub.")
+        return {"ok": True, "added": len(added), "projects": p.projects}
 
     # ---------------------------------------------------------------- hunt control
 

@@ -48,19 +48,50 @@ export default function Onboarding() {
     }).catch(() => {});
   }, []);
 
+  const applyParsed = (r: any) => {
+    if (r.skills?.length) setSkills((s) => Array.from(new Set([...s.split(',').map((x: string) => x.trim()).filter(Boolean), ...r.skills])).join(', '));
+    if (r.experiences?.length) setExps(r.experiences as Exp[]);
+    if (r.education?.length) setEdu(r.education as Edu[]);
+    if (r.projects?.length) setProjs(r.projects as Proj[]);
+    if (r.links) setLinks((l) => ({ ...r.links, ...l }));
+  };
+
   const parse = async () => {
     if (!paste.trim()) return;
     setMsg('Parsing…');
     try {
-      const r = await api.parseResume(paste);
-      if (r.skills?.length) setSkills((s) => Array.from(new Set([...s.split(',').map((x) => x.trim()).filter(Boolean), ...r.skills])).join(', '));
-      if (r.experiences?.length) setExps(r.experiences as Exp[]);
-      if (r.education?.length) setEdu(r.education as Edu[]);
-      if (r.projects?.length) setProjs(r.projects as Proj[]);
-      if (r.links) setLinks((l) => ({ ...r.links, ...l }));
+      applyParsed(await api.parseResume(paste));
       setMsg('Parsed — review & edit below.');
     } catch {
       setMsg('Parse failed.');
+    }
+  };
+
+  const onFile = async (file: File | undefined) => {
+    if (!file) return;
+    setMsg('Reading file…');
+    try {
+      const buf = await file.arrayBuffer();
+      let bin = '';
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      applyParsed(await api.parseResumeFile(file.name, btoa(bin)));
+      setMsg('Parsed file — review & edit below.');
+    } catch {
+      setMsg('Could not parse that file (try .docx/.pdf/.txt).');
+    }
+  };
+
+  const importGithub = async () => {
+    const u = (links.github || '').replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
+    if (!u) { setMsg('Enter your GitHub (in Links) first.'); return; }
+    setMsg('Importing GitHub…');
+    try {
+      const r = await api.importGithub(u);
+      if (r.projects?.length) setProjs(r.projects as Proj[]);
+      setMsg(`Imported ${r.added} project(s) from GitHub.`);
+    } catch {
+      setMsg('GitHub import failed.');
     }
   };
 
@@ -93,8 +124,14 @@ export default function Onboarding() {
             rows={5} placeholder="Paste your résumé text — we'll extract experience, education, projects & skills."
             className={inp}
           />
-          <div className="mt-2 flex items-center gap-3">
+          <div className="mt-2 flex flex-wrap items-center gap-3">
             <button onClick={parse} className="glass rounded-lg px-4 py-2 text-sm font-medium hover:border-white/20">Parse & prefill</button>
+            <label className="glass cursor-pointer rounded-lg px-4 py-2 text-sm font-medium hover:border-white/20">
+              Upload .pdf/.docx
+              <input type="file" accept=".pdf,.docx,.txt" className="hidden"
+                onChange={(e) => onFile(e.target.files?.[0])} />
+            </label>
+            <button onClick={importGithub} className="glass rounded-lg px-4 py-2 text-sm font-medium hover:border-white/20">Import GitHub projects</button>
             {msg && <span className="text-xs text-muted">{msg}</span>}
           </div>
         </motion.div>

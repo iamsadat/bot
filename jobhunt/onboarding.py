@@ -271,6 +271,46 @@ def _parse_sections(text: str) -> dict[str, Any]:
     return out
 
 
+class ResumeFileError(Exception):
+    """Raised when an uploaded résumé file can't be read."""
+
+
+def extract_resume_text(filename: str, data: bytes) -> str:
+    """Extract plain text from an uploaded résumé (.txt/.docx/.pdf).
+
+    DOCX uses python-docx; PDF uses pypdf when installed (optional). Plain text
+    is decoded directly. Raises :class:`ResumeFileError` on unsupported types or
+    a missing optional dependency, so the caller can return a clean 4xx.
+    """
+    name = (filename or "").lower()
+    if name.endswith(".txt") or not name:
+        try:
+            return data.decode("utf-8", "ignore")
+        except Exception as exc:  # pragma: no cover - defensive
+            raise ResumeFileError(f"could not decode text: {exc}") from exc
+    if name.endswith(".docx"):
+        try:
+            from io import BytesIO
+
+            from docx import Document  # type: ignore
+        except ImportError as exc:
+            raise ResumeFileError("DOCX parsing needs python-docx") from exc
+        doc = Document(BytesIO(data))
+        return "\n".join(p.text for p in doc.paragraphs)
+    if name.endswith(".pdf"):
+        try:
+            from io import BytesIO
+
+            from pypdf import PdfReader  # type: ignore
+        except ImportError as exc:
+            raise ResumeFileError(
+                "PDF parsing needs pypdf (pip install pypdf)"
+            ) from exc
+        reader = PdfReader(BytesIO(data))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+    raise ResumeFileError(f"unsupported file type: {filename!r} (use .txt/.docx/.pdf)")
+
+
 def build_user_profile(form: dict[str, Any]) -> UserProfile:
     """Construct a UserProfile dataclass from validated onboarding form data."""
     return UserProfile(
