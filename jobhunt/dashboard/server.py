@@ -193,19 +193,39 @@ class WorkspaceManager:
 def _build_sources(ats_config: dict):
     """Construct JobSources from the user's ATS handles, fixture fallback."""
     from jobhunt.adapters import (
-        AshbySource, FixtureSource, GreenhouseSource, LeverSource,
+        AdzunaSource, AshbySource, FixtureSource, GreenhouseSource, LeverSource,
+        PersonioSource, RecruiteeSource, USAJobsSource, WorkableSource,
     )
 
+    def _slugs(key: str) -> list[str]:
+        return [s.strip() for s in ats_config.get(key, []) if s.strip()]
+
     sources = []
-    gh = [s.strip() for s in ats_config.get("greenhouse_tokens", []) if s.strip()]
-    lv = [s.strip() for s in ats_config.get("lever_slugs", []) if s.strip()]
-    ab = [s.strip() for s in ats_config.get("ashby_slugs", []) if s.strip()]
+    gh, lv, ab = _slugs("greenhouse_tokens"), _slugs("lever_slugs"), _slugs("ashby_slugs")
+    rc, wk, pn = _slugs("recruitee_slugs"), _slugs("workable_slugs"), _slugs("personio_slugs")
     if gh:
         sources.append(GreenhouseSource(board_tokens=gh))
     if lv:
         sources.append(LeverSource(companies=lv))
     if ab:
         sources.append(AshbySource(companies=ab))
+    if rc:
+        sources.append(RecruiteeSource(companies=rc))
+    if wk:
+        sources.append(WorkableSource(accounts=wk))
+    if pn:
+        sources.append(PersonioSource(companies=pn))
+
+    # Aggregators with native search use env-configured API keys (not per-user
+    # ATS handles), so they augment whatever boards are connected.
+    adz_id, adz_key = os.environ.get("ADZUNA_APP_ID"), os.environ.get("ADZUNA_APP_KEY")
+    if adz_id and adz_key:
+        sources.append(AdzunaSource(
+            app_id=adz_id, app_key=adz_key,
+            country=os.environ.get("ADZUNA_COUNTRY", "us")))
+    usa_email, usa_key = os.environ.get("USAJOBS_EMAIL"), os.environ.get("USAJOBS_API_KEY")
+    if usa_email and usa_key:
+        sources.append(USAJobsSource(email=usa_email, api_key=usa_key))
 
     if not sources:
         # Offline fallback — uses fixture jobs so the demo always has data
@@ -945,6 +965,9 @@ def create_app(
             "greenhouse_tokens": _parse_list("greenhouse_tokens"),
             "lever_slugs": _parse_list("lever_slugs"),
             "ashby_slugs": _parse_list("ashby_slugs"),
+            "recruitee_slugs": _parse_list("recruitee_slugs"),
+            "workable_slugs": _parse_list("workable_slugs"),
+            "personio_slugs": _parse_list("personio_slugs"),
         }
         state.persist()
         return {"ok": True, "ats_config": state.ats_config}

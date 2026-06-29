@@ -28,8 +28,14 @@ class HTTPClientError(Exception):
 
 
 class HTTPClient(Protocol):
-    def get_json(self, url: str, *, timeout: float = 10.0) -> Any: ...
-    def get_text(self, url: str, *, timeout: float = 10.0) -> str: ...
+    def get_json(
+        self, url: str, *, timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ) -> Any: ...
+    def get_text(
+        self, url: str, *, timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ) -> str: ...
 
 
 class UrllibHTTPClient:
@@ -37,10 +43,14 @@ class UrllibHTTPClient:
 
     user_agent = "jobhunt/0.1 (+https://example.com)"
 
-    def get_json(self, url: str, *, timeout: float = 10.0) -> Any:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": self.user_agent, "Accept": "application/json"}
-        )
+    def get_json(
+        self, url: str, *, timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        hdrs = {"User-Agent": self.user_agent, "Accept": "application/json"}
+        if headers:
+            hdrs.update(headers)
+        req = urllib.request.Request(url, headers=hdrs)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status != 200:
@@ -53,10 +63,17 @@ class UrllibHTTPClient:
         except json.JSONDecodeError as exc:
             raise HTTPClientError(f"{url} returned non-JSON: {exc}") from exc
 
-    def get_text(self, url: str, *, timeout: float = 10.0) -> str:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": self.user_agent, "Accept": "text/xml, application/rss+xml, text/plain"}
-        )
+    def get_text(
+        self, url: str, *, timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        hdrs = {
+            "User-Agent": self.user_agent,
+            "Accept": "text/xml, application/rss+xml, text/plain",
+        }
+        if headers:
+            hdrs.update(headers)
+        req = urllib.request.Request(url, headers=hdrs)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status != 200:
@@ -88,14 +105,20 @@ class FakeHTTPClient:
         self._text_routes: dict[str, Any] = text_routes if text_routes is not None else {}
         self.calls: list[str] = []
 
-    def get_json(self, url: str, *, timeout: float = 10.0) -> Any:
+    def get_json(
+        self, url: str, *, timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
         self.calls.append(url)
         if url not in self._routes:
             raise HTTPClientError(f"no fake route for {url}")
         value = self._routes[url]
         return value() if callable(value) else value
 
-    def get_text(self, url: str, *, timeout: float = 10.0) -> str:
+    def get_text(
+        self, url: str, *, timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ) -> str:
         self.calls.append(url)
         if url not in self._text_routes:
             raise HTTPClientError(f"no fake text route for {url}")
@@ -123,10 +146,16 @@ class RateLimitedHTTPClient:
         self._inner = inner
         self._limiter = limiter
 
-    def get_json(self, url: str, *, timeout: float = 10.0) -> Any:
+    def get_json(
+        self, url: str, *, timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
         self._limiter.acquire()
-        return self._inner.get_json(url, timeout=timeout)
+        return self._inner.get_json(url, timeout=timeout, headers=headers)
 
-    def get_text(self, url: str, *, timeout: float = 10.0) -> str:
+    def get_text(
+        self, url: str, *, timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ) -> str:
         self._limiter.acquire()
-        return self._inner.get_text(url, timeout=timeout)
+        return self._inner.get_text(url, timeout=timeout, headers=headers)
