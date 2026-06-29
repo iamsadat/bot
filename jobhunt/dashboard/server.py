@@ -96,6 +96,7 @@ class DashboardState:
     ats_config: dict = field(default_factory=dict)  # greenhouse_tokens / lever_slugs / ashby_slugs
     applies_today: dict = field(default_factory=dict)  # date-iso → count (autonomy daily cap)
     store: DashboardStore | None = None
+    notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
     # ------------------------------------------------------------ persistence
     def persist(self) -> None:
@@ -289,6 +290,18 @@ def _add_event(
                 "detail": detail, "status": status,
             })
             break
+
+
+def _notify(state: DashboardState, kind: str, title: str, body: str = "", url: str = "") -> None:
+    """Fire a notification if a notifier is configured (best-effort)."""
+    notifier = getattr(state, "notifier", None)
+    if not notifier:
+        return
+    try:
+        from jobhunt.notify import NotificationEvent
+        notifier.notify(NotificationEvent(kind=kind, title=title, body=body, url=url))
+    except Exception:
+        pass
 
 
 def _apply_parsed_resume(profile, result: dict) -> None:
@@ -633,6 +646,8 @@ def _maybe_auto_apply_batch(state: DashboardState, registry) -> int:
             f"Autonomously applied to {applied} role(s) "
             f"({used + applied}/{cap} today).",
         )
+        _notify(state, "applied", f"Auto-applied to {applied} role(s)",
+                f"{used + applied}/{cap} applications today.")
         state.persist()
     return applied
 
@@ -667,6 +682,9 @@ def _discover_once(state: DashboardState, registry) -> dict:
     added = _merge_discovered(state, batch.postings) if batch else 0
     tailored = _persist_tailored_docs(state, output.results.get("resume", []),
                                       task="discover-bg")
+    if added:
+        _notify(state, "discovered", f"{added} new job match(es)",
+                f"{tailored} tailored and ready to review.")
     applied = _maybe_auto_apply_batch(state, registry)
     state.persist()
     return {"added": added, "tailored": tailored, "applied": applied}
@@ -719,6 +737,13 @@ def create_app(
     inbox_source = build_inbox_from_env()
     _inbox_since = {"ts": 0.0}
 
+    # Outbound notifications (Slack/Discord/Telegram/webhook/email). Attached to
+    # the single-tenant state so the continuous/autonomy helpers can fire them.
+    from jobhunt.notify import build_notifier_from_env
+    notifier = build_notifier_from_env()
+    if state is not None and notifier is not None:
+        state.notifier = notifier
+
     # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
     # Lever submitters; tests inject one backed by FakePoster. Defined before
     # the lifespan so the continuous-discovery loop can reach it.
@@ -748,6 +773,9 @@ def create_app(
                             "inbox", "poll",
                             f"Inbox sync: {res['updates']} application(s) updated.",
                         )
+                        _notify(state, "interview",
+                                f"{res['updates']} application update(s) from email",
+                                "Check your pipeline for new interview/assessment status.")
 
             poll_task = asyncio.create_task(_poll_loop())
 
@@ -924,6 +952,7 @@ def create_app(
                            if state.user_profile else False),
             "applied_today": _applied_today(state),
             "continuous": int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0")) > 0,
+            "notify_channels": [s.name for s in notifier.sinks] if notifier else [],
         }
 
     # ---------------------------------------------------------------- onboarding
@@ -1380,6 +1409,29 @@ def create_app(
     @app.get("/api/inbox/status")
     def inbox_status() -> dict:
         return {"connected": inbox_source is not None}
+
+    # ----------------------------------------------------------------- notify
+
+    @app.get("/api/notify/status")
+    def notify_status() -> dict:
+        channels = [s.name for s in notifier.sinks] if notifier else []
+        return {"configured": bool(notifier), "channels": channels}
+
+    @app.post("/api/notify/test")
+    def notify_test() -> dict:
+        if not notifier:
+            raise HTTPException(
+                status_code=400,
+                detail="no channels configured — set JOBHUNT_SLACK_WEBHOOK / "
+                       "JOBHUNT_DISCORD_WEBHOOK / JOBHUNT_TELEGRAM_* / "
+                       "JOBHUNT_WEBHOOK_URLS",
+            )
+        from jobhunt.notify import NotificationEvent
+        delivered = notifier.notify(NotificationEvent(
+            kind="test", title="JobHunt test notification",
+            body="If you can read this, your channel is wired up. 🎯"))
+        return {"ok": True, "delivered": delivered,
+                "channels": [s.name for s in notifier.sinks]}
 
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:
