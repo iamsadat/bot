@@ -34,6 +34,7 @@ def test_extract_txt():
 
 
 def test_extract_docx_roundtrip():
+    pytest.importorskip("docx")  # python-docx is an optional dep (skip in CI)
     from docx import Document
     doc = Document()
     doc.add_paragraph("Senior Backend Engineer")
