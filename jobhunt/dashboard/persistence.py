@@ -17,12 +17,34 @@ from typing import Any
 from sqlalchemy import (
     Column, DateTime, Integer, JSON, String, Text, create_engine,
 )
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from jobhunt.approval import ApprovalQueue, ApprovalRequest, ApprovalState
 from jobhunt.models import UserProfile
 
 _Base = declarative_base()
+
+
+def build_engine(db_path: str | Path, db_url: str | None) -> Engine:
+    """Build a SQLAlchemy engine for a JSON-blob snapshot store.
+
+    When ``db_url`` is given (e.g. a Postgres connection string), it is used
+    directly so the store can be pointed at a durable external database
+    instead of the host's ephemeral disk — mirrors the pooling pattern in
+    ``jobhunt/db/engine.py``: ``NullPool`` + ``pool_pre_ping`` for non-SQLite,
+    ``check_same_thread=False`` for SQLite. When ``db_url`` is ``None``, falls
+    back to today's behavior: a SQLite file at ``db_path`` (directory
+    auto-created).
+    """
+    if db_url:
+        if db_url.startswith("sqlite"):
+            return create_engine(db_url, connect_args={"check_same_thread": False})
+        return create_engine(db_url, poolclass=NullPool, pool_pre_ping=True)
+    path = Path(db_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
 
 
 class _Snapshot(_Base):
@@ -54,14 +76,9 @@ class DashboardStore:
     database is fresh, ``save()`` is idempotent.
     """
 
-    def __init__(self, db_path: str | Path = "jobhunt.db") -> None:
-        path = Path(db_path).expanduser().resolve()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.db_path = path
-        self.engine = create_engine(
-            f"sqlite:///{path}",
-            connect_args={"check_same_thread": False},
-        )
+    def __init__(self, db_path: str | Path = "jobhunt.db", db_url: str | None = None) -> None:
+        self.db_path = Path(db_path).expanduser().resolve()
+        self.engine = build_engine(db_path, db_url)
         _Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
 

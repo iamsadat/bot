@@ -92,3 +92,32 @@ def test_publish_missing_job_id_422(tmp_path, monkeypatch):
     _, client = _client(tmp_path, monkeypatch)
     r = client.post("/api/publish", json={})
     assert r.status_code == 422
+
+
+def test_create_app_reads_database_url_for_public_store(tmp_path, monkeypatch):
+    """DATABASE_URL should route the public store's engine, not JOBHUNT_PUBLIC_DB_PATH.
+
+    Uses a sqlite URL (offline, no real Postgres needed) to confirm
+    ``create_app`` actually passes ``db_url=os.environ["DATABASE_URL"]``
+    through to ``PublicProfileStore`` rather than silently ignoring it.
+    """
+    monkeypatch.delenv("JOBHUNT_PUBLIC_DB_PATH", raising=False)
+    db_file = tmp_path / "via_database_url.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
+
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
+    state.documents["j1"] = {
+        "company": "Acme", "title": "Backend Engineer", "draft": _draft_dict(),
+    }
+    client = TestClient(create_app(state))
+
+    pub = client.post("/api/publish", json={"job_id": "j1"})
+    assert pub.status_code == 200
+    handle = pub.json()["handle"]
+
+    assert db_file.exists()
+
+    # The published row landed in the DATABASE_URL-backed file directly.
+    from jobhunt.public_store import PublicProfileStore
+    direct = PublicProfileStore(db_url=f"sqlite:///{db_file}")
+    assert direct.get(handle) is not None

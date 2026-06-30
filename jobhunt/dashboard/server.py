@@ -1096,7 +1096,8 @@ def create_app(
     # check beyond "you had the job_id whose draft you're publishing").
     from jobhunt.public_store import PublicProfileStore
     public_store = PublicProfileStore(
-        db_path=os.environ.get("JOBHUNT_PUBLIC_DB_PATH", "jobhunt_public.db")
+        db_path=os.environ.get("JOBHUNT_PUBLIC_DB_PATH", "jobhunt_public.db"),
+        db_url=os.environ.get("DATABASE_URL") or None,
     )
 
     @asynccontextmanager
