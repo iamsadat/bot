@@ -17,12 +17,34 @@ from typing import Any
 from sqlalchemy import (
     Column, DateTime, Integer, JSON, String, Text, create_engine,
 )
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from jobhunt.approval import ApprovalQueue, ApprovalRequest, ApprovalState
 from jobhunt.models import UserProfile
 
 _Base = declarative_base()
+
+
+def build_engine(db_path: str | Path, db_url: str | None) -> Engine:
+    """Build a SQLAlchemy engine for a JSON-blob snapshot store.
+
+    When ``db_url`` is given (e.g. a Postgres connection string), it is used
+    directly so the store can be pointed at a durable external database
+    instead of the host's ephemeral disk — mirrors the pooling pattern in
+    ``jobhunt/db/engine.py``: ``NullPool`` + ``pool_pre_ping`` for non-SQLite,
+    ``check_same_thread=False`` for SQLite. When ``db_url`` is ``None``, falls
+    back to today's behavior: a SQLite file at ``db_path`` (directory
+    auto-created).
+    """
+    if db_url:
+        if db_url.startswith("sqlite"):
+            return create_engine(db_url, connect_args={"check_same_thread": False})
+        return create_engine(db_url, poolclass=NullPool, pool_pre_ping=True)
+    path = Path(db_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
 
 
 class _Snapshot(_Base):
@@ -43,6 +65,8 @@ class _Snapshot(_Base):
     market_value_json = Column(JSON, default=list)  # Career Radar comp history
     contacts_json = Column(JSON, default=list)  # Career CRM contacts
     experiments_json = Column(JSON, default=dict)  # ExperimentRegistry.to_dict()
+    linked_email = Column(String(320), nullable=True)  # verified email (magic link)
+    plan = Column(String(20), nullable=True)  # "free" (default) | "pro" (billing webhook)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -54,14 +78,9 @@ class DashboardStore:
     database is fresh, ``save()`` is idempotent.
     """
 
-    def __init__(self, db_path: str | Path = "jobhunt.db") -> None:
-        path = Path(db_path).expanduser().resolve()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.db_path = path
-        self.engine = create_engine(
-            f"sqlite:///{path}",
-            connect_args={"check_same_thread": False},
-        )
+    def __init__(self, db_path: str | Path = "jobhunt.db", db_url: str | None = None) -> None:
+        self.db_path = Path(db_path).expanduser().resolve()
+        self.engine = build_engine(db_path, db_url)
         _Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
 
@@ -88,6 +107,8 @@ class DashboardStore:
                 "market_value": list(row.market_value_json or []),
                 "contacts": list(row.contacts_json or []),
                 "experiments": dict(row.experiments_json or {}),
+                "linked_email": row.linked_email,
+                "billing_plan": row.plan,
             }
 
     # ------------------------------------------------------------------ save
@@ -109,6 +130,8 @@ class DashboardStore:
         market_value: list | None = None,
         contacts: list | None = None,
         experiments: dict | None = None,
+        linked_email: str | None = None,
+        billing_plan: str | None = None,
     ) -> None:
         """Upsert the snapshot row."""
         appr_dicts = [
@@ -139,6 +162,10 @@ class DashboardStore:
                 row.contacts_json = contacts
             if experiments is not None:
                 row.experiments_json = experiments
+            if linked_email is not None:
+                row.linked_email = linked_email
+            if billing_plan is not None:
+                row.plan = billing_plan
             s.commit()
 
     def clear(self) -> None:

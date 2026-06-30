@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { api } from '@/lib/api';
+import { api, recordPageview } from '@/lib/api';
 
 export default function AtsScoreTool() {
+  useEffect(() => { recordPageview('ats_tool'); }, []);
+
   const [resume, setResume] = useState('');
   const [jd, setJd] = useState('');
   const [res, setRes] = useState<{ score: number; matched: string[]; missing: string[]; suggestions: string[] } | null>(null);

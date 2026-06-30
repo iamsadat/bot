@@ -3,6 +3,8 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { useEffect } from 'react';
+import { recordPageview } from '@/lib/api';
 
 // Three.js canvas is client-only — never SSR/prerender it.
 const Hero3D = dynamic(() => import('@/components/Hero3D'), { ssr: false });
@@ -14,6 +16,8 @@ const features = [
 ];
 
 export default function Landing() {
+  useEffect(() => { recordPageview('landing'); }, []);
+
   return (
     <main className="relative min-h-screen overflow-hidden">
       <div className="absolute inset-0 opacity-70">

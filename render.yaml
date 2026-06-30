@@ -12,10 +12,18 @@ services:
     plan: free
     healthCheckPath: /api/status
     # Render's free-tier disk is ephemeral — it resets on redeploy and after a
-    # long idle spin-down. That's fine for a short real-user test, but for
-    # anything longer-lived attach a paid persistent disk, or point
-    # DATABASE_URL at a real Postgres instance instead (already supported via
-    # SQLAlchemy — see jobhunt/db/engine.py).
+    # long idle spin-down. Two things live on that disk:
+    #   1. Per-workspace SQLite files (JOBHUNT_WORKSPACES_DIR, multi-tenant
+    #      mode) — one file per browser cookie. These still need a paid
+    #      Render persistent disk (Starter plan, ~$7/mo) to survive
+    #      redeploy/idle; that part of the schema is out of scope for a
+    #      shared-DB migration today.
+    #   2. The public résumé/ATS-tool store (published /p/{handle} pages).
+    #      This one now durably persists for $0: set DATABASE_URL to a
+    #      Postgres connection string from a free external provider (Neon or
+    #      Supabase both have an indefinitely-free tier) and the public store
+    #      writes there instead of the ephemeral disk. Leave it unset to keep
+    #      using the default ephemeral SQLite file.
     envVars:
       - key: JOBHUNT_DB_PATH
         value: /tmp/jobhunt.db
@@ -25,6 +33,11 @@ services:
         value: /tmp/jobhunt-workspaces
       - key: JOBHUNT_WORKSPACE_CAP
         value: "200"
+      # Optional: point the public résumé/ATS-tool store at a free external
+      # Postgres (e.g. Neon, Supabase) for durability across redeploys, at
+      # no extra hosting cost. Unset = ephemeral SQLite file (default).
+      # - key: DATABASE_URL
+      #   sync: false
       # Set this in the Render dashboard after the first deploy (or here) to
       # require testers to enter a passcode before using the live app —
       # recommended when sharing the URL outside your immediate team.

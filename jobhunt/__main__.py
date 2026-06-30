@@ -152,11 +152,13 @@ def cmd_serve(args) -> int:
               file=sys.stderr)
         return 1
 
+    import os
+
     from jobhunt.dashboard.persistence import DashboardStore
 
     trace = TraceStore()
     bus = ThoughtBus()
-    db = DashboardStore(args.db_path)
+    db = DashboardStore(args.db_path, db_url=os.environ.get("DATABASE_URL") or None)
     state = DashboardState(trace_store=trace, bus=bus, store=db)
     state.restore()
     if state.user_profile:
@@ -165,7 +167,6 @@ def cmd_serve(args) -> int:
     # Local `serve` is a dev context, so show the Tracker/Demo nav by default;
     # production (jobhunt.dashboard.app) keeps them off unless JOBHUNT_DEV_NAV
     # is set. Either way the env var wins when explicitly provided.
-    import os
     _dev_nav_env = os.environ.get("JOBHUNT_DEV_NAV", "").strip().lower()
     dev_nav = _dev_nav_env in ("1", "true", "yes", "on") if _dev_nav_env else True
     app = __import__(

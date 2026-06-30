@@ -133,3 +133,28 @@ def test_store_clear(tmp_path):
                plan=None, hunt_status="idle")
     store.clear()
     assert store.load() is None
+
+
+def test_store_db_url_routes_through_explicit_url(tmp_path):
+    """``db_url`` should be used verbatim instead of deriving from ``db_path``."""
+    db_file = tmp_path / "explicit.db"
+    store = DashboardStore(db_url=f"sqlite:///{db_file}")
+    assert store.load() is None
+    store.save(profile=_profile(), jobs=[{"job_id": "j1"}], applications=[],
+               approvals=[], plan=None, hunt_status="complete")
+    snap = store.load()
+    assert snap is not None
+    assert snap["profile"].name == "Ada"
+    assert snap["jobs"] == [{"job_id": "j1"}]
+    assert db_file.exists()
+
+
+def test_store_db_url_takes_precedence_over_db_path(tmp_path):
+    """When both are given, ``db_url`` wins and ``db_path`` is not touched."""
+    unused_path = tmp_path / "should_not_be_created.db"
+    used_path = tmp_path / "used.db"
+    store = DashboardStore(db_path=unused_path, db_url=f"sqlite:///{used_path}")
+    store.save(profile=_profile(), jobs=[], applications=[], approvals=[],
+               plan=None, hunt_status="idle")
+    assert used_path.exists()
+    assert not unused_path.exists()

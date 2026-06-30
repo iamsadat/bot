@@ -4,6 +4,12 @@ Endpoints:
 
   GET  /                          single-page app (client.html)
   GET  /api/status                hunt lifecycle state
+  POST /api/auth/request-link     send a magic-link email to recover/link a workspace
+  GET  /api/auth/verify           consume a magic-link token, set the jh_ws cookie
+  GET  /api/auth/status           the linked email (if any) for the current workspace
+  POST /api/billing/checkout      create a Stripe Checkout session (rails — off unless set up)
+  POST /api/billing/webhook       Stripe webhook receiver (checkout.session.completed → plan=pro)
+  GET  /api/billing/status        current plan + whether billing is configured
   POST /api/onboarding/profile    save user info + preferences
   POST /api/onboarding/resume     parse pasted resume text → extract skills
   POST /api/onboarding/ats        save ATS handles (greenhouse/lever/ashby)
@@ -35,6 +41,8 @@ Endpoints:
   DELETE /api/contacts/{id}       remove a contact
   POST /api/contacts/{id}/nudge   fire a follow-up notification + draft email
   GET  /api/analytics             funnel + résumé-strategy A/B experiment results
+  POST /api/pageview              record one pageview (landing/ats_tool/public_resume)
+  GET  /api/pageview/stats        aggregate pageview counts (top-of-funnel traffic)
   WS   /ws/stream                 live thought stream
 """
 
@@ -49,6 +57,7 @@ import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -143,6 +152,8 @@ class DashboardState:
     market_value: list = field(default_factory=list)  # Career Radar comp history
     contacts: list = field(default_factory=list)  # Career CRM contacts
     experiments: ExperimentRegistry = field(default_factory=_default_experiment_registry)
+    linked_email: str | None = None  # verified email tied to this workspace (magic link)
+    billing_plan: str = "free"  # "free" | "pro" — set only by the Stripe webhook handler
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
@@ -167,6 +178,8 @@ class DashboardState:
                 market_value=self.market_value,
                 contacts=self.contacts,
                 experiments=self.experiments.to_dict(),
+                linked_email=self.linked_email,
+                billing_plan=self.billing_plan,
             )
         except Exception:
             pass  # never let persistence block the API
@@ -188,6 +201,8 @@ class DashboardState:
         self.activity_days = snap.get("activity_days", [])
         self.market_value = snap.get("market_value", [])
         self.contacts = snap.get("contacts", [])
+        self.linked_email = snap.get("linked_email")
+        self.billing_plan = snap.get("billing_plan") or "free"
         experiments_snap = snap.get("experiments") or {}
         self.experiments = (
             ExperimentRegistry.from_dict(experiments_snap)
@@ -1096,7 +1111,26 @@ def create_app(
     # check beyond "you had the job_id whose draft you're publishing").
     from jobhunt.public_store import PublicProfileStore
     public_store = PublicProfileStore(
-        db_path=os.environ.get("JOBHUNT_PUBLIC_DB_PATH", "jobhunt_public.db")
+        db_path=os.environ.get("JOBHUNT_PUBLIC_DB_PATH", "jobhunt_public.db"),
+        db_url=os.environ.get("DATABASE_URL") or None,
+    )
+
+    # Email identity: magic-link tokens + email→workspace mapping, so a user's
+    # workspace can follow them across devices/cookie clears (see auth.py).
+    from jobhunt.dashboard.auth import EmailIdentityStore
+    auth_store = EmailIdentityStore(
+        db_path=os.environ.get("JOBHUNT_AUTH_DB_PATH", "jobhunt_auth.db"),
+        db_url=os.environ.get("DATABASE_URL") or None,
+    )
+
+    # Top-of-funnel pageview counter: privacy-friendly by construction (no
+    # IPs/user-agents/timestamps, just surface + optional ref + coarse day —
+    # see jobhunt/dashboard/pageviews.py). Shared across the app like
+    # public_store/auth_store — pageviews have no per-workspace owner.
+    from jobhunt.dashboard.pageviews import PageviewStore
+    pageview_store = PageviewStore(
+        db_path=os.environ.get("JOBHUNT_PAGEVIEWS_DB_PATH", "jobhunt_pageviews.db"),
+        db_url=os.environ.get("DATABASE_URL") or None,
     )
 
     @asynccontextmanager
@@ -1321,6 +1355,142 @@ def create_app(
             "continuous": int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0")) > 0,
             "notify_channels": [s.name for s in notifier.sinks] if notifier else [],
         }
+
+    # ---------------------------------------------------------------------- auth
+
+    @app.post("/api/auth/request-link")
+    def request_magic_link(body: dict, request: Request) -> dict:
+        from jobhunt.dashboard.auth import send_magic_link_email
+
+        email = str(body.get("email", "")).strip()
+        if not email or "@" not in email:
+            # Always 200 — never reveal whether an email is "valid"/known.
+            return {"sent": False}
+
+        current_ws_id = request.cookies.get(WORKSPACE_COOKIE)
+        token = auth_store.create_token(email, ws_id_hint=current_ws_id)
+        link = f"{str(request.base_url).rstrip('/')}/api/auth/verify?token={token}"
+
+        sent = send_magic_link_email(email, link)
+        if sent:
+            return {"sent": True}
+        if os.environ.get("JOBHUNT_AUTH_DEV_MODE") == "1":
+            return {"sent": False, "dev_link": link}
+        return {"sent": False}
+
+    @app.get("/api/auth/verify")
+    def verify_magic_link(token: str, response: FastAPIResponse) -> dict:
+        if workspace_factory is None:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "not applicable in single-tenant mode"},
+            )
+
+        payload = auth_store.consume_token(token)
+        if payload is None:
+            return JSONResponse(
+                status_code=400, content={"detail": "invalid or expired link"},
+            )
+
+        email = payload["email"]
+        ws_id = auth_store.get_workspace_for_email(email)
+        if ws_id is None:
+            ws_id = payload.get("ws_id_hint") or secrets.token_hex(16)
+            auth_store.link_email_to_workspace(email, ws_id)
+
+        response.set_cookie(
+            WORKSPACE_COOKIE, ws_id, max_age=60 * 60 * 24 * 180,
+            httponly=True, samesite="lax",
+        )
+        ws_state = workspace_factory(ws_id)
+        ws_state.linked_email = email
+        ws_state.persist()
+        return {"verified": True, "email": email}
+
+    @app.get("/api/auth/status")
+    def auth_status(state: DashboardState = Depends(get_state)) -> dict:
+        return {"linked_email": state.linked_email}
+
+    # -------------------------------------------------------------- billing rails
+
+    @app.post("/api/billing/checkout")
+    def billing_checkout(
+        request: Request, state: DashboardState = Depends(get_state),
+    ) -> dict:
+        """Create a Stripe Checkout session. Pure rails — no plan/price decided
+        yet, so this just stands up the redirect; off unless STRIPE_SECRET_KEY
+        and STRIPE_PRICE_ID are both set."""
+        from jobhunt.dashboard.billing import build_stripe_client_from_env
+
+        stripe_client = build_stripe_client_from_env()
+        if stripe_client is None:
+            raise HTTPException(status_code=400,
+                                detail="billing not configured — set STRIPE_SECRET_KEY")
+        price_id = os.environ.get("STRIPE_PRICE_ID")
+        if not price_id:
+            raise HTTPException(status_code=400,
+                                detail="billing not configured — set STRIPE_PRICE_ID")
+
+        if workspace_factory is None:
+            ws_id = "single-tenant"
+        else:
+            ws_id = request.cookies.get(WORKSPACE_COOKIE) or "single-tenant"
+
+        base = str(request.base_url)
+        try:
+            session = stripe_client.create_checkout_session(
+                ws_id,
+                state.linked_email,
+                price_id,
+                success_url=f"{base}dashboard?checkout=success",
+                cancel_url=f"{base}dashboard?checkout=cancelled",
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"url": session["url"]}
+
+    @app.post("/api/billing/webhook")
+    async def billing_webhook(request: Request) -> dict:
+        """Stripe webhook receiver. Verifies the signature over the raw body
+        (must NOT use a parsed Pydantic body — Stripe signs the raw bytes),
+        then on checkout.session.completed marks that workspace's plan "pro".
+        No real entitlement gating yet — this is rails only."""
+        from jobhunt.dashboard.billing import verify_webhook_signature
+
+        webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+        sig_header = request.headers.get("Stripe-Signature", "")
+        payload = await request.body()
+        if not webhook_secret or not verify_webhook_signature(
+            payload, sig_header, webhook_secret,
+        ):
+            raise HTTPException(status_code=400, detail="invalid webhook signature")
+
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON payload")
+
+        if event.get("type") == "checkout.session.completed":
+            obj = (event.get("data") or {}).get("object") or {}
+            ws_id = obj.get("client_reference_id")
+            if workspace_factory is not None and ws_id:
+                ws_state = workspace_factory(ws_id)
+            elif workspace_factory is None:
+                ws_state = state
+            else:
+                ws_state = None
+            if ws_state is not None:
+                ws_state.billing_plan = "pro"
+                ws_state.persist()
+
+        return {"received": True}
+
+    @app.get("/api/billing/status")
+    def billing_status(state: DashboardState = Depends(get_state)) -> dict:
+        from jobhunt.dashboard.billing import build_stripe_client_from_env
+
+        configured = build_stripe_client_from_env() is not None
+        return {"plan": state.billing_plan, "billing_configured": configured}
 
     # ---------------------------------------------------------------- onboarding
 
@@ -2068,10 +2238,38 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown handle")
         from jobhunt.resume_renderer import draft_to_styled_html
         from jobhunt.resume_template import ResumeDraft
+        # Server-rendered HTML (not a Next.js page), so the view is recorded
+        # here rather than via a client-side beacon.
+        pageview_store.record(
+            "public_resume", ref=handle, day=datetime.utcnow().date().isoformat(),
+        )
         return draft_to_styled_html(
             ResumeDraft.from_dict(draft),
             footer="Built with JobHunt — https://github.com/iamsadat/bot",
         )
+
+    # ------------------------------------------------------------- pageviews
+    #
+    # Basic, privacy-friendly pageview counter for the no-auth top-of-funnel
+    # surfaces (landing page, ATS tool, public résumé pages — see
+    # jobhunt/dashboard/pageviews.py for what is/isn't stored). No auth, no
+    # rate limiting for v1 — abuse-resistance is a later concern, not
+    # blocking this rails work.
+
+    @app.post("/api/pageview")
+    def record_pageview(body: dict) -> dict:
+        from jobhunt.dashboard.pageviews import SURFACES as _PAGEVIEW_SURFACES
+        surface = str(body.get("surface", ""))
+        if surface not in _PAGEVIEW_SURFACES:
+            raise HTTPException(status_code=400, detail="invalid surface")
+        ref = body.get("ref")
+        ref = str(ref) if ref is not None else None
+        pageview_store.record(surface, ref=ref, day=datetime.utcnow().date().isoformat())
+        return {"ok": True}
+
+    @app.get("/api/pageview/stats")
+    def pageview_stats() -> dict:
+        return pageview_store.counts()
 
     # ------------------------------------------------------------------ interview
 

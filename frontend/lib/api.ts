@@ -65,7 +65,22 @@ export const api = {
   saveContact: (c: Partial<Contact>) => req<any>('POST', '/api/contacts', c),
   deleteContact: (id: string) => req<any>('DELETE', `/api/contacts/${id}`),
   nudgeContact: (id: string) => req<any>('POST', `/api/contacts/${id}/nudge`),
+  // --- identity: tie a workspace to a verified email (magic link) ---
+  requestMagicLink: (email: string) =>
+    req<{ sent: boolean; dev_link?: string }>('POST', '/api/auth/request-link', { email }),
+  authStatus: () => req<{ linked_email: string | null }>('GET', '/api/auth/status'),
 };
+
+// Fire-and-forget pageview beacon for the no-auth top-of-funnel surfaces
+// (landing page, ATS tool). Never throws — a failed beacon must never break
+// the page it's called from.
+export function recordPageview(surface: 'landing' | 'ats_tool', ref?: string): void {
+  fetch(`${API_BASE}/api/pageview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ surface, ref: ref ?? null }),
+  }).catch(() => {});
+}
 
 export interface Metrics {
   discovered: number; tailored: number; applied: number; interview: number; offer: number;

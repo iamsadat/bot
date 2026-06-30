@@ -11,8 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime, String, create_engine
+from sqlalchemy import JSON, Column, DateTime, String
 from sqlalchemy.orm import declarative_base, sessionmaker
+
+from jobhunt.dashboard.persistence import build_engine
 
 _Base = declarative_base()
 
@@ -32,14 +34,11 @@ class PublicProfileStore:
     per-user auth boundary, so a single table keyed by ``handle`` is enough.
     """
 
-    def __init__(self, db_path: str | Path = "jobhunt_public.db") -> None:
-        path = Path(db_path).expanduser().resolve()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.db_path = path
-        self.engine = create_engine(
-            f"sqlite:///{path}",
-            connect_args={"check_same_thread": False},
-        )
+    def __init__(
+        self, db_path: str | Path = "jobhunt_public.db", db_url: str | None = None,
+    ) -> None:
+        self.db_path = Path(db_path).expanduser().resolve()
+        self.engine = build_engine(db_path, db_url)
         _Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
 
