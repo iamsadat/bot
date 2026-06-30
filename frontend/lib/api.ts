@@ -82,6 +82,11 @@ export function recordPageview(surface: 'landing' | 'ats_tool', ref?: string): v
   }).catch(() => {});
 }
 
+export type PricePref = 'monthly_19' | 'monthly_29' | 'lifetime_99' | 'lifetime_149';
+
+export const joinWaitlist = (email: string, price_pref: PricePref) =>
+  req<{ ok: boolean }>('POST', '/api/waitlist', { email, price_pref });
+
 export interface Metrics {
   discovered: number; tailored: number; applied: number; interview: number; offer: number;
   callback_rate: number; evidence_coverage: number; applied_this_week: number;

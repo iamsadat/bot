@@ -3,8 +3,8 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { useEffect } from 'react';
-import { recordPageview } from '@/lib/api';
+import { useEffect, useState } from 'react';
+import { joinWaitlist, recordPageview, type PricePref } from '@/lib/api';
 
 // Three.js canvas is client-only — never SSR/prerender it.
 const Hero3D = dynamic(() => import('@/components/Hero3D'), { ssr: false });
@@ -90,7 +90,73 @@ export default function Landing() {
             </motion.div>
           ))}
         </div>
+
+        <WaitlistForm />
       </section>
     </main>
+  );
+}
+
+const PRICE_OPTIONS: { v: PricePref; label: string }[] = [
+  { v: 'monthly_19', label: '$19/mo' },
+  { v: 'monthly_29', label: '$29/mo' },
+  { v: 'lifetime_99', label: '$99 lifetime' },
+  { v: 'lifetime_149', label: '$149 lifetime' },
+];
+
+function WaitlistForm() {
+  const [email, setEmail] = useState('');
+  const [pref, setPref] = useState<PricePref>('lifetime_99');
+  const [status, setStatus] = useState<'idle' | 'busy' | 'done'>('idle');
+
+  const submit = async () => {
+    if (!email.includes('@')) return;
+    setStatus('busy');
+    try {
+      await joinWaitlist(email, pref);
+      setStatus('done');
+    } catch {
+      setStatus('idle');
+    }
+  };
+
+  if (status === 'done') {
+    return <p className="mt-12 text-sm text-muted">You're on the list — thanks.</p>;
+  }
+
+  return (
+    <div className="glass mt-16 w-full max-w-md rounded-xl2 p-5 text-left shadow-card">
+      <h3 className="font-semibold text-ink">Want early access?</h3>
+      <p className="mt-1 text-xs text-muted">Pick what you'd actually pay — helps us price it right.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {PRICE_OPTIONS.map((o) => (
+          <button
+            key={o.v}
+            onClick={() => setPref(o.v)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+              pref === o.v ? 'bg-grad text-bg' : 'glass text-muted hover:text-ink'
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 flex gap-2">
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+          className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-ink"
+        />
+        <button
+          onClick={submit}
+          disabled={status === 'busy'}
+          className="shrink-0 rounded-lg bg-grad px-4 py-2 text-sm font-semibold text-bg disabled:opacity-50"
+        >
+          Join
+        </button>
+      </div>
+    </div>
   );
 }

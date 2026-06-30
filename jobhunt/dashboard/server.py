@@ -1133,6 +1133,15 @@ def create_app(
         db_url=os.environ.get("DATABASE_URL") or None,
     )
 
+    # Phase 2 validation: waitlist + pricing-preference signups off the
+    # landing page (see jobhunt/dashboard/waitlist.py). No price is decided —
+    # this just measures stated preference across a few price points.
+    from jobhunt.dashboard.waitlist import WaitlistStore
+    waitlist_store = WaitlistStore(
+        db_path=os.environ.get("JOBHUNT_WAITLIST_DB_PATH", "jobhunt_waitlist.db"),
+        db_url=os.environ.get("DATABASE_URL") or None,
+    )
+
     @asynccontextmanager
     async def lifespan(app):
         if state is not None:
@@ -2270,6 +2279,23 @@ def create_app(
     @app.get("/api/pageview/stats")
     def pageview_stats() -> dict:
         return pageview_store.counts()
+
+    # ------------------------------------------------------------------ waitlist
+
+    @app.post("/api/waitlist")
+    def join_waitlist(body: dict) -> dict:
+        from jobhunt.dashboard.waitlist import PRICE_PREFS
+
+        email = str(body.get("email", "")).strip()
+        price_pref = str(body.get("price_pref", ""))
+        if "@" not in email or price_pref not in PRICE_PREFS:
+            raise HTTPException(status_code=400, detail="invalid email or price_pref")
+        waitlist_store.join(email, price_pref, day=datetime.utcnow().date().isoformat())
+        return {"ok": True}
+
+    @app.get("/api/waitlist/stats")
+    def waitlist_stats() -> dict:
+        return waitlist_store.counts()
 
     # ------------------------------------------------------------------ interview
 
