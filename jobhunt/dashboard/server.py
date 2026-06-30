@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import secrets
@@ -82,6 +83,8 @@ except ImportError as _exc:  # pragma: no cover
     WebSocket = WebSocketDisconnect = None  # type: ignore
     HTMLResponse = JSONResponse = Response = None  # type: ignore
 
+
+logger = logging.getLogger(__name__)
 
 _VALID_STATUSES = {"Saved", "Applied", "Assessment", "Interview", "Offer", "Closed"}
 
@@ -169,7 +172,7 @@ class DashboardState:
                 experiments=self.experiments.to_dict(),
             )
         except Exception:
-            pass  # never let persistence block the API
+            logger.warning("state persistence failed", exc_info=True)
 
     def restore(self) -> None:
         if self.store is None:
@@ -381,7 +384,7 @@ def _notify(state: DashboardState, kind: str, title: str, body: str = "", url: s
         from jobhunt.notify import NotificationEvent
         notifier.notify(NotificationEvent(kind=kind, title=title, body=body, url=url))
     except Exception:
-        pass
+        logger.debug("notification dispatch failed", exc_info=True)
 
 
 def _resume_experiment(state: DashboardState) -> Experiment | None:
@@ -545,7 +548,7 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
             heading = lines[0].strip() if lines and lines[0].strip() else company
             plan["resume_pdf"] = text_to_pdf(heading, "\n".join(lines[1:]))
     except Exception:
-        pass  # fpdf2 missing → submitters fall back to encoding the plain text
+        logger.debug("PDF rendering unavailable, falling back to plain text", exc_info=True)
     try:
         result = registry.submit(plan)
         ok = bool(result and result.ok)
@@ -635,7 +638,7 @@ def _score_ats(resume_text: str, jd_text: str) -> dict[str, Any]:
         try:
             forms |= {s.lower() for s in expand_term(kw)}
         except Exception:
-            pass
+            logger.debug("expand_term failed for keyword %r", kw, exc_info=True)
         (matched if forms & resume_tokens else missing).append(kw)
 
     score = round(len(matched) / max(1, len(kws)), 3)
@@ -759,6 +762,7 @@ def _update_market_value(state: DashboardState, salary_client) -> bool:
     try:
         est = salary_client.estimate(role, location)
     except Exception:
+        logger.warning("salary estimation failed for role=%r location=%r", role, location, exc_info=True)
         return False
 
     state.market_value.append({
@@ -1696,6 +1700,7 @@ def create_app(
             try:
                 draft = ResumeDraft.from_dict(doc["draft"])
             except Exception:
+                logger.debug("failed to reconstruct ResumeDraft from stored dict", exc_info=True)
                 draft = None
 
         # Legacy heading/body split for the text-based renderers (fallback path).
@@ -2200,6 +2205,7 @@ def create_app(
                 subject, body = _email_template(state, str(contact["job_id"]), "follow_up")
                 draft = {"subject": subject, "body": body}
             except Exception:
+                logger.debug("email template generation failed for contact %r", contact.get("job_id"), exc_info=True)
                 draft = None
         return {"ok": True, "contact": contact, "draft": draft}
 

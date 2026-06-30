@@ -10,10 +10,13 @@ All HTTP goes through the injectable ``HTTPClient`` so tests run offline.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlencode, urlparse
+
+logger = logging.getLogger(__name__)
 
 from jobhunt.http import HTTPClient, HTTPClientError, UrllibHTTPClient
 
@@ -119,7 +122,7 @@ def draft_outreach(profile, job: dict, doc: dict, contact: Contact,
             if improved and isinstance(improved, str):
                 body = improved.strip()
         except Exception:
-            pass
+            logger.debug("LLM outreach polish failed, using template", exc_info=True)
     return {"to": contact.email, "subject": subject, "body": body,
             "contact": {"name": contact.name, "title": contact.title,
                         "email": contact.email}}

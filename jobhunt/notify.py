@@ -11,9 +11,12 @@ notifier (feature off). Delivery is best-effort: a failing sink never raises.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Callable, Protocol
+
+logger = logging.getLogger(__name__)
 
 from jobhunt.submitters.base import Poster, UrllibPoster
 
@@ -127,7 +130,7 @@ class Notifier:
                 if sink.send(event):
                     delivered += 1
             except Exception:
-                pass  # a broken sink must never break the pipeline
+                logger.warning("notification sink %r failed", type(sink).__name__, exc_info=True)
         return delivered
 
     def __bool__(self) -> bool:
