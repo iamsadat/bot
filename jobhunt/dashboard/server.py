@@ -41,6 +41,8 @@ Endpoints:
   DELETE /api/contacts/{id}       remove a contact
   POST /api/contacts/{id}/nudge   fire a follow-up notification + draft email
   GET  /api/analytics             funnel + résumé-strategy A/B experiment results
+  POST /api/pageview              record one pageview (landing/ats_tool/public_resume)
+  GET  /api/pageview/stats        aggregate pageview counts (top-of-funnel traffic)
   WS   /ws/stream                 live thought stream
 """
 
@@ -55,6 +57,7 @@ import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1117,6 +1120,16 @@ def create_app(
     from jobhunt.dashboard.auth import EmailIdentityStore
     auth_store = EmailIdentityStore(
         db_path=os.environ.get("JOBHUNT_AUTH_DB_PATH", "jobhunt_auth.db"),
+        db_url=os.environ.get("DATABASE_URL") or None,
+    )
+
+    # Top-of-funnel pageview counter: privacy-friendly by construction (no
+    # IPs/user-agents/timestamps, just surface + optional ref + coarse day —
+    # see jobhunt/dashboard/pageviews.py). Shared across the app like
+    # public_store/auth_store — pageviews have no per-workspace owner.
+    from jobhunt.dashboard.pageviews import PageviewStore
+    pageview_store = PageviewStore(
+        db_path=os.environ.get("JOBHUNT_PAGEVIEWS_DB_PATH", "jobhunt_pageviews.db"),
         db_url=os.environ.get("DATABASE_URL") or None,
     )
 
@@ -2225,10 +2238,38 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown handle")
         from jobhunt.resume_renderer import draft_to_styled_html
         from jobhunt.resume_template import ResumeDraft
+        # Server-rendered HTML (not a Next.js page), so the view is recorded
+        # here rather than via a client-side beacon.
+        pageview_store.record(
+            "public_resume", ref=handle, day=datetime.utcnow().date().isoformat(),
+        )
         return draft_to_styled_html(
             ResumeDraft.from_dict(draft),
             footer="Built with JobHunt — https://github.com/iamsadat/bot",
         )
+
+    # ------------------------------------------------------------- pageviews
+    #
+    # Basic, privacy-friendly pageview counter for the no-auth top-of-funnel
+    # surfaces (landing page, ATS tool, public résumé pages — see
+    # jobhunt/dashboard/pageviews.py for what is/isn't stored). No auth, no
+    # rate limiting for v1 — abuse-resistance is a later concern, not
+    # blocking this rails work.
+
+    @app.post("/api/pageview")
+    def record_pageview(body: dict) -> dict:
+        from jobhunt.dashboard.pageviews import SURFACES as _PAGEVIEW_SURFACES
+        surface = str(body.get("surface", ""))
+        if surface not in _PAGEVIEW_SURFACES:
+            raise HTTPException(status_code=400, detail="invalid surface")
+        ref = body.get("ref")
+        ref = str(ref) if ref is not None else None
+        pageview_store.record(surface, ref=ref, day=datetime.utcnow().date().isoformat())
+        return {"ok": True}
+
+    @app.get("/api/pageview/stats")
+    def pageview_stats() -> dict:
+        return pageview_store.counts()
 
     # ------------------------------------------------------------------ interview
 

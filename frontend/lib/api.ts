@@ -71,6 +71,17 @@ export const api = {
   authStatus: () => req<{ linked_email: string | null }>('GET', '/api/auth/status'),
 };
 
+// Fire-and-forget pageview beacon for the no-auth top-of-funnel surfaces
+// (landing page, ATS tool). Never throws — a failed beacon must never break
+// the page it's called from.
+export function recordPageview(surface: 'landing' | 'ats_tool', ref?: string): void {
+  fetch(`${API_BASE}/api/pageview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ surface, ref: ref ?? null }),
+  }).catch(() => {});
+}
+
 export interface Metrics {
   discovered: number; tailored: number; applied: number; interview: number; offer: number;
   callback_rate: number; evidence_coverage: number; applied_this_week: number;
