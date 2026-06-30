@@ -13,10 +13,13 @@ path is exercised by a Playwright-guarded test.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from jobhunt.autofill.base import AutofillResult, Page
 from jobhunt.autofill.registry import AutofillRegistry
+
+logger = logging.getLogger(__name__)
 
 _SUBMIT_SELECTORS = (
     "button[type=submit]", "input[type=submit]",
@@ -33,7 +36,7 @@ class PlaywrightPage:
         try:
             page.set_default_timeout(action_timeout_ms)
         except Exception:
-            pass
+            logger.debug("could not set default timeout on page", exc_info=True)
 
     @property
     def url(self) -> str:
@@ -61,6 +64,7 @@ class PlaywrightPage:
         try:
             return self._p.query_selector(selector) is not None
         except Exception:
+            logger.debug("query_selector failed for %r", selector, exc_info=True)
             return False
 
     def text(self, selector: str) -> str:
@@ -103,6 +107,7 @@ def _attempt_submit(page: Page) -> bool:
                 page.click(sel)
                 return True
             except Exception:
+                logger.debug("submit click failed for selector %r", sel, exc_info=True)
                 continue
     return False
 
