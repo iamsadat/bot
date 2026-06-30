@@ -65,6 +65,10 @@ export const api = {
   saveContact: (c: Partial<Contact>) => req<any>('POST', '/api/contacts', c),
   deleteContact: (id: string) => req<any>('DELETE', `/api/contacts/${id}`),
   nudgeContact: (id: string) => req<any>('POST', `/api/contacts/${id}/nudge`),
+  // --- identity: tie a workspace to a verified email (magic link) ---
+  requestMagicLink: (email: string) =>
+    req<{ sent: boolean; dev_link?: string }>('POST', '/api/auth/request-link', { email }),
+  authStatus: () => req<{ linked_email: string | null }>('GET', '/api/auth/status'),
 };
 
 export interface Metrics {

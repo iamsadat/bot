@@ -65,6 +65,7 @@ class _Snapshot(_Base):
     market_value_json = Column(JSON, default=list)  # Career Radar comp history
     contacts_json = Column(JSON, default=list)  # Career CRM contacts
     experiments_json = Column(JSON, default=dict)  # ExperimentRegistry.to_dict()
+    linked_email = Column(String(320), nullable=True)  # verified email (magic link)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -105,6 +106,7 @@ class DashboardStore:
                 "market_value": list(row.market_value_json or []),
                 "contacts": list(row.contacts_json or []),
                 "experiments": dict(row.experiments_json or {}),
+                "linked_email": row.linked_email,
             }
 
     # ------------------------------------------------------------------ save
@@ -126,6 +128,7 @@ class DashboardStore:
         market_value: list | None = None,
         contacts: list | None = None,
         experiments: dict | None = None,
+        linked_email: str | None = None,
     ) -> None:
         """Upsert the snapshot row."""
         appr_dicts = [
@@ -156,6 +159,8 @@ class DashboardStore:
                 row.contacts_json = contacts
             if experiments is not None:
                 row.experiments_json = experiments
+            if linked_email is not None:
+                row.linked_email = linked_email
             s.commit()
 
     def clear(self) -> None:

@@ -4,6 +4,9 @@ Endpoints:
 
   GET  /                          single-page app (client.html)
   GET  /api/status                hunt lifecycle state
+  POST /api/auth/request-link     send a magic-link email to recover/link a workspace
+  GET  /api/auth/verify           consume a magic-link token, set the jh_ws cookie
+  GET  /api/auth/status           the linked email (if any) for the current workspace
   POST /api/onboarding/profile    save user info + preferences
   POST /api/onboarding/resume     parse pasted resume text → extract skills
   POST /api/onboarding/ats        save ATS handles (greenhouse/lever/ashby)
@@ -143,6 +146,7 @@ class DashboardState:
     market_value: list = field(default_factory=list)  # Career Radar comp history
     contacts: list = field(default_factory=list)  # Career CRM contacts
     experiments: ExperimentRegistry = field(default_factory=_default_experiment_registry)
+    linked_email: str | None = None  # verified email tied to this workspace (magic link)
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
@@ -167,6 +171,7 @@ class DashboardState:
                 market_value=self.market_value,
                 contacts=self.contacts,
                 experiments=self.experiments.to_dict(),
+                linked_email=self.linked_email,
             )
         except Exception:
             pass  # never let persistence block the API
@@ -188,6 +193,7 @@ class DashboardState:
         self.activity_days = snap.get("activity_days", [])
         self.market_value = snap.get("market_value", [])
         self.contacts = snap.get("contacts", [])
+        self.linked_email = snap.get("linked_email")
         experiments_snap = snap.get("experiments") or {}
         self.experiments = (
             ExperimentRegistry.from_dict(experiments_snap)
@@ -1100,6 +1106,14 @@ def create_app(
         db_url=os.environ.get("DATABASE_URL") or None,
     )
 
+    # Email identity: magic-link tokens + email→workspace mapping, so a user's
+    # workspace can follow them across devices/cookie clears (see auth.py).
+    from jobhunt.dashboard.auth import EmailIdentityStore
+    auth_store = EmailIdentityStore(
+        db_path=os.environ.get("JOBHUNT_AUTH_DB_PATH", "jobhunt_auth.db"),
+        db_url=os.environ.get("DATABASE_URL") or None,
+    )
+
     @asynccontextmanager
     async def lifespan(app):
         if state is not None:
@@ -1322,6 +1336,61 @@ def create_app(
             "continuous": int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0")) > 0,
             "notify_channels": [s.name for s in notifier.sinks] if notifier else [],
         }
+
+    # ---------------------------------------------------------------------- auth
+
+    @app.post("/api/auth/request-link")
+    def request_magic_link(body: dict, request: Request) -> dict:
+        from jobhunt.dashboard.auth import send_magic_link_email
+
+        email = str(body.get("email", "")).strip()
+        if not email or "@" not in email:
+            # Always 200 — never reveal whether an email is "valid"/known.
+            return {"sent": False}
+
+        current_ws_id = request.cookies.get(WORKSPACE_COOKIE)
+        token = auth_store.create_token(email, ws_id_hint=current_ws_id)
+        link = f"{str(request.base_url).rstrip('/')}/api/auth/verify?token={token}"
+
+        sent = send_magic_link_email(email, link)
+        if sent:
+            return {"sent": True}
+        if os.environ.get("JOBHUNT_AUTH_DEV_MODE") == "1":
+            return {"sent": False, "dev_link": link}
+        return {"sent": False}
+
+    @app.get("/api/auth/verify")
+    def verify_magic_link(token: str, response: FastAPIResponse) -> dict:
+        if workspace_factory is None:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "not applicable in single-tenant mode"},
+            )
+
+        payload = auth_store.consume_token(token)
+        if payload is None:
+            return JSONResponse(
+                status_code=400, content={"detail": "invalid or expired link"},
+            )
+
+        email = payload["email"]
+        ws_id = auth_store.get_workspace_for_email(email)
+        if ws_id is None:
+            ws_id = payload.get("ws_id_hint") or secrets.token_hex(16)
+            auth_store.link_email_to_workspace(email, ws_id)
+
+        response.set_cookie(
+            WORKSPACE_COOKIE, ws_id, max_age=60 * 60 * 24 * 180,
+            httponly=True, samesite="lax",
+        )
+        ws_state = workspace_factory(ws_id)
+        ws_state.linked_email = email
+        ws_state.persist()
+        return {"verified": True, "email": email}
+
+    @app.get("/api/auth/status")
+    def auth_status(state: DashboardState = Depends(get_state)) -> dict:
+        return {"linked_email": state.linked_email}
 
     # ---------------------------------------------------------------- onboarding
 

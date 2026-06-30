@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import Nav from '@/components/Nav';
+import SaveProgressBanner from '@/components/SaveProgressBanner';
 import AnimatedNumber from '@/components/AnimatedNumber';
 import Kanban from '@/components/Kanban';
 import ReasoningFeed from '@/components/ReasoningFeed';
@@ -56,6 +57,8 @@ export default function Dashboard() {
           </>
         }
       />
+
+      <SaveProgressBanner />
 
       <div className="px-6 pb-10">
         <motion.div
