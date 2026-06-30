@@ -117,8 +117,19 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
                 </a>
               ))}
               <button
+                onClick={async () => {
+                  try {
+                    const r = await api.publish(job.job_id);
+                    window.open(r.url, '_blank');
+                  } catch {/* needs a tailored draft */}
+                }}
+                className="ml-auto rounded-lg px-3 py-1.5 text-xs font-medium glass transition hover:border-white/20"
+              >
+                ↗ Publish
+              </button>
+              <button
                 onClick={() => api.approve(job.job_id).then(onClose)}
-                className="ml-auto rounded-lg bg-grad px-4 py-1.5 text-xs font-semibold text-bg"
+                className="rounded-lg bg-grad px-4 py-1.5 text-xs font-semibold text-bg"
               >
                 Approve & apply
               </button>

@@ -39,6 +39,10 @@ class _Snapshot(_Base):
     hunt_error = Column(Text, default="")
     ats_config_json = Column(JSON, default=dict)
     applies_today_json = Column(JSON, default=dict)  # date-iso → count (autonomy cap)
+    activity_days_json = Column(JSON, default=list)  # ISO date strings (streaks)
+    market_value_json = Column(JSON, default=list)  # Career Radar comp history
+    contacts_json = Column(JSON, default=list)  # Career CRM contacts
+    experiments_json = Column(JSON, default=dict)  # ExperimentRegistry.to_dict()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -80,6 +84,10 @@ class DashboardStore:
                 "hunt_error": row.hunt_error or "",
                 "ats_config": dict(row.ats_config_json or {}),
                 "applies_today": dict(row.applies_today_json or {}),
+                "activity_days": list(row.activity_days_json or []),
+                "market_value": list(row.market_value_json or []),
+                "contacts": list(row.contacts_json or []),
+                "experiments": dict(row.experiments_json or {}),
             }
 
     # ------------------------------------------------------------------ save
@@ -97,6 +105,10 @@ class DashboardStore:
         ats_config: dict | None = None,
         documents: dict | None = None,
         applies_today: dict | None = None,
+        activity_days: list | None = None,
+        market_value: list | None = None,
+        contacts: list | None = None,
+        experiments: dict | None = None,
     ) -> None:
         """Upsert the snapshot row."""
         appr_dicts = [
@@ -119,6 +131,14 @@ class DashboardStore:
                 row.ats_config_json = ats_config
             if applies_today is not None:
                 row.applies_today_json = applies_today
+            if activity_days is not None:
+                row.activity_days_json = activity_days
+            if market_value is not None:
+                row.market_value_json = market_value
+            if contacts is not None:
+                row.contacts_json = contacts
+            if experiments is not None:
+                row.experiments_json = experiments
             s.commit()
 
     def clear(self) -> None:
@@ -154,6 +174,10 @@ def _profile_from_dict(d: dict) -> UserProfile:
         auto_apply=bool(d.get("auto_apply", False)),
         daily_apply_cap=int(d.get("daily_apply_cap", 0)),
         relevance_floor=float(d.get("relevance_floor", 0.0)),
+        radar_enabled=bool(d.get("radar_enabled", False)),
+        current_salary=d.get("current_salary"),
+        current_title=d.get("current_title", ""),
+        radar_keywords=list(d.get("radar_keywords", [])),
     )
 
 

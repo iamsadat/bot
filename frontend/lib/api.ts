@@ -43,7 +43,56 @@ export const api = {
   salary: (role: string, location = '') =>
     req<{ currency: string; p10: number; median: number; p90: number; sample: number }>(
       'GET', `/api/salary?role=${encodeURIComponent(role)}&location=${encodeURIComponent(location)}`),
+  // --- growth & retention features ---
+  metrics: () => req<Metrics>('GET', '/api/metrics'),
+  analytics: () => req<Analytics>('GET', '/api/analytics'),
+  radar: () => req<RadarData>('GET', '/api/radar'),
+  radarSettings: () => req<RadarSettings>('GET', '/api/radar/settings'),
+  setRadar: (b: Partial<RadarSettings>) => req<any>('POST', '/api/radar/settings', b),
+  atsScore: (resume_text: string, jd_text: string) =>
+    req<{ score: number; matched: string[]; missing: string[]; suggestions: string[] }>(
+      'POST', '/api/tools/ats-score', { resume_text, jd_text }),
+  publish: (job_id: string) =>
+    req<{ ok: boolean; handle: string; url: string }>('POST', '/api/publish', { job_id }),
+  interviewQuestions: (job_id: string) =>
+    req<{ questions: { type: string; question: string }[] }>(
+      'POST', '/api/interview/questions', { job_id }),
+  interviewFeedback: (question: string, answer: string) =>
+    req<InterviewFeedback>('POST', '/api/interview/feedback', { question, answer }),
+  skillGaps: () => req<{ gaps: SkillGap[] }>('GET', '/api/skills/gaps'),
+  contacts: (due = false) =>
+    req<{ contacts: Contact[] }>('GET', `/api/contacts${due ? '?due=true' : ''}`),
+  saveContact: (c: Partial<Contact>) => req<any>('POST', '/api/contacts', c),
+  deleteContact: (id: string) => req<any>('DELETE', `/api/contacts/${id}`),
+  nudgeContact: (id: string) => req<any>('POST', `/api/contacts/${id}/nudge`),
 };
+
+export interface Metrics {
+  discovered: number; tailored: number; applied: number; interview: number; offer: number;
+  callback_rate: number; evidence_coverage: number; applied_this_week: number;
+  streak: number; weekly_target: number; weekly_progress: number;
+}
+export interface Analytics {
+  funnel: Metrics; winner: string | null;
+  variants: { name: string; impressions: number; successes: number; success_rate: number }[];
+}
+export interface RadarSettings {
+  radar_enabled: boolean; current_salary: number | null;
+  current_title: string; radar_keywords: string[];
+}
+export interface RadarData {
+  market_value: { date: string; median: number; currency: string; role: string }[];
+  hits: Job[]; enabled: boolean;
+}
+export interface InterviewFeedback {
+  scores: { structure: number; relevance: number; specificity: number };
+  tips: string[]; overall: number;
+}
+export interface SkillGap { skill: string; count: number; resources: { title: string; url: string }[]; }
+export interface Contact {
+  id: string; name: string; email: string; company: string; title: string;
+  last_contact: string; next_followup: string; notes: string; job_id: string;
+}
 
 export function wsUrl(): string {
   const base = API_BASE || (typeof window !== 'undefined' ? window.location.origin : '');

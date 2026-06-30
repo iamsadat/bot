@@ -17,8 +17,24 @@ Endpoints:
   GET  /api/documents/{job_id}/download
                                   download artifact (txt / pdf / docx)
   GET  /api/traces                reasoning traces (paginated)
+  GET  /api/metrics               funnel + streak + callback-rate metrics
+  POST /api/digest/send           build + (optionally) send the activity digest
   GET  /api/approvals             approval queue
   POST /api/approve/{id}          human one-click decision
+  GET  /api/radar                 Career Radar hits + market-value history
+  GET  /api/radar/settings        read Career Radar profile fields
+  POST /api/radar/settings        update Career Radar profile fields
+  POST /api/tools/ats-score       free, no-auth ATS keyword match score
+  POST /api/publish               publish a tailored draft to a public handle
+  GET  /p/{handle}                public, unauthenticated résumé page
+  POST /api/interview/questions   AI interview prep — generate questions for a job
+  POST /api/interview/feedback    AI interview prep — score a practice answer
+  GET  /api/skills/gaps           skill-gap learning paths from missing ATS keywords
+  POST /api/contacts              create/update a Career CRM contact (upsert by id)
+  GET  /api/contacts              list contacts (?due=true → overdue follow-ups only)
+  DELETE /api/contacts/{id}       remove a contact
+  POST /api/contacts/{id}/nudge   fire a follow-up notification + draft email
+  GET  /api/analytics             funnel + résumé-strategy A/B experiment results
   WS   /ws/stream                 live thought stream
 """
 
@@ -36,8 +52,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from jobhunt.ab import Experiment, ExperimentRegistry, Variant
 from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
 from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue
+from jobhunt.digest import build_digest
+from jobhunt.metrics import compute_funnel
 from jobhunt.models import JobHuntPlan, UserProfile
 from jobhunt.onboarding import build_user_profile, parse_resume_text
 from jobhunt.trace import ThoughtBus, TraceStore
@@ -73,6 +92,31 @@ _VALID_STATUSES = {"Saved", "Applied", "Assessment", "Interview", "Offer", "Clos
 WORKSPACE_COOKIE = "jh_ws"
 _SAFE_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
+# Free ATS-score tool: lowercase-word tokenizer for the pasted résumé text.
+_ATS_TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z+\-#0-9]{2,}")
+
+# Public résumé handles: lowercase slug + "-" + 6 hex chars, e.g. "ada-1a2b3c".
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+# E4 — outcome analytics: a single standing A/B experiment over tailored-resume
+# strategy. Variants are illustrative copy/structure strategies; the real
+# difference lives in whichever resume-writing prompt/template consults
+# ``doc["variant"]`` (out of scope here — this wires up assignment + outcome
+# attribution end-to-end so that piece can be added later without touching
+# persistence or the analytics endpoint).
+_RESUME_EXPERIMENT_NAME = "resume_strategy"
+_RESUME_VARIANTS = ("concise", "keyword_rich", "impact_first")
+
+
+def _default_experiment_registry() -> ExperimentRegistry:
+    """Build the standing ``resume_strategy`` experiment with its variants."""
+    registry = ExperimentRegistry()
+    registry.register(Experiment(
+        name=_RESUME_EXPERIMENT_NAME,
+        target="resume",
+        variants=[Variant(name=v, params={}) for v in _RESUME_VARIANTS],
+    ))
+    return registry
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +139,10 @@ class DashboardState:
     hunt_progress: dict[str, str] = field(default_factory=dict)
     ats_config: dict = field(default_factory=dict)  # greenhouse_tokens / lever_slugs / ashby_slugs
     applies_today: dict = field(default_factory=dict)  # date-iso → count (autonomy daily cap)
+    activity_days: list = field(default_factory=list)  # ISO date strings (streaks)
+    market_value: list = field(default_factory=list)  # Career Radar comp history
+    contacts: list = field(default_factory=list)  # Career CRM contacts
+    experiments: ExperimentRegistry = field(default_factory=_default_experiment_registry)
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
@@ -115,6 +163,10 @@ class DashboardState:
                 hunt_error=self.hunt_error,
                 ats_config=self.ats_config,
                 applies_today=self.applies_today,
+                activity_days=self.activity_days,
+                market_value=self.market_value,
+                contacts=self.contacts,
+                experiments=self.experiments.to_dict(),
             )
         except Exception:
             pass  # never let persistence block the API
@@ -133,6 +185,14 @@ class DashboardState:
         self.hunt_error = snap.get("hunt_error", "")
         self.ats_config = snap.get("ats_config", {})
         self.applies_today = snap.get("applies_today", {})
+        self.activity_days = snap.get("activity_days", [])
+        self.market_value = snap.get("market_value", [])
+        self.contacts = snap.get("contacts", [])
+        experiments_snap = snap.get("experiments") or {}
+        self.experiments = (
+            ExperimentRegistry.from_dict(experiments_snap)
+            if experiments_snap else _default_experiment_registry()
+        )
         # Defensive: hunts that were mid-run when the server died → idle
         if self.hunt_status == "running":
             self.hunt_status = "idle"
@@ -324,6 +384,95 @@ def _notify(state: DashboardState, kind: str, title: str, body: str = "", url: s
         pass
 
 
+def _resume_experiment(state: DashboardState) -> Experiment | None:
+    """Return the standing résumé-strategy experiment, registering it lazily.
+
+    Defensive: older/test ``DashboardState``s may have been constructed before
+    ``experiments`` existed (or with ``None``), so this never assumes the
+    field is populated.
+    """
+    registry = getattr(state, "experiments", None)
+    if registry is None:
+        registry = _default_experiment_registry()
+        state.experiments = registry
+    exp = registry.get(_RESUME_EXPERIMENT_NAME)
+    if exp is None:
+        exp = _default_experiment_registry().get(_RESUME_EXPERIMENT_NAME)
+        registry.register(exp)
+    return exp
+
+
+def _assign_variant(state: DashboardState, doc: dict) -> str:
+    """Deterministically assign a tailored ``doc`` to a résumé-strategy variant.
+
+    Stores the choice on ``doc["variant"]`` and records an impression against
+    that variant in the standing experiment, so :func:`_record_outcome` can
+    later attribute a success back to it. Deterministic by ``job_id`` (via
+    ``Experiment.assign``), so repeated calls for the same job are stable.
+    """
+    exp = _resume_experiment(state)
+    job_id = str(doc.get("job_id", ""))
+    if exp is None:
+        import hashlib
+        digest = int(hashlib.md5(job_id.encode("utf-8")).hexdigest(), 16)  # noqa: S324
+        variant_name = _RESUME_VARIANTS[digest % len(_RESUME_VARIANTS)]
+    else:
+        variant_name = exp.assign(job_id).name
+    doc["variant"] = variant_name
+    if exp is not None:
+        # Experiment.record() always bumps impressions and only bumps
+        # successes when success=True, so this is exactly "+1 impression,
+        # outcome pending" — the actual success is recorded later by
+        # _record_outcome() if/when the job reaches Interview/Offer.
+        exp.record(variant_name, success=False)
+    return variant_name
+
+
+def _record_outcome(state: DashboardState, job_id: str) -> None:
+    """Attribute a success to the variant assigned to ``job_id``'s document.
+
+    Called whenever a job's status advances to Interview/Offer. No-ops when
+    the job has no tailored document, the document was never assigned a
+    variant (e.g. it predates this feature), the experiment is missing, or
+    the outcome was already recorded for this job — so it is always safe to
+    call unconditionally and repeatedly from a status-change site (a job
+    that reaches Interview then later Offer must only count as one success).
+
+    ``_assign_variant`` already recorded one impression for this variant
+    (via ``Experiment.record(success=False)``), so this turns that existing
+    impression into a success directly on the ``Variant`` rather than
+    calling ``record()`` again — calling ``record()`` a second time would
+    count a brand-new impression instead of upgrading the existing one.
+    """
+    doc = state.documents.get(job_id)
+    if not doc:
+        return
+    variant_name = doc.get("variant")
+    if not variant_name or doc.get("outcome_recorded"):
+        return
+    exp = _resume_experiment(state)
+    if exp is None:
+        return
+    variant = next((v for v in exp.variants if v.name == variant_name), None)
+    if variant is None:
+        return  # unknown variant (registry/doc out of sync) — never crash a status update
+    variant.successes += 1
+    doc["outcome_recorded"] = True
+
+
+def _record_activity(state: DashboardState) -> None:
+    """Record today as an active day (dedup) — powers streaks (M0/R2).
+
+    Appends ``date.today().isoformat()`` only when it isn't already the last
+    entry, so repeated applies on the same day count once. Cheap + idempotent,
+    so it's safe to call from every "actually applied" code path.
+    """
+    from datetime import date
+    today = date.today().isoformat()
+    if not state.activity_days or state.activity_days[-1] != today:
+        state.activity_days.append(today)
+
+
 def _apply_parsed_resume(profile, result: dict) -> None:
     """Merge parsed résumé output into a profile: union skills, fill-empty
     structured sections (never clobber user edits), add new links."""
@@ -364,6 +513,7 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
             f"{company} → {title}: marked Applied "
             f"(open the posting to finish on the company site).",
         )
+        _record_activity(state)
         return {"submitted": False, "manual": True}
 
     profile = state.user_profile
@@ -416,6 +566,7 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         state.bus.publish(
             "submission", job_id, f"{company} → {title}: auto-submitted{suffix}.",
         )
+        _record_activity(state)
         return {"submitted": True, "submission_id": sub_id}
 
     _add_event(
@@ -461,6 +612,50 @@ def _fingerprint(company: str, title: str, location: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
+# --------------------------------------------------------------------------- #
+# Free ATS-score tool — top-of-funnel, no auth, no stored state.
+# --------------------------------------------------------------------------- #
+
+def _score_ats(resume_text: str, jd_text: str) -> dict[str, Any]:
+    """Score how many JD ATS keywords a pasted résumé covers.
+
+    A keyword counts as matched if it (or any of its taxonomy synonyms, e.g.
+    k8s ↔ kubernetes) appears among the résumé's lowercase word tokens.
+    """
+    from jobhunt.agents.resume import _best_keywords
+    from jobhunt.skills_taxonomy import expand_term
+
+    kws = _best_keywords(jd_text, 20)
+    resume_tokens = {t.lower() for t in _ATS_TOKEN_RE.findall(resume_text)}
+
+    matched: list[str] = []
+    missing: list[str] = []
+    for kw in kws:
+        forms = {kw.lower()}
+        try:
+            forms |= {s.lower() for s in expand_term(kw)}
+        except Exception:
+            pass
+        (matched if forms & resume_tokens else missing).append(kw)
+
+    score = round(len(matched) / max(1, len(kws)), 3)
+    return {
+        "score": score,
+        "matched": matched,
+        "missing": missing,
+        "suggestions": missing[:8],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Public résumé pages — unauthenticated "Built with JobHunt" share links.
+# --------------------------------------------------------------------------- #
+
+def _slugify(text: str) -> str:
+    slug = _SLUG_RE.sub("-", text.strip().lower()).strip("-")
+    return slug or "resume"
+
+
 def _merge_discovered(state: DashboardState, postings) -> int:
     """Append new postings to ``state.jobs`` by fingerprint. Never clears.
 
@@ -482,6 +677,94 @@ def _merge_discovered(state: DashboardState, postings) -> int:
         state.jobs.append(_job_dict_from_posting(p))
         added += 1
     return added
+
+
+# --------------------------------------------------------------------------- #
+# Career Radar — retention alerts for roles that beat comp/title or match a
+# keyword watchlist, plus a market-value (comp) tracker over time.
+# --------------------------------------------------------------------------- #
+
+_STEP_UP_TITLES = ("senior", "staff", "principal", "lead")
+
+
+def _is_radar_hit(profile: UserProfile, job: dict, doc: dict | None = None) -> bool:
+    """True when ``job`` is worth flagging on the user's Career Radar.
+
+    Independently unit-testable: takes plain data in, returns a bool, no I/O.
+    Any of the following trips it (radar must be enabled first):
+
+      a) the job's salary (min or max) beats ``current_salary``, when both
+         the job and the profile have a salary set;
+      b) a ``radar_keywords`` term (case-insensitive) appears in the job
+         title or in the tailored document's matched/missing keywords;
+      c) the job is a strong match (``relevance_score >= 0.6``) AND its
+         title reads as a step up (senior/staff/principal/lead) while the
+         user's current title doesn't already carry that level.
+    """
+    if not profile.radar_enabled:
+        return False
+
+    title = str(job.get("title", ""))
+    title_lower = title.lower()
+
+    if profile.current_salary:
+        salary_min = job.get("salary_min")
+        salary_max = job.get("salary_max")
+        beats = (salary_min and salary_min > profile.current_salary) or (
+            salary_max and salary_max > profile.current_salary)
+        if beats:
+            return True
+
+    if profile.radar_keywords:
+        doc = doc or {}
+        haystack = " ".join([
+            title_lower,
+            *(str(k) for k in doc.get("matched_keywords", [])),
+            *(str(k) for k in doc.get("missing_keywords", [])),
+        ]).lower()
+        if any(kw.strip().lower() in haystack for kw in profile.radar_keywords if kw.strip()):
+            return True
+
+    if float(job.get("relevance_score") or 0.0) >= 0.6:
+        current_lower = profile.current_title.lower()
+        is_step_up = any(t in title_lower for t in _STEP_UP_TITLES)
+        already_there = any(t in current_lower for t in _STEP_UP_TITLES)
+        if is_step_up and not already_there:
+            return True
+
+    return False
+
+
+def _update_market_value(state: DashboardState, salary_client) -> bool:
+    """Append today's comp estimate for the user's first target role.
+
+    No-ops (returns ``False``) when there's no salary client, no profile, or
+    no target role — and dedupes so at most one entry is recorded per day.
+    Returns ``True`` when a new entry was appended.
+    """
+    from datetime import date
+
+    if salary_client is None:
+        return False
+    profile = state.user_profile
+    if profile is None or not profile.target_roles:
+        return False
+
+    today = date.today().isoformat()
+    if any(e.get("date") == today for e in state.market_value):
+        return False
+
+    role = profile.target_roles[0]
+    location = profile.locations[0] if profile.locations else ""
+    try:
+        est = salary_client.estimate(role, location)
+    except Exception:
+        return False
+
+    state.market_value.append({
+        "date": today, "median": est.median, "currency": est.currency, "role": role,
+    })
+    return True
 
 
 def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg") -> int:
@@ -507,6 +790,7 @@ def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg"
             "bullets": doc.bullets,
             "draft": doc.draft,
         }
+        _assign_variant(state, state.documents[doc.job_id])
         state.approval_queue.submit(
             job_id=doc.job_id,
             document_id=f"doc-{doc.job_id}",
@@ -705,9 +989,24 @@ def _discover_once(state: DashboardState, registry) -> dict:
     if added:
         _notify(state, "discovered", f"{added} new job match(es)",
                 f"{tailored} tailored and ready to review.")
+
+    radar_hits = 0
+    if added and state.user_profile.radar_enabled:
+        for job in state.jobs[-added:]:
+            doc = state.documents.get(job["job_id"])
+            if _is_radar_hit(state.user_profile, job, doc):
+                job["radar_hit"] = True
+                radar_hits += 1
+        if radar_hits:
+            _notify(state, "radar", f"{radar_hits} role(s) match your Career Radar",
+                    "Open the dashboard to compare against your current role.")
+
+    from jobhunt.integrations.market import build_salary_client_from_env
+    _update_market_value(state, build_salary_client_from_env())
+
     applied = _maybe_auto_apply_batch(state, registry)
     state.persist()
-    return {"added": added, "tailored": tailored, "applied": applied}
+    return {"added": added, "tailored": tailored, "applied": applied, "radar_hits": radar_hits}
 
 
 async def _run_hunt_bg(state: DashboardState, registry=None) -> None:
@@ -792,12 +1091,21 @@ def create_app(
         else _default_submitter_registry()
     )
 
+    # Public résumé pages: a small, app-scoped SQLite store (unauthenticated,
+    # shared across workspaces — published handles have no per-user owner
+    # check beyond "you had the job_id whose draft you're publishing").
+    from jobhunt.public_store import PublicProfileStore
+    public_store = PublicProfileStore(
+        db_path=os.environ.get("JOBHUNT_PUBLIC_DB_PATH", "jobhunt_public.db")
+    )
+
     @asynccontextmanager
     async def lifespan(app):
         if state is not None:
             state.bus.set_loop(asyncio.get_event_loop())
         poll_task = None
         disc_task = None
+        digest_task = None
         if state is not None and inbox_source is not None:
             interval = int(os.environ.get("JOBHUNT_IMAP_POLL_SECONDS", "300"))
 
@@ -843,10 +1151,29 @@ def create_app(
                             )
 
                 disc_task = asyncio.create_task(_disc_loop())
+
+        # Scheduled digest: off unless a non-zero interval is set (so tests +
+        # the default deployment are unchanged). Best-effort, never crashes.
+        if state is not None:
+            digest_interval = int(os.environ.get("JOBHUNT_DIGEST_INTERVAL_SECONDS", "0"))
+            if digest_interval > 0:
+                async def _digest_loop():
+                    while True:
+                        await asyncio.sleep(digest_interval)
+                        try:
+                            digest = build_digest(state)
+                            if state.notifier:
+                                _notify(state, "digest", digest["subject"], digest["body"])
+                        except Exception as exc:  # never let the loop die
+                            state.bus.publish(
+                                "digest", "poll", f"Digest send error: {exc!r}",
+                            )
+
+                digest_task = asyncio.create_task(_digest_loop())
         try:
             yield
         finally:
-            for t in (poll_task, disc_task):
+            for t in (poll_task, disc_task, digest_task):
                 if t is not None:
                     t.cancel()
 
@@ -1300,6 +1627,8 @@ def create_app(
                     f"{j['company']} → {j['title']}: {old} → {new_status}",
                 )
                 _add_event(state, job_id, new_status, f"Moved {old} → {new_status}")
+                if new_status in ("Interview", "Offer"):
+                    _record_outcome(state, job_id)
                 state.persist()
                 return {"ok": True, "job": j}
         raise HTTPException(status_code=404, detail="job not found")
@@ -1443,6 +1772,22 @@ def create_app(
             key = f"{ev.get('agent', '')}:{ev.get('task_id', '')}"
             grouped.setdefault(key, []).append(ev)
         return {"activity": events, "grouped": grouped}
+
+    # ----------------------------------------------------------------- metrics
+
+    @app.get("/api/metrics")
+    def get_metrics(state: DashboardState = Depends(get_state)) -> dict:
+        return compute_funnel(state)
+
+    # ----------------------------------------------------------------- digest
+
+    @app.post("/api/digest/send")
+    def send_digest(state: DashboardState = Depends(get_state)) -> dict:
+        digest = build_digest(state)
+        sent = bool(state.notifier)
+        if sent:
+            _notify(state, "digest", digest["subject"], digest["body"])
+        return {"ok": True, "sent": sent, **digest}
 
     # ----------------------------------------------------------------- inbox
 
@@ -1634,6 +1979,143 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc))
         return {"ok": True, **asdict(intel)}
 
+    # ----------------------------------------------------------------- radar
+
+    @app.get("/api/radar")
+    def get_radar(state: DashboardState = Depends(get_state)) -> dict:
+        profile = state.user_profile
+        return {
+            "market_value": state.market_value,
+            "hits": [j for j in state.jobs if j.get("radar_hit")],
+            "enabled": bool(profile and profile.radar_enabled),
+        }
+
+    @app.get("/api/radar/settings")
+    def get_radar_settings(state: DashboardState = Depends(get_state)) -> dict:
+        profile = state.user_profile
+        if profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        return {
+            "radar_enabled": profile.radar_enabled,
+            "current_salary": profile.current_salary,
+            "current_title": profile.current_title,
+            "radar_keywords": profile.radar_keywords,
+        }
+
+    @app.post("/api/radar/settings")
+    def update_radar_settings(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        profile = state.user_profile
+        if profile is None:
+            raise HTTPException(status_code=400, detail="no profile yet — onboard first")
+        if "radar_enabled" in body:
+            profile.radar_enabled = bool(body["radar_enabled"])
+        if "current_salary" in body:
+            raw = body["current_salary"]
+            profile.current_salary = int(raw) if raw else None
+        if "current_title" in body:
+            profile.current_title = str(body["current_title"]).strip()
+        if "radar_keywords" in body:
+            kws = body["radar_keywords"]
+            if isinstance(kws, list):
+                profile.radar_keywords = [str(k).strip() for k in kws if str(k).strip()]
+            else:
+                profile.radar_keywords = [s.strip() for s in str(kws).split(",") if s.strip()]
+        state.persist()
+        return {
+            "ok": True,
+            "radar_enabled": profile.radar_enabled,
+            "current_salary": profile.current_salary,
+            "current_title": profile.current_title,
+            "radar_keywords": profile.radar_keywords,
+        }
+
+    # --------------------------------------------------------------- growth tools
+    #
+    # Top-of-funnel, no-auth, no-workspace-state endpoints: a free ATS-score
+    # checker and public "Built with JobHunt" résumé pages. Both must work with
+    # zero prior state, so neither depends on ``get_state``/a profile/a hunt.
+
+    @app.post("/api/tools/ats-score")
+    def ats_score(body: dict) -> dict:
+        resume_text = str(body.get("resume_text", ""))
+        jd_text = str(body.get("jd_text", ""))
+        if not resume_text.strip() and not jd_text.strip():
+            raise HTTPException(
+                status_code=422, detail="resume_text or jd_text is required"
+            )
+        return _score_ats(resume_text, jd_text)
+
+    @app.post("/api/publish")
+    def publish_resume(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        job_id = str(body.get("job_id", ""))
+        if not job_id:
+            raise HTTPException(status_code=422, detail="job_id is required")
+        doc = state.documents.get(job_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        draft = doc.get("draft")
+        if not draft:
+            raise HTTPException(status_code=404, detail="no résumé draft for this job")
+        name = str(draft.get("candidate_name") or "resume")
+        handle = f"{_slugify(name)}-{secrets.token_hex(3)}"
+        public_store.publish(handle, draft)
+        return {"ok": True, "handle": handle, "url": f"/p/{handle}"}
+
+    @app.get("/p/{handle}", response_class=HTMLResponse)
+    def public_resume_page(handle: str) -> str:
+        draft = public_store.get(handle)
+        if draft is None:
+            raise HTTPException(status_code=404, detail="unknown handle")
+        from jobhunt.resume_renderer import draft_to_styled_html
+        from jobhunt.resume_template import ResumeDraft
+        return draft_to_styled_html(
+            ResumeDraft.from_dict(draft),
+            footer="Built with JobHunt — https://github.com/iamsadat/bot",
+        )
+
+    # ------------------------------------------------------------------ interview
+
+    @app.post("/api/interview/questions")
+    def interview_questions(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        from jobhunt.interview import generate_questions
+        from jobhunt.llm.callbacks import resume_callback
+        from jobhunt.llm.factory import build_llm_client_from_env
+
+        job_id = str(body.get("job_id", ""))
+        job = next((j for j in state.jobs if j["job_id"] == job_id), None)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown job_id")
+        doc = state.documents.get(job_id)
+
+        llm_client = build_llm_client_from_env()
+        llm_cb = resume_callback(llm_client) if llm_client is not None else None
+        questions = generate_questions(state.user_profile, job, doc, llm=llm_cb)
+        return {"questions": questions}
+
+    @app.post("/api/interview/feedback")
+    def interview_feedback(body: dict) -> dict:
+        from jobhunt.interview import answer_feedback
+        from jobhunt.llm.callbacks import resume_callback
+        from jobhunt.llm.factory import build_llm_client_from_env
+
+        question = str(body.get("question", ""))
+        answer = str(body.get("answer", ""))
+        if not question.strip() or not answer.strip():
+            raise HTTPException(
+                status_code=422, detail="question and answer are required"
+            )
+
+        llm_client = build_llm_client_from_env()
+        llm_cb = resume_callback(llm_client) if llm_client is not None else None
+        return answer_feedback(question, answer, llm=llm_cb)
+
+    # --------------------------------------------------------------------- skills
+
+    @app.get("/api/skills/gaps")
+    def skill_gaps(state: DashboardState = Depends(get_state)) -> dict:
+        from jobhunt.learning import compute_skill_gaps
+        return {"gaps": compute_skill_gaps(state)}
+
     @app.post("/api/inbox/sync")
     async def inbox_sync_now(state: DashboardState = Depends(get_state)) -> dict:
         if inbox_source is None:
@@ -1647,6 +2129,100 @@ def create_app(
         )
         _inbox_since["ts"] = time.time()
         return res
+
+    # --------------------------------------------------------------------- crm
+    #
+    # Career CRM: lightweight contact book + overdue follow-up nudges. Plain
+    # dicts in ``state.contacts`` (persisted) — no new model module needed.
+
+    @app.post("/api/contacts")
+    def upsert_contact(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        email = str(body.get("email", "")).strip()
+        if "@" not in email:
+            raise HTTPException(status_code=422, detail="valid email is required")
+        contact_id = str(body.get("id", "")).strip() or secrets.token_hex(8)
+        existing = next((c for c in state.contacts if c["id"] == contact_id), None)
+        record = {
+            "id": contact_id,
+            "name": str(body.get("name", "")).strip(),
+            "email": email,
+            "company": str(body.get("company", "")).strip(),
+            "title": str(body.get("title", "")).strip(),
+            "last_contact": body.get("last_contact") or None,
+            "next_followup": body.get("next_followup") or None,
+            "notes": str(body.get("notes", "")).strip(),
+            "job_id": body.get("job_id") or None,
+        }
+        if existing is not None:
+            existing.update(record)
+        else:
+            state.contacts.append(record)
+        state.persist()
+        return {"ok": True, "contact": existing if existing is not None else record}
+
+    @app.get("/api/contacts")
+    def list_contacts(
+        due: bool = False, state: DashboardState = Depends(get_state),
+    ) -> dict:
+        from datetime import date
+
+        contacts = state.contacts
+        if due:
+            today = date.today().isoformat()
+            contacts = [
+                c for c in contacts
+                if c.get("next_followup") and str(c["next_followup"]) <= today
+            ]
+        return {"contacts": contacts}
+
+    @app.delete("/api/contacts/{contact_id}")
+    def delete_contact(contact_id: str, state: DashboardState = Depends(get_state)) -> dict:
+        before = len(state.contacts)
+        state.contacts = [c for c in state.contacts if c["id"] != contact_id]
+        if len(state.contacts) == before:
+            raise HTTPException(status_code=404, detail="unknown contact")
+        state.persist()
+        return {"ok": True}
+
+    @app.post("/api/contacts/{contact_id}/nudge")
+    def nudge_contact(contact_id: str, state: DashboardState = Depends(get_state)) -> dict:
+        contact = next((c for c in state.contacts if c["id"] == contact_id), None)
+        if contact is None:
+            raise HTTPException(status_code=404, detail="unknown contact")
+        name = contact.get("name") or contact.get("email", "this contact")
+        _notify(
+            state, "followup", f"Follow up with {name}",
+            f"It's time to follow up with {name} ({contact.get('company', '')}).",
+        )
+        draft = None
+        if contact.get("job_id"):
+            try:
+                subject, body = _email_template(state, str(contact["job_id"]), "follow_up")
+                draft = {"subject": subject, "body": body}
+            except Exception:
+                draft = None
+        return {"ok": True, "contact": contact, "draft": draft}
+
+    # ----------------------------------------------------------------- analytics
+
+    @app.get("/api/analytics")
+    def get_analytics(state: DashboardState = Depends(get_state)) -> dict:
+        exp = _resume_experiment(state)
+        winner = exp.winner() if exp is not None else None
+        return {
+            "funnel": compute_funnel(state),
+            "experiment": exp.to_dict() if exp is not None else None,
+            "winner": winner.name if winner is not None else None,
+            "variants": [
+                {
+                    "name": v.name,
+                    "impressions": v.impressions,
+                    "successes": v.successes,
+                    "success_rate": v.success_rate,
+                }
+                for v in (exp.variants if exp is not None else [])
+            ],
+        }
 
     # ----------------------------------------------------------------- approvals
 
@@ -1692,6 +2268,7 @@ def create_app(
             doc = state.documents.get(req.job_id)
             if job is not None and job.get("status") == "Saved":
                 job["status"] = "Applied"
+                _record_activity(state)
             _add_event(state, req.job_id, "Approved",
                        f"Resume approved by {reviewer or 'you'}")
             submission = _auto_apply(state, registry, req, job, doc)
