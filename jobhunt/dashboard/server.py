@@ -7,6 +7,9 @@ Endpoints:
   POST /api/auth/request-link     send a magic-link email to recover/link a workspace
   GET  /api/auth/verify           consume a magic-link token, set the jh_ws cookie
   GET  /api/auth/status           the linked email (if any) for the current workspace
+  POST /api/billing/checkout      create a Stripe Checkout session (rails — off unless set up)
+  POST /api/billing/webhook       Stripe webhook receiver (checkout.session.completed → plan=pro)
+  GET  /api/billing/status        current plan + whether billing is configured
   POST /api/onboarding/profile    save user info + preferences
   POST /api/onboarding/resume     parse pasted resume text → extract skills
   POST /api/onboarding/ats        save ATS handles (greenhouse/lever/ashby)
@@ -147,6 +150,7 @@ class DashboardState:
     contacts: list = field(default_factory=list)  # Career CRM contacts
     experiments: ExperimentRegistry = field(default_factory=_default_experiment_registry)
     linked_email: str | None = None  # verified email tied to this workspace (magic link)
+    billing_plan: str = "free"  # "free" | "pro" — set only by the Stripe webhook handler
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
 
@@ -172,6 +176,7 @@ class DashboardState:
                 contacts=self.contacts,
                 experiments=self.experiments.to_dict(),
                 linked_email=self.linked_email,
+                billing_plan=self.billing_plan,
             )
         except Exception:
             pass  # never let persistence block the API
@@ -194,6 +199,7 @@ class DashboardState:
         self.market_value = snap.get("market_value", [])
         self.contacts = snap.get("contacts", [])
         self.linked_email = snap.get("linked_email")
+        self.billing_plan = snap.get("billing_plan") or "free"
         experiments_snap = snap.get("experiments") or {}
         self.experiments = (
             ExperimentRegistry.from_dict(experiments_snap)
@@ -1391,6 +1397,87 @@ def create_app(
     @app.get("/api/auth/status")
     def auth_status(state: DashboardState = Depends(get_state)) -> dict:
         return {"linked_email": state.linked_email}
+
+    # -------------------------------------------------------------- billing rails
+
+    @app.post("/api/billing/checkout")
+    def billing_checkout(
+        request: Request, state: DashboardState = Depends(get_state),
+    ) -> dict:
+        """Create a Stripe Checkout session. Pure rails — no plan/price decided
+        yet, so this just stands up the redirect; off unless STRIPE_SECRET_KEY
+        and STRIPE_PRICE_ID are both set."""
+        from jobhunt.dashboard.billing import build_stripe_client_from_env
+
+        stripe_client = build_stripe_client_from_env()
+        if stripe_client is None:
+            raise HTTPException(status_code=400,
+                                detail="billing not configured — set STRIPE_SECRET_KEY")
+        price_id = os.environ.get("STRIPE_PRICE_ID")
+        if not price_id:
+            raise HTTPException(status_code=400,
+                                detail="billing not configured — set STRIPE_PRICE_ID")
+
+        if workspace_factory is None:
+            ws_id = "single-tenant"
+        else:
+            ws_id = request.cookies.get(WORKSPACE_COOKIE) or "single-tenant"
+
+        base = str(request.base_url)
+        try:
+            session = stripe_client.create_checkout_session(
+                ws_id,
+                state.linked_email,
+                price_id,
+                success_url=f"{base}dashboard?checkout=success",
+                cancel_url=f"{base}dashboard?checkout=cancelled",
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"url": session["url"]}
+
+    @app.post("/api/billing/webhook")
+    async def billing_webhook(request: Request) -> dict:
+        """Stripe webhook receiver. Verifies the signature over the raw body
+        (must NOT use a parsed Pydantic body — Stripe signs the raw bytes),
+        then on checkout.session.completed marks that workspace's plan "pro".
+        No real entitlement gating yet — this is rails only."""
+        from jobhunt.dashboard.billing import verify_webhook_signature
+
+        webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+        sig_header = request.headers.get("Stripe-Signature", "")
+        payload = await request.body()
+        if not webhook_secret or not verify_webhook_signature(
+            payload, sig_header, webhook_secret,
+        ):
+            raise HTTPException(status_code=400, detail="invalid webhook signature")
+
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON payload")
+
+        if event.get("type") == "checkout.session.completed":
+            obj = (event.get("data") or {}).get("object") or {}
+            ws_id = obj.get("client_reference_id")
+            if workspace_factory is not None and ws_id:
+                ws_state = workspace_factory(ws_id)
+            elif workspace_factory is None:
+                ws_state = state
+            else:
+                ws_state = None
+            if ws_state is not None:
+                ws_state.billing_plan = "pro"
+                ws_state.persist()
+
+        return {"received": True}
+
+    @app.get("/api/billing/status")
+    def billing_status(state: DashboardState = Depends(get_state)) -> dict:
+        from jobhunt.dashboard.billing import build_stripe_client_from_env
+
+        configured = build_stripe_client_from_env() is not None
+        return {"plan": state.billing_plan, "billing_configured": configured}
 
     # ---------------------------------------------------------------- onboarding
 
