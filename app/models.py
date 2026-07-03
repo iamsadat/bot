@@ -63,10 +63,40 @@ class StrategyState(Base):
     halted_reason: Mapped[Optional[str]] = mapped_column(String(256), default=None)
     last_tick: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, default=None)
     last_decision: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+    last_scan: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+    regime: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     config: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow,
     )
+
+
+class ManagedPosition(Base):
+    __tablename__ = "managed_positions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    mode: Mapped[str] = mapped_column(String(8))
+    direction: Mapped[int] = mapped_column(Integer)
+    entry_price: Mapped[float] = mapped_column(Float)
+    qty_total: Mapped[float] = mapped_column(Float)
+    qty_remaining: Mapped[float] = mapped_column(Float)
+    stop_order_id: Mapped[str] = mapped_column(String(64))
+    r_unit: Mapped[float] = mapped_column(Float)
+    stage: Mapped[str] = mapped_column(String(16), default="open")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow,
+    )
+
+
+class TunerProposal(Base):
+    __tablename__ = "tuner_proposals"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+    params: Mapped[dict] = mapped_column(JSON)
+    metrics: Mapped[dict] = mapped_column(JSON)
+    applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    applied_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, default=None)
 
 
 class AppKv(Base):

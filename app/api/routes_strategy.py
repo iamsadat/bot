@@ -28,6 +28,12 @@ def get_strategy(db: Session = Depends(get_db)):
     )
 
 
+@router.get("/strategy/scan")
+def get_scan(db: Session = Depends(get_db)):
+    st = state_mod.get_or_create(db)
+    return {"regime": st.regime, "scan": st.last_scan}
+
+
 @router.post("/strategy/start")
 async def start_strategy(req: Request, db: Session = Depends(get_db)):
     st = state_mod.get_or_create(db)

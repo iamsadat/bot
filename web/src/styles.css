@@ -70,6 +70,9 @@ body {
 .badge.stopped { color: var(--text-dim); }
 .badge.market-open  { color: var(--green); border-color: #224a37; }
 .badge.market-closed { color: var(--text-dim); }
+.badge.regime-green { color: var(--green); border-color: #224a37; }
+.badge.regime-red   { color: var(--red); border-color: #582025; }
+.badge.regime-chop  { color: var(--yellow); border-color: #5c4413; }
 
 .kill-btn {
   font-family: var(--mono);
@@ -158,6 +161,7 @@ th { color: var(--text-dim); font-weight: 500; letter-spacing: 0.06em; text-tran
 .tag.strategy { color: var(--purple); border-color: #3b2c5f; }
 .tag.filled, .tag.accepted { color: var(--green); }
 .tag.rejected, .tag.error, .tag.canceled { color: var(--red); }
+.tag.traded { color: var(--green); border-color: #224a37; }
 
 /* ---------- Forms ----------------------------------------------------- */
 input, select, button {

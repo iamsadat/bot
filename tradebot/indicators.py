@@ -115,6 +115,21 @@ def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     return (direction * volume).cumsum()
 
 
+# ---------- resampling ------------------------------------------------------
+
+def resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Resample a minute-bar OHLCV frame (DatetimeIndex) to a coarser rule."""
+    agg = {
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+    }
+    out = df.resample(rule).agg(agg).dropna(subset=["open"])
+    return out
+
+
 # ---------- one-shot bundle ------------------------------------------------
 
 def compute_all(df: pd.DataFrame) -> pd.DataFrame:

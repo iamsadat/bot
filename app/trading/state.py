@@ -13,6 +13,8 @@ from ..models import StrategyState
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "symbols": [settings.default_symbol],
+    "watchlist": list(settings.watchlist),
+    "scanner_top_n": settings.scanner_top_n,
     "entry_threshold": 0.50,
     "adx_min": 22.0,
     "risk_per_trade": settings.risk_per_trade,

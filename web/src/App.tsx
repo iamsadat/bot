@@ -5,7 +5,9 @@ import {
   OrderInfo,
   PositionInfo,
   PredictionResponse,
+  ScanResult,
   StrategyState,
+  TunerProposal,
   api,
 } from "./api";
 import { connectWs } from "./ws";
@@ -20,6 +22,8 @@ import { ModeModal } from "./components/ModeModal";
 import { Chart } from "./components/Chart";
 import { PredictionPanel } from "./components/PredictionPanel";
 import { SetupModal } from "./components/SetupModal";
+import { ScannerPanel } from "./components/ScannerPanel";
+import { TunerPanel } from "./components/TunerPanel";
 
 export default function App() {
   const [account, setAccount] = useState<AccountInfo | null>(null);
@@ -38,6 +42,10 @@ export default function App() {
   const [predBusy, setPredBusy] = useState(false);
   const [streamSubs, setStreamSubs] = useState<string[]>([]);
   const [livePrice, setLivePrice] = useState<number | null>(null);
+
+  // Scanner / tuner state
+  const [scan, setScan] = useState<ScanResult | null>(null);
+  const [proposals, setProposals] = useState<TunerProposal[]>([]);
 
   const showToast = useCallback((s: string) => {
     setToast(s);
@@ -63,6 +71,20 @@ export default function App() {
     const t = window.setInterval(refreshAll, 5000);
     return () => window.clearInterval(t);
   }, [refreshAll]);
+
+  const refreshScan = useCallback(() => {
+    api.scan().then((r) => setScan(r.scan), () => {});
+  }, []);
+  const refreshProposals = useCallback(() => {
+    api.tunerProposals().then(setProposals, () => {});
+  }, []);
+
+  useEffect(() => {
+    refreshScan();
+    refreshProposals();
+    const t = window.setInterval(refreshScan, 30000);
+    return () => window.clearInterval(t);
+  }, [refreshScan, refreshProposals]);
 
   // ---------- prediction & live subscribe ------------------------------
   const refreshPrediction = useCallback(async () => {
@@ -117,6 +139,9 @@ export default function App() {
       if (kind === "stream_status") {
         setStreamSubs(payload.subscribed || []);
       }
+      if (kind === "scan") {
+        setScan(payload);
+      }
     });
     return () => wsRef.current?.();
   }, [refreshAll, refreshPrediction, showToast, symbol]);
@@ -157,6 +182,7 @@ export default function App() {
             setSymbol={setSymbol}
             busy={predBusy}
           />
+          <ScannerPanel scan={scan} />
           <PositionsPanel
             positions={positions}
             onClose={async (s) => {
@@ -206,6 +232,20 @@ export default function App() {
             onSubmit={async (req) => {
               await api.placeOrder(req);
               showToast("Order submitted");
+              refreshAll();
+            }}
+          />
+          <TunerPanel
+            proposals={proposals}
+            onRun={async () => {
+              try { await api.runTuner(); showToast("Tuner run started"); }
+              catch (e) { showToast(String(e)); }
+              refreshProposals();
+            }}
+            onApply={async (id) => {
+              try { await api.applyProposal(id); showToast("Proposal applied"); }
+              catch (e) { showToast(String(e)); }
+              refreshProposals();
               refreshAll();
             }}
           />

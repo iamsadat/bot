@@ -27,6 +27,8 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
+from .indicators import compute_all, resample_ohlcv
+
 
 # Vote signs are encoded as +1 bullish, -1 bearish, 0 neutral, scaled by
 # strength when the indicator supports it.
@@ -210,3 +212,38 @@ def decide(row: pd.Series, prev: pd.Series, cfg: StrategyConfig,
             reason = "short_confluence"
 
     return Decision(direction, float(score), votes, reason)
+
+
+# ---------- regime / multi-timeframe confirmation --------------------------
+
+def classify_regime(spy_df: pd.DataFrame, adx_min: float = 20.0) -> str:
+    """Classify the broad market regime from SPY 1-minute bars."""
+    enriched = compute_all(spy_df)
+    row = enriched.iloc[-1]
+    if np.isnan(row[["ema_fast", "ema_mid", "ema_slow", "adx"]]).any():
+        return "chop"
+    if row["adx"] < adx_min:
+        return "chop"
+    if row["ema_fast"] > row["ema_mid"] > row["ema_slow"]:
+        return "trend_up"
+    if row["ema_fast"] < row["ema_mid"] < row["ema_slow"]:
+        return "trend_down"
+    return "chop"
+
+
+def mtf_confirm(direction: int, df_1m: pd.DataFrame) -> bool:
+    """Require EMA9/EMA21 agreement with ``direction`` on both 5m and 15m bars."""
+    if direction == 0:
+        return False
+    for rule in ("5min", "15min"):
+        resampled = resample_ohlcv(df_1m, rule)
+        if len(resampled) < 21:
+            return False
+        row = compute_all(resampled).iloc[-1]
+        if np.isnan(row[["ema_fast", "ema_mid"]]).any():
+            return False
+        if direction > 0 and not (row["ema_fast"] > row["ema_mid"]):
+            return False
+        if direction < 0 and not (row["ema_fast"] < row["ema_mid"]):
+            return False
+    return True

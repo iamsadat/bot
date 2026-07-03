@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Deque
 
-from ..brokers.base import AccountSnapshot
+from ..brokers.base import AccountSnapshot, PositionSnapshot
 from ..config import settings
 
 
@@ -59,12 +59,23 @@ def rate_limit_ok() -> bool:
     return _rate_limiter.allow()
 
 
+def portfolio_headroom(account: AccountSnapshot, positions: list[PositionSnapshot],
+                       max_concurrent: int, max_exposure_pct: float,
+                       ) -> tuple[int, float]:
+    """Return (slots_left, notional_headroom_dollars) for new positions."""
+    slots_left = max(0, max_concurrent - len(positions))
+    used = sum(abs(p.market_value) for p in positions)
+    headroom = max(0.0, max_exposure_pct * account.equity - used)
+    return slots_left, headroom
+
+
 def size_position(*, direction: int, price: float, atr: float,
                   account: AccountSnapshot,
                   risk_per_trade: float = settings.risk_per_trade,
                   stop_atr_mult: float = settings.stop_atr_mult,
                   rr_ratio: float = settings.rr_ratio,
                   max_notional_pct: float = settings.max_position_notional_pct,
+                  notional_cap: float | None = None,
                   ) -> SizedOrder | None:
     """Return a fully-validated, integer-share order plan, or None if invalid."""
     if direction not in (-1, 1):
@@ -79,7 +90,10 @@ def size_position(*, direction: int, price: float, atr: float,
     qty_by_risk = math.floor(risk_dollars / stop_dist)
     qty_by_notional = math.floor(account.equity * max_notional_pct / price)
     qty_by_buying_power = math.floor(account.buying_power / price)
-    qty = max(0, min(qty_by_risk, qty_by_notional, qty_by_buying_power))
+    caps = [qty_by_risk, qty_by_notional, qty_by_buying_power]
+    if notional_cap is not None:
+        caps.append(math.floor(notional_cap / price))
+    qty = max(0, min(caps))
     if qty == 0:
         return None
 

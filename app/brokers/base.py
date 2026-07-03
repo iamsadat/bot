@@ -74,7 +74,7 @@ class Broker(ABC):
         symbol: str,
         side: Literal["buy", "sell"],
         qty: float,
-        type: Literal["market", "limit", "bracket"] = "market",
+        type: Literal["market", "limit", "bracket", "stop"] = "market",
         limit_price: float | None = None,
         stop_loss: float | None = None,
         take_profit: float | None = None,
@@ -99,3 +99,16 @@ class Broker(ABC):
 
     @abstractmethod
     def is_market_open(self) -> bool: ...
+
+    @abstractmethod
+    def replace_order(
+        self,
+        order_id: str,
+        *,
+        qty: float | None = None,
+        stop_price: float | None = None,
+        limit_price: float | None = None,
+    ) -> OrderResult: ...
+
+    @abstractmethod
+    def get_news(self, symbol: str, hours: int = 6) -> list[dict]: ...

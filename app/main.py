@@ -9,6 +9,7 @@ The frontend (Vite dev server on :5173) is allowed via CORS by default.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -25,12 +26,14 @@ from .api import (
     routes_setup,
     routes_strategy,
     routes_stream,
+    routes_tuner,
 )
 from .config import settings
 from .db import init_db
 from .deps import make_broker
 from .market_stream import MarketStream
 from .trading.engine import TradingEngine
+from .trading.tuner import tuner_loop
 from .ws import hub
 
 
@@ -47,6 +50,12 @@ async def lifespan(app: FastAPI):
     market_stream = MarketStream(broadcast=hub.broadcast)
     app.state.engine = engine
     app.state.market_stream = market_stream
+
+    tuner_stop_event = asyncio.Event()
+    tuner_task = None
+    if settings.tuner_enabled:
+        tuner_task = asyncio.create_task(tuner_loop(tuner_stop_event), name="tuner")
+
     try:
         yield
     finally:
@@ -58,6 +67,12 @@ async def lifespan(app: FastAPI):
             await market_stream.stop()
         except Exception:                                       # noqa: BLE001
             pass
+        if tuner_task is not None:
+            tuner_stop_event.set()
+            try:
+                await asyncio.wait_for(tuner_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                tuner_task.cancel()
 
 
 app = FastAPI(
@@ -83,6 +98,7 @@ app.include_router(routes_audit.router, prefix="/api", tags=["audit"])
 app.include_router(routes_setup.router, prefix="/api", tags=["setup"])
 app.include_router(routes_stream.router, prefix="/api", tags=["stream"])
 app.include_router(routes_predictions.router, prefix="/api", tags=["predictions"])
+app.include_router(routes_tuner.router, prefix="/api", tags=["tuner"])
 
 
 @app.get("/api/health")

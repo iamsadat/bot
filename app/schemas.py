@@ -77,6 +77,8 @@ class OrderInfo(BaseModel):
 
 class StrategyConfigSchema(BaseModel):
     symbols: list[str] = ["SPY"]
+    watchlist: list[str] = ["SPY"]
+    scanner_top_n: int = 3
     entry_threshold: float = 0.50
     adx_min: float = 22.0
     risk_per_trade: float = 0.0075

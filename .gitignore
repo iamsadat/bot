@@ -10,8 +10,8 @@ venv/
 reports/
 
 # Live app artefacts
-tradebot.db
-tradebot.db-journal
+*.db
+logs/
 
 # Frontend
 web/node_modules/

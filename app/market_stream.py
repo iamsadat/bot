@@ -16,6 +16,7 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
+from .config import settings
 from .credentials import resolve
 
 log = logging.getLogger("market_stream")
@@ -79,12 +80,14 @@ class MarketStream:
             return
 
         try:
+            from alpaca.data.enums import DataFeed
             from alpaca.data.live import StockDataStream
         except ImportError:
             log.error("alpaca-py not installed; market stream disabled")
             return
 
-        self._stream = StockDataStream(api_key=api_key, secret_key=api_secret)
+        feed = getattr(DataFeed, settings.alpaca_data_feed.upper())
+        self._stream = StockDataStream(api_key=api_key, secret_key=api_secret, feed=feed)
         symbols = list(self._subs)
 
         async def _on_bar(bar):

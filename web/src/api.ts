@@ -71,6 +71,36 @@ export interface AuditEntry {
   detail: any | null;
 }
 
+export interface Candidate {
+  symbol?: string;
+  score?: number;
+  direction?: number;
+  reason?: string;
+  mtf?: boolean;
+  news_score?: number;
+  selected?: boolean;
+}
+
+export interface ScanResult {
+  ts: string;
+  regime?: string;
+  candidates: Candidate[];
+}
+
+export interface ScanResponse {
+  regime: any;
+  scan: ScanResult | null;
+}
+
+export interface TunerProposal {
+  id: number;
+  ts: string;
+  params: Record<string, number>;
+  metrics: Record<string, number>;
+  applied: boolean;
+  applied_at?: string | null;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -163,6 +193,12 @@ export const api = {
     req<PredictionResponse>(
       `/api/prediction/${symbol}?lookback_minutes=${lookback}`,
     ),
+
+  scan: () => req<ScanResponse>("/api/strategy/scan"),
+  tunerProposals: () => req<TunerProposal[]>("/api/tuner/proposals"),
+  applyProposal: (id: number) =>
+    req(`/api/tuner/proposals/${id}/apply`, { method: "POST" }),
+  runTuner: () => req<{ started: true }>("/api/tuner/run", { method: "POST" }),
 };
 
 // ---------- chart / prediction types ---------------------------------

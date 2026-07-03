@@ -13,6 +13,7 @@ from typing import Literal
 
 import pandas as pd
 
+from ..config import settings
 from .base import (
     AccountSnapshot,
     Broker,
@@ -37,6 +38,7 @@ class AlpacaBroker(Broker):
         self.mode = mode
         self._trading = None
         self._data = None
+        self._news = None
 
     # -- lazy clients ------------------------------------------------------
 
@@ -151,6 +153,7 @@ class AlpacaBroker(Broker):
             LimitOrderRequest,
             MarketOrderRequest,
             StopLossRequest,
+            StopOrderRequest,
             TakeProfitRequest,
         )
         from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
@@ -178,6 +181,10 @@ class AlpacaBroker(Broker):
             if limit_price is None:
                 raise BrokerError("Limit order requires limit_price.")
             req = LimitOrderRequest(limit_price=round(limit_price, 2), **kw)
+        elif type == "stop":
+            if stop_loss is None:
+                raise BrokerError("Stop order requires stop_loss (stop price).")
+            req = StopOrderRequest(stop_price=round(stop_loss, 2), **kw)
         else:
             req = MarketOrderRequest(**kw)
 
@@ -231,16 +238,19 @@ class AlpacaBroker(Broker):
     # -- market data ------------------------------------------------------
 
     def get_bars(self, symbol: str, lookback_minutes: int = 240) -> pd.DataFrame:
+        from alpaca.data.enums import DataFeed
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
         end = dt.datetime.now(dt.timezone.utc)
         start = end - dt.timedelta(minutes=lookback_minutes + 30)
+        feed = getattr(DataFeed, settings.alpaca_data_feed.upper())
         try:
             resp = self._data_client().get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame.Minute,
                 start=start,
                 end=end,
+                feed=feed,
             ))
         except NotConfiguredError:
             raise
@@ -274,3 +284,58 @@ class AlpacaBroker(Broker):
         except Exception as e:                                  # noqa: BLE001
             log.warning("alpaca.get_clock failed: %s", e)
             return False
+
+    def replace_order(self, order_id: str, *, qty=None, stop_price=None,
+                      limit_price=None) -> OrderResult:
+        from alpaca.trading.requests import ReplaceOrderRequest
+        kw = {}
+        if qty is not None:
+            kw["qty"] = qty
+        if stop_price is not None:
+            kw["stop_price"] = round(stop_price, 2)
+        if limit_price is not None:
+            kw["limit_price"] = round(limit_price, 2)
+        try:
+            o = self._trading_client().replace_order_by_id(
+                order_id, ReplaceOrderRequest(**kw)
+            )
+        except NotConfiguredError:
+            raise
+        except Exception as e:                                  # noqa: BLE001
+            raise BrokerError(f"alpaca.replace_order failed: {e}") from e
+        return OrderResult(
+            broker_order_id=str(o.id),
+            status=o.status.value if hasattr(o.status, "value") else str(o.status),
+            raw={"client_order_id": getattr(o, "client_order_id", None)},
+        )
+
+    # -- news ---------------------------------------------------------------
+
+    def _news_client(self):
+        if self._news is None:
+            self._require()
+            from alpaca.data.historical.news import NewsClient
+            self._news = NewsClient(api_key=self._api_key, secret_key=self._secret)
+        return self._news
+
+    def get_news(self, symbol: str, hours: int = 6) -> list[dict]:
+        from alpaca.data.requests import NewsRequest
+        start = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)
+        try:
+            resp = self._news_client().get_news(NewsRequest(
+                symbols=symbol, start=start, limit=20,
+            ))
+        except NotConfiguredError:
+            raise
+        except Exception as e:                                  # noqa: BLE001
+            raise BrokerError(f"alpaca.get_news failed: {e}") from e
+        items = resp.data.get("news", [])
+        return [
+            {
+                "headline": n.headline,
+                "summary": n.summary or "",
+                "created_at": n.created_at.isoformat() if hasattr(n.created_at, "isoformat") else str(n.created_at),
+                "url": n.url,
+            }
+            for n in items
+        ]
