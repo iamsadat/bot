@@ -18,8 +18,10 @@ from .base import (
     AccountSnapshot,
     Broker,
     BrokerError,
+    ClockSnapshot,
     NotConfiguredError,
     OrderResult,
+    PortfolioHistorySnapshot,
     PositionSnapshot,
 )
 
@@ -142,6 +144,31 @@ class AlpacaBroker(Broker):
                 "submitted_at": o.submitted_at.isoformat() if o.submitted_at else None,
             }
             for o in orders
+        ]
+
+    def get_closed_orders(self, limit: int = 500) -> list[dict]:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        try:
+            orders = self._trading_client().get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.CLOSED, limit=limit,
+                                        direction="asc")
+            )
+        except NotConfiguredError:
+            raise
+        except Exception as e:                                  # noqa: BLE001
+            raise BrokerError(f"alpaca.get_closed_orders failed: {e}") from e
+        return [
+            {
+                "id": str(o.id),
+                "symbol": o.symbol,
+                "side": o.side.value,
+                "qty": float(o.filled_qty),
+                "filled_avg_price": float(o.filled_avg_price),
+                "filled_at": o.filled_at.isoformat(),
+            }
+            for o in orders
+            if o.filled_at is not None and o.filled_avg_price is not None and o.filled_qty
         ]
 
     # -- order placement --------------------------------------------------
@@ -284,6 +311,41 @@ class AlpacaBroker(Broker):
         except Exception as e:                                  # noqa: BLE001
             log.warning("alpaca.get_clock failed: %s", e)
             return False
+
+    def get_clock(self) -> ClockSnapshot:
+        try:
+            c = self._trading_client().get_clock()
+        except NotConfiguredError:
+            raise
+        except Exception as e:                                  # noqa: BLE001
+            raise BrokerError(f"alpaca.get_clock failed: {e}") from e
+        return ClockSnapshot(is_open=bool(c.is_open), next_open=c.next_open,
+                             next_close=c.next_close)
+
+    def get_portfolio_history(self, period: str = "1M") -> PortfolioHistorySnapshot:
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+        try:
+            h = self._trading_client().get_portfolio_history(
+                GetPortfolioHistoryRequest(period=period)
+            )
+        except NotConfiguredError:
+            raise
+        except Exception as e:                                  # noqa: BLE001
+            raise BrokerError(f"alpaca.get_portfolio_history failed: {e}") from e
+        timestamps = list(h.timestamp or [])
+        equity = list(h.equity or [])
+        profit_loss = list(h.profit_loss or [])
+        # Alpaca nulls out equity for minutes with no trading (closed market);
+        # drop those so the three arrays stay aligned and numeric.
+        n = min(len(timestamps), len(equity), len(profit_loss))
+        out_ts, out_eq, out_pl = [], [], []
+        for i in range(n):
+            if equity[i] is None:
+                continue
+            out_ts.append(int(timestamps[i]))
+            out_eq.append(float(equity[i]))
+            out_pl.append(float(profit_loss[i] or 0.0))
+        return PortfolioHistorySnapshot(timestamps=out_ts, equity=out_eq, profit_loss=out_pl)
 
     def replace_order(self, order_id: str, *, qty=None, stop_price=None,
                       limit_price=None) -> OrderResult:

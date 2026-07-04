@@ -2,19 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AccountInfo,
   AuditEntry,
+  ManagedPosition,
   OrderInfo,
   PositionInfo,
   PredictionResponse,
   ScanResult,
   StrategyState,
+  Trade,
   TunerProposal,
   api,
 } from "./api";
 import { connectWs } from "./ws";
 import { Header } from "./components/Header";
+import { StatusHero } from "./components/StatusHero";
 import { AccountPanel } from "./components/AccountPanel";
 import { PositionsPanel } from "./components/PositionsPanel";
 import { OrdersPanel } from "./components/OrdersPanel";
+import { TradesPanel } from "./components/TradesPanel";
 import { OrderTicket } from "./components/OrderTicket";
 import { StrategyPanel } from "./components/StrategyPanel";
 import { AuditLog } from "./components/AuditLog";
@@ -32,6 +36,8 @@ export default function App() {
   const [orders, setOrders] = useState<OrderInfo[]>([]);
   const [strategy, setStrategy] = useState<StrategyState | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [managed, setManaged] = useState<ManagedPosition[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [modeModal, setModeModal] = useState<"paper" | "live" | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -63,6 +69,8 @@ export default function App() {
       api.orders().then(setOrders, () => {}),
       api.strategy().then(setStrategy, () => {}),
       api.audit(50).then(setAudit, () => {}),
+      api.trades().then((r) => setTrades(r.trades), () => {}),
+      api.managed().then(setManaged, () => {}),
     ]);
   }, []);
 
@@ -142,6 +150,16 @@ export default function App() {
       if (kind === "scan") {
         setScan(payload);
       }
+      if (kind === "exit") {
+        const pnl = typeof payload?.pnl === "number" ? payload.pnl : null;
+        showToast(`Exit: ${payload?.symbol ?? "?"}${pnl != null ? ` ${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}` : ""}`);
+        api.positions().then(setPositions, () => {});
+        api.trades().then((r) => setTrades(r.trades), () => {});
+        api.managed().then(setManaged, () => {});
+      }
+      if (kind === "status") {
+        setStrategy((s) => (s ? { ...s, ...payload } : s));
+      }
     });
     return () => wsRef.current?.();
   }, [refreshAll, refreshPrediction, showToast, symbol]);
@@ -173,6 +191,8 @@ export default function App() {
         streamSubs={streamSubs}
       />
 
+      <StatusHero account={account} strategy={strategy} />
+
       <div className="layout">
         <div className="col">
           <AccountPanel account={account} error={accountErr} />
@@ -185,12 +205,14 @@ export default function App() {
           <ScannerPanel scan={scan} />
           <PositionsPanel
             positions={positions}
+            managed={managed}
             onClose={async (s) => {
               try { await api.closePosition(s); showToast(`Closing ${s}`); }
               catch (e) { showToast(String(e)); }
               refreshAll();
             }}
           />
+          <TradesPanel trades={trades} />
           <OrdersPanel
             orders={orders}
             onCancel={async (id) => {

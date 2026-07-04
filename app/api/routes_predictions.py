@@ -99,6 +99,11 @@ def get_prediction(symbol: str, lookback_minutes: int = 240,
     broker = make_broker()
     try:
         bars = broker.get_bars(symbol, lookback_minutes=lookback_minutes)
+        if len(bars) < 60:
+            # Market closed (weekend/holiday): widen the window to reach the
+            # previous trading session instead of 400ing the whole chart.
+            wide_minutes = max(lookback_minutes, 4 * 24 * 60)
+            bars = broker.get_bars(symbol, lookback_minutes=wide_minutes)
     except NotConfiguredError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except BrokerError as e:

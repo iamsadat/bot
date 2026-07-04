@@ -15,6 +15,7 @@ export function SetupModal({ initialMode = "paper", onClose, onSaved }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [tested, setTested] = useState<{ equity: number; cash: number; buying_power: number } | null>(null);
   const [status, setStatus] = useState<Record<Mode, { configured: boolean; source: string; key_preview: string | null }> | null>(null);
+  const [connected, setConnected] = useState<{ equity: number; mode: Mode } | null>(null);
 
   useEffect(() => {
     api.setupStatus().then(setStatus).catch(() => {});
@@ -33,11 +34,17 @@ export function SetupModal({ initialMode = "paper", onClose, onSaved }: Props) {
   };
 
   const save = async () => {
-    setErr(null); setBusy(true);
+    setErr(null); setBusy(true); setConnected(null);
     try {
       await api.setupSave(mode, key, secret);
       onSaved();
-      onClose();
+      try {
+        const acc = await api.account();
+        setConnected({ equity: acc.equity, mode: acc.mode });
+      } catch {
+        // Proof-of-connection is best-effort — save already succeeded.
+        onClose();
+      }
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -122,6 +129,15 @@ export function SetupModal({ initialMode = "paper", onClose, onSaved }: Props) {
             borderColor: "#1c6e3a", color: "#9bf2bd",
           }}>
             ✓ Connection OK. Equity ${tested.equity.toLocaleString()}, BP ${tested.buying_power.toLocaleString()}.
+          </div>
+        )}
+
+        {connected && (
+          <div className="callout" style={{
+            margin: "8px 0 0", background: "#0e2a17",
+            borderColor: "#1c6e3a", color: "#9bf2bd",
+          }}>
+            ✓ Connected — ${connected.equity.toLocaleString()} equity ({connected.mode})
           </div>
         )}
 

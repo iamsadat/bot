@@ -42,6 +42,7 @@ from ..db import session_scope
 from ..models import OrderRecord
 from . import audit as audit_log
 from . import exits as exits_mod
+from . import narrative as narrative_mod
 from . import news as news_mod
 from . import state as state_mod
 from .risk import portfolio_headroom, rate_limit_ok, size_position
@@ -52,6 +53,11 @@ log = logging.getLogger("engine")
 Broadcast = Callable[[str, dict], Awaitable[None]]
 
 CHOP_THRESHOLD_PENALTY = 0.10
+
+# How often to refresh the off-hours scan preview while the market is closed.
+OFFHOURS_SCAN_INTERVAL = dt.timedelta(minutes=15)
+# Wide enough to reach the prior session's bars across a weekend or holiday.
+OFFHOURS_LOOKBACK_MINUTES = 7 * 24 * 60
 
 
 class TradingEngine:
@@ -66,6 +72,7 @@ class TradingEngine:
         self._tick_lock = asyncio.Lock()
         self._broker: Broker | None = None
         self._mode: str = settings.default_mode
+        self._last_offhours_scan: dt.datetime | None = None
 
     # -- lifecycle --------------------------------------------------------
 
@@ -167,7 +174,13 @@ class TradingEngine:
             broker = self._broker
             if broker is None or not broker.is_configured():
                 return
-            if not await asyncio.to_thread(broker.is_market_open):
+            try:
+                clock = await asyncio.to_thread(broker.get_clock)
+            except BrokerError as e:
+                log.warning("tick: get_clock failed: %s", e)
+                return
+            if not clock.is_open:
+                await self._tick_market_closed(broker, clock, cfg)
                 return
 
             account = await asyncio.to_thread(broker.get_account)
@@ -202,13 +215,17 @@ class TradingEngine:
                 "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "regime": regime,
                 "candidates": candidates,
+                "stale": False,
             }
+            narrative = narrative_mod.for_scan(candidates, regime)
             with session_scope() as db:
                 st = state_mod.get_or_create(db)
                 st.last_scan = scan_payload
                 st.regime = regime
+                st.market = narrative_mod.clock_blob("open", clock)
                 if candidates:
                     state_mod.update_decision(db, candidates[0])
+                self._write_narrative_if_changed(db, st, narrative)
             await self._broadcast("scan", scan_payload)
 
             if settings.managed_exits_enabled:
@@ -220,6 +237,61 @@ class TradingEngine:
             for candidate in selected:
                 await self._maybe_trade(broker, candidate, account, cfg, notional_cap)
 
+    async def _tick_market_closed(self, broker, clock, cfg) -> None:
+        """Heartbeat + off-hours scan preview so the UI never goes silent."""
+        now = dt.datetime.now(dt.timezone.utc)
+        if (self._last_offhours_scan is None
+                or now - self._last_offhours_scan >= OFFHOURS_SCAN_INTERVAL):
+            self._last_offhours_scan = now
+            await self._offhours_scan_preview(broker, cfg)
+
+        narrative = narrative_mod.for_closed(clock)
+        with session_scope() as db:
+            st = state_mod.get_or_create(db)
+            st.last_tick = now
+            st.market = narrative_mod.clock_blob("market_closed", clock)
+            self._write_narrative_if_changed(db, st, narrative)
+
+        await self._broadcast("status", {
+            "state": "market_closed",
+            "market": {
+                "is_open": False,
+                "next_open": narrative_mod.iso(clock.next_open),
+                "next_close": narrative_mod.iso(clock.next_close),
+            },
+            "narrative": narrative,
+        })
+
+    async def _offhours_scan_preview(self, broker, cfg) -> None:
+        """Re-run the scanner against the last session's bars while closed."""
+        watchlist: list[str] = cfg.get("watchlist") or cfg.get("symbols") or [settings.default_symbol]
+        scfg = StrategyConfig(
+            entry_threshold=float(cfg.get("entry_threshold", 0.5)),
+            adx_min=float(cfg.get("adx_min", 22.0)),
+        )
+        candidates = await self._scan_watchlist(
+            broker, watchlist, scfg, spy_bars=None,
+            lookback_minutes=OFFHOURS_LOOKBACK_MINUTES,
+        )
+        candidates.sort(key=lambda c: c["rank_score"], reverse=True)
+        scan_payload = {
+            "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "regime": None,
+            "candidates": candidates,
+            "stale": True,
+        }
+        with session_scope() as db:
+            st = state_mod.get_or_create(db)
+            st.last_scan = scan_payload
+        await self._broadcast("scan", scan_payload)
+
+    @staticmethod
+    def _write_narrative_if_changed(db, st, narrative: str) -> None:
+        """Append an audit row only when the narrative actually changed."""
+        if narrative != st.narrative:
+            audit_log.write("narrative", narrative, actor="engine", db=db)
+        st.narrative = narrative
+
     async def _classify_regime(self, broker) -> tuple[str, pd.DataFrame | None]:
         try:
             spy_bars = await asyncio.to_thread(broker.get_bars, "SPY", lookback_minutes=240)
@@ -230,14 +302,16 @@ class TradingEngine:
             return "chop", spy_bars
         return classify_regime(spy_bars), spy_bars
 
-    async def _scan_watchlist(self, broker, watchlist, scfg, spy_bars) -> list[dict]:
+    async def _scan_watchlist(self, broker, watchlist, scfg, spy_bars,
+                              lookback_minutes: int = 240) -> list[dict]:
         candidates: list[dict] = []
         for symbol in watchlist:
             if symbol == "SPY" and spy_bars is not None:
                 bars = spy_bars
             else:
                 try:
-                    bars = await asyncio.to_thread(broker.get_bars, symbol, lookback_minutes=240)
+                    bars = await asyncio.to_thread(broker.get_bars, symbol,
+                                                    lookback_minutes=lookback_minutes)
                 except BrokerError as e:
                     log.warning("scan: get_bars failed for %s: %s", symbol, e)
                     continue

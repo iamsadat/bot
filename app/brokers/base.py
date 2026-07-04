@@ -7,6 +7,7 @@ swap in a different venue later without touching trading logic.
 
 from __future__ import annotations
 
+import datetime as dt
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Literal
@@ -49,6 +50,20 @@ class OrderResult:
     broker_order_id: str
     status: str
     raw: dict
+
+
+@dataclass
+class ClockSnapshot:
+    is_open: bool
+    next_open: dt.datetime | None
+    next_close: dt.datetime | None
+
+
+@dataclass
+class PortfolioHistorySnapshot:
+    timestamps: list[int]
+    equity: list[float]
+    profit_loss: list[float]
 
 
 class Broker(ABC):
@@ -99,6 +114,15 @@ class Broker(ABC):
 
     @abstractmethod
     def is_market_open(self) -> bool: ...
+
+    @abstractmethod
+    def get_clock(self) -> ClockSnapshot: ...
+
+    @abstractmethod
+    def get_portfolio_history(self, period: str = "1M") -> PortfolioHistorySnapshot: ...
+
+    @abstractmethod
+    def get_closed_orders(self, limit: int = 500) -> list[dict]: ...
 
     @abstractmethod
     def replace_order(

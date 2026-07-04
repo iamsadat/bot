@@ -66,6 +66,8 @@ class StrategyState(Base):
     last_scan: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     regime: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     config: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+    market: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+    narrative: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow,
     )
@@ -112,8 +114,8 @@ class Credential(Base):
     """Runtime-editable broker credentials.
 
     Keys are stored plaintext (this app is intended for localhost / VPN use
-    only).  Environment variables, when present, take precedence over rows
-    in this table.
+    only).  Rows in this table take precedence over environment variables;
+    see ``credentials.resolve()``.
     """
     __tablename__ = "credentials"
     mode: Mapped[str] = mapped_column(String(8), primary_key=True)  # paper/live

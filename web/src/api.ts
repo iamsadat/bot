@@ -39,6 +39,31 @@ export interface OrderInfo {
   stop_price: number | null;
   take_profit: number | null;
   rejected_reason: string | null;
+  extra?: { score?: number; votes?: Record<string, number>; [k: string]: any } | null;
+}
+
+export interface AccountHistory {
+  timestamps: number[];
+  equity: number[];
+  profit_loss: number[];
+}
+
+export interface Trade {
+  symbol: string;
+  direction: "long" | "short" | string;
+  qty: number;
+  entry_price: number;
+  exit_price: number;
+  pnl: number;
+  pnl_pct: number;
+  opened_at: string;
+  closed_at: string;
+}
+
+export interface ManagedPosition {
+  symbol: string;
+  stage: string;
+  [k: string]: any;
 }
 
 export interface StrategyConfig {
@@ -51,6 +76,12 @@ export interface StrategyConfig {
   auto_trade: boolean;
 }
 
+export interface MarketStatus {
+  is_open: boolean;
+  next_open: string | null;
+  next_close: string | null;
+}
+
 export interface StrategyState {
   running: boolean;
   mode: Mode;
@@ -60,6 +91,9 @@ export interface StrategyState {
   last_tick: string | null;
   last_decision: any | null;
   config: StrategyConfig;
+  // Optional — only present once the backend ships them.
+  market?: MarketStatus;
+  narrative?: string;
 }
 
 export interface AuditEntry {
@@ -79,12 +113,14 @@ export interface Candidate {
   mtf?: boolean;
   news_score?: number;
   selected?: boolean;
+  price?: number;
 }
 
 export interface ScanResult {
   ts: string;
   regime?: string;
   candidates: Candidate[];
+  stale?: boolean;
 }
 
 export interface ScanResponse {
@@ -195,6 +231,12 @@ export const api = {
     ),
 
   scan: () => req<ScanResponse>("/api/strategy/scan"),
+
+  accountHistory: (period: "1D" | "1W" | "1M" = "1D") =>
+    req<AccountHistory>(`/api/account/history?period=${period}`),
+  trades: () => req<{ trades: Trade[] }>("/api/trades"),
+  managed: () => req<ManagedPosition[]>("/api/managed"),
+
   tunerProposals: () => req<TunerProposal[]>("/api/tuner/proposals"),
   applyProposal: (id: number) =>
     req(`/api/tuner/proposals/${id}/apply`, { method: "POST" }),

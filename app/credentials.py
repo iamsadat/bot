@@ -2,8 +2,9 @@
 
 Lookup priority:
 
-  1. Environment variables (``ALPACA_PAPER_KEY`` / ``ALPACA_PAPER_SECRET`` etc.)
-  2. ``credentials`` table written via the setup UI.
+  1. ``credentials`` table written via the setup UI.
+  2. Environment variables (``ALPACA_PAPER_KEY`` / ``ALPACA_PAPER_SECRET`` etc.)
+     as a fallback for hosts that provision keys via the environment.
 
 GET endpoints never return raw secrets — they only report which slots are
 configured and which are masked.  Only the broker factory ever reads the
@@ -23,19 +24,19 @@ from .models import Credential
 
 def resolve(mode: Literal["paper", "live"]) -> tuple[str | None, str | None, str]:
     """Return (api_key, api_secret, source) for the requested mode."""
+    with session_scope() as db:
+        row = db.get(Credential, mode)
+        if row is not None and row.api_key and row.api_secret:
+            return row.api_key, row.api_secret, "db"
+
     if mode == "paper":
         env_key, env_secret = settings.alpaca_paper_key, settings.alpaca_paper_secret
     else:
         env_key, env_secret = settings.alpaca_live_key, settings.alpaca_live_secret
-
     if env_key and env_secret:
         return env_key, env_secret, "env"
 
-    with session_scope() as db:
-        row = db.get(Credential, mode)
-        if row is None:
-            return None, None, "none"
-        return row.api_key, row.api_secret, "db"
+    return None, None, "none"
 
 
 def status() -> dict:

@@ -1,3 +1,4 @@
+import { Fragment, useState } from "react";
 import { AuditEntry } from "../api";
 
 interface Props { entries: AuditEntry[]; }
@@ -19,6 +20,7 @@ const COLOR: Record<string, string> = {
 };
 
 export function AuditLog({ entries }: Props) {
+  const [expanded, setExpanded] = useState<number | null>(null);
   return (
     <div className="card">
       <div className="card-h">
@@ -39,14 +41,32 @@ export function AuditLog({ entries }: Props) {
               </tr>
             </thead>
             <tbody>
-              {entries.map((e) => (
-                <tr key={e.id}>
-                  <td className="dim">{new Date(e.ts).toLocaleTimeString()}</td>
-                  <td style={{ color: COLOR[e.kind] || "var(--text)" }}>{e.kind}</td>
-                  <td className="dim">{e.actor}</td>
-                  <td>{e.summary}</td>
-                </tr>
-              ))}
+              {entries.map((e) => {
+                const hasDetail = e.detail != null;
+                const isOpen = expanded === e.id;
+                return (
+                  <Fragment key={e.id}>
+                    <tr
+                      onClick={() => hasDetail && setExpanded(isOpen ? null : e.id)}
+                      style={hasDetail ? { cursor: "pointer" } : undefined}
+                    >
+                      <td className="dim">{new Date(e.ts).toLocaleTimeString()}</td>
+                      <td style={{ color: COLOR[e.kind] || "var(--text)" }}>{e.kind}</td>
+                      <td className="dim">{e.actor}</td>
+                      <td>{e.summary}{hasDetail && (isOpen ? " ▾" : " ▸")}</td>
+                    </tr>
+                    {isOpen && hasDetail && (
+                      <tr>
+                        <td colSpan={4} style={{ background: "var(--bg-2)" }}>
+                          <pre className="mono" style={{ margin: 0, fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                            {JSON.stringify(e.detail, null, 2)}
+                          </pre>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

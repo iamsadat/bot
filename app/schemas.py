@@ -96,6 +96,8 @@ class StrategyStateInfo(BaseModel):
     last_tick: Optional[dt.datetime]
     last_decision: Optional[dict[str, Any]]
     config: StrategyConfigSchema
+    market: Optional[dict[str, Any]] = None
+    narrative: Optional[str] = None
 
 
 # ---------- safety / mode -------------------------------------------------

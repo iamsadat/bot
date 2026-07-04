@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..models import ManagedPosition
 from ..schemas import StrategyConfigSchema, StrategyStateInfo
 from ..trading import audit as audit_log
 from ..trading import state as state_mod
@@ -25,6 +26,7 @@ def get_strategy(db: Session = Depends(get_db)):
         running=st.running, mode=st.mode, kill_switch=st.kill_switch,
         halted_today=st.halted_today, halted_reason=st.halted_reason,
         last_tick=st.last_tick, last_decision=st.last_decision, config=cfg,
+        market=st.market, narrative=st.narrative,
     )
 
 
@@ -32,6 +34,31 @@ def get_strategy(db: Session = Depends(get_db)):
 def get_scan(db: Session = Depends(get_db)):
     st = state_mod.get_or_create(db)
     return {"regime": st.regime, "scan": st.last_scan}
+
+
+@router.get("/managed")
+def get_managed(db: Session = Depends(get_db)):
+    rows = (
+        db.query(ManagedPosition)
+        .filter(ManagedPosition.stage != "closed")
+        .order_by(ManagedPosition.created_at.desc())
+        .all()
+    )
+    return {
+        "positions": [
+            {
+                "symbol": r.symbol,
+                "direction": r.direction,
+                "entry_price": r.entry_price,
+                "qty_total": r.qty_total,
+                "qty_remaining": r.qty_remaining,
+                "stage": r.stage,
+                "r_unit": r.r_unit,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in rows
+        ]
+    }
 
 
 @router.post("/strategy/start")

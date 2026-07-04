@@ -1,13 +1,14 @@
-import { PositionInfo } from "../api";
+import { ManagedPosition, PositionInfo } from "../api";
 
 interface Props {
   positions: PositionInfo[];
+  managed?: ManagedPosition[];
   onClose: (symbol: string) => void;
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
-export function PositionsPanel({ positions, onClose }: Props) {
+export function PositionsPanel({ positions, managed, onClose }: Props) {
   return (
     <div className="card">
       <div className="card-h">
@@ -29,24 +30,30 @@ export function PositionsPanel({ positions, onClose }: Props) {
             </tr>
           </thead>
           <tbody>
-            {positions.map((p) => (
-              <tr key={p.symbol}>
-                <td>{p.symbol}</td>
-                <td><span className={`tag ${p.side}`}>{p.side.toUpperCase()}</span></td>
-                <td className="num">{fmt(p.qty)}</td>
-                <td className="num">{fmt(p.avg_entry_price)}</td>
-                <td className="num">{fmt(p.market_price)}</td>
-                <td className={`num ${p.unrealized_pnl >= 0 ? "green" : "red"}`}>
-                  {p.unrealized_pnl >= 0 ? "+" : ""}{fmt(p.unrealized_pnl)}
-                  <span className="dim" style={{ marginLeft: 6 }}>
-                    {(p.unrealized_pnl_pct * 100).toFixed(2)}%
-                  </span>
-                </td>
-                <td>
-                  <button className="ghost" onClick={() => onClose(p.symbol)}>Close</button>
-                </td>
-              </tr>
-            ))}
+            {positions.map((p) => {
+              const stage = managed?.find((m) => m.symbol === p.symbol)?.stage;
+              return (
+                <tr key={p.symbol}>
+                  <td>
+                    {p.symbol}
+                    {stage && <span className="tag manual" style={{ marginLeft: 6 }}>{stage}</span>}
+                  </td>
+                  <td><span className={`tag ${p.side}`}>{p.side.toUpperCase()}</span></td>
+                  <td className="num">{fmt(p.qty)}</td>
+                  <td className="num">{fmt(p.avg_entry_price)}</td>
+                  <td className="num">{fmt(p.market_price)}</td>
+                  <td className={`num ${p.unrealized_pnl >= 0 ? "green" : "red"}`}>
+                    {p.unrealized_pnl >= 0 ? "+" : ""}{fmt(p.unrealized_pnl)}
+                    <span className="dim" style={{ marginLeft: 6 }}>
+                      {(p.unrealized_pnl_pct * 100).toFixed(2)}%
+                    </span>
+                  </td>
+                  <td>
+                    <button className="ghost" onClick={() => onClose(p.symbol)}>Close</button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

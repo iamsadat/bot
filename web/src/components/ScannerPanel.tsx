@@ -31,6 +31,7 @@ export function ScannerPanel({ scan }: Props) {
     <div className="card">
       <div className="card-h">
         Market Scanner
+        {scan?.stale && <span className="badge dim" style={{ marginLeft: 8 }}>LAST SESSION</span>}
         <RegimeBadge regime={scan?.regime} />
       </div>
       {sorted.length === 0 ? (
@@ -40,6 +41,7 @@ export function ScannerPanel({ scan }: Props) {
           <thead>
             <tr>
               <th>Symbol</th>
+              <th className="num">Price</th>
               <th className="num">Score</th>
               <th>Dir</th>
               <th>MTF</th>
@@ -54,6 +56,7 @@ export function ScannerPanel({ scan }: Props) {
               return (
                 <tr key={c.symbol ?? i}>
                   <td>{c.symbol ?? "—"}</td>
+                  <td className="num dim">{c.price != null ? c.price.toFixed(2) : "—"}</td>
                   <td className={`num ${score > 0 ? "green" : score < 0 ? "red" : "dim"}`}>
                     {score >= 0 ? "+" : ""}{score.toFixed(2)}
                   </td>
