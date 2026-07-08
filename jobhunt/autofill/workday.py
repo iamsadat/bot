@@ -9,10 +9,13 @@ structure.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from jobhunt.autofill.base import AutofillResult, FormField, Page
 from jobhunt.autofill.mapper import map_profile_to_fields
+
+logger = logging.getLogger(__name__)
 
 # Field specs for Workday's "My Information" application step.
 WORKDAY_FIELD_SPECS: list[dict[str, Any]] = [
@@ -133,6 +136,7 @@ class WorkdayAutofiller:
                     skipped.append(f)
                     continue
             except Exception:
+                logger.debug("autofill field %r (%s) failed", f.selector, f.kind, exc_info=True)
                 skipped.append(f)
                 continue
 

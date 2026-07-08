@@ -15,9 +15,12 @@ fixed by the engine. The LLM is never trusted to invent facts.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 from jobhunt.models import UserProfile, JobPosting
 
@@ -158,8 +161,7 @@ def _bullet_for_keyword(
                 base = improved.strip()
                 rewritten = True
         except Exception:
-            # LLM is best-effort; fall back to deterministic phrasing.
-            pass
+            logger.debug("LLM bullet rewrite failed for keyword=%r", keyword, exc_info=True)
     return Bullet(text=base, evidence_id=ev["id"], keyword=keyword, rewritten_by_llm=rewritten)
 
 
@@ -233,7 +235,7 @@ def build_resume_draft(
             if improved and isinstance(improved, str):
                 summary = improved.strip()
         except Exception:
-            pass
+            logger.debug("LLM summary generation failed", exc_info=True)
 
     experiences_section = ResumeSection(title="Experience")
     # Bullets are attached to Experience for now; multi-section split is a
@@ -281,7 +283,7 @@ def _expanded_keywords(keywords: list[str]) -> set[str]:
         try:
             out.update(s.lower() for s in expand_term(kw))
         except Exception:
-            pass
+            logger.debug("expand_term failed for %r", kw, exc_info=True)
     return out
 
 
@@ -290,6 +292,7 @@ def _embed_sim(text: str, jd: str) -> float:
         from jobhunt.embeddings import cosine_similarity, embed_jd_text
         return float(cosine_similarity(embed_jd_text(text), embed_jd_text(jd)))
     except Exception:
+        logger.debug("embedding similarity computation failed", exc_info=True)
         return 0.0
 
 
@@ -327,7 +330,7 @@ def _polish(text: str, posting: JobPosting, llm: Callable[[str, dict], str] | No
         if improved and isinstance(improved, str):
             return improved.strip(), True
     except Exception:
-        pass
+        logger.debug("LLM tone-polish failed", exc_info=True)
     return text, False
 
 
@@ -439,7 +442,7 @@ def build_tailored_resume(
             if improved and isinstance(improved, str):
                 summary = improved.strip()
         except Exception:
-            pass
+            logger.debug("LLM summary polish failed in build_tailored_resume", exc_info=True)
 
     # ----- matched / missing coverage ----------------------------------------
     matched: list[str] = []
@@ -449,7 +452,7 @@ def build_tailored_resume(
         try:
             forms |= {s.lower() for s in expand_term(kw)}
         except Exception:
-            pass
+            logger.debug("expand_term failed for %r in build_tailored_resume", kw, exc_info=True)
         (matched if forms & corpus_tokens else missing).append(kw)
 
     return ResumeDraft(

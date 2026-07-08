@@ -13,11 +13,14 @@ ever fails — which prevents a flunked draft from leaving the agent.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from jobhunt.agents.base import BaseAgent
+
+logger = logging.getLogger(__name__)
 from jobhunt.models import JobPosting, ReasoningTrace, UserProfile
 from jobhunt.trace import ThoughtBus, TraceStore
 
@@ -115,7 +118,7 @@ def _best_keywords(jd: str, limit: int) -> list[str]:
         if ordered:
             return ordered
     except Exception:
-        pass
+        logger.debug("jd_parser failed, falling back to extract_keywords", exc_info=True)
     return extract_keywords(jd, limit)
 
 
@@ -293,8 +296,7 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
                     if improved and isinstance(improved, str):
                         text = improved.strip()
                 except Exception:
-                    # LLM is best-effort; fall back to deterministic phrasing.
-                    pass
+                    logger.debug("LLM bullet rewrite failed for keyword=%r", kw, exc_info=True)
             bullets.append({"text": text, "evidence_id": ev["id"]})
         return matched, missing, bullets
 
@@ -335,7 +337,7 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
                 if improved and isinstance(improved, str):
                     base = improved.strip()
             except Exception:
-                pass
+                logger.debug("LLM summary polish failed", exc_info=True)
         return base
 
     @staticmethod

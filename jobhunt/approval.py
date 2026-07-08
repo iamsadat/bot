@@ -17,11 +17,14 @@ WebSocket stream stays in sync.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Callable, Iterable, Optional
+
+logger = logging.getLogger(__name__)
 
 from jobhunt.redis_client import BaseRedisClient, FakeRedisClient
 
@@ -179,13 +182,12 @@ class ApprovalQueue:
         try:
             self.redis.publish(self.PUBSUB_CHANNEL, payload)
         except Exception:
-            # Pub/sub is best-effort — don't let a Redis hiccup block the queue.
-            pass
+            logger.warning("Redis pub/sub publish failed for event=%r", event, exc_info=True)
         for listener in list(self._listeners):
             try:
                 listener(req)
             except Exception:
-                continue
+                logger.warning("approval listener %r raised", listener, exc_info=True)
 
 
 # -------------------------------------------------------- agent integration

@@ -10,9 +10,12 @@ deterministic path so this module never raises on the caller's behalf.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from jobhunt.agents.resume import _best_keywords
+
+logger = logging.getLogger(__name__)
 
 LLMCallback = Callable[[str, dict], str]
 
@@ -145,7 +148,7 @@ def generate_questions(
                     })
                 return questions
         except Exception:
-            pass  # LLM is best-effort; fall back to deterministic templates.
+            logger.debug("LLM question generation failed, using templates", exc_info=True)
 
     behavioral = _deterministic_behavioral_questions(n_behavioral)
     technical = _deterministic_technical_questions(job, doc, n_technical)
@@ -256,6 +259,6 @@ def answer_feedback(
                 if coerced is not None:
                     return coerced
         except Exception:
-            pass  # LLM is best-effort; fall back to the deterministic heuristic.
+            logger.debug("LLM feedback generation failed, using heuristic", exc_info=True)
 
     return _heuristic_feedback(question, answer)

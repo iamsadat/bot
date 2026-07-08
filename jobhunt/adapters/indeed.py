@@ -14,6 +14,7 @@ adapter uses ``client.get_text`` rather than ``client.get_json``.
 
 from __future__ import annotations
 
+import logging
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -24,6 +25,8 @@ from jobhunt.adapters.base import JobSource, SourceUnavailable
 from jobhunt.adapters.filters import passes_local_filters
 from jobhunt.http import HTTPClient, HTTPClientError, UrllibHTTPClient
 from jobhunt.models import JobPosting
+
+logger = logging.getLogger(__name__)
 
 _RSS_URL = "https://www.indeed.com/rss?q={q}&l={l}"
 
@@ -58,6 +61,7 @@ def _parse_pub_date(pub_date_str: str | None) -> float:
     try:
         return parsedate_to_datetime(pub_date_str).timestamp()
     except Exception:
+        logger.debug("failed to parse pubDate %r, using current time", pub_date_str)
         return time.time()
 
 
@@ -141,6 +145,7 @@ class IndeedSource(JobSource):
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError:
+            logger.warning("Indeed RSS returned unparseable XML")
             return []
 
         # RSS structure: <rss><channel><item>...</item></channel></rss>
@@ -153,7 +158,7 @@ class IndeedSource(JobSource):
             try:
                 posting = self._item_to_posting(item_el)
             except Exception:
-                # Malformed item — skip rather than crash.
+                logger.debug("malformed RSS item, skipping", exc_info=True)
                 continue
             if posting is not None and passes_local_filters(posting, query):
                 out.append(posting)

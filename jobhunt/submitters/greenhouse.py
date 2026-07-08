@@ -10,12 +10,15 @@ See: https://developers.greenhouse.io/job-board.html#submitting-an-application
 from __future__ import annotations
 
 import json
+import logging
 import re
 import urllib.request
 import uuid
 from collections.abc import Callable
 
 from jobhunt.submitters.base import Poster, SubmitResult
+
+logger = logging.getLogger(__name__)
 
 # A browser-like UA + Accept reduce the chance the public board endpoints
 # reject our request as non-browser automation.
@@ -229,7 +232,7 @@ class GreenhouseSubmitter:
         except Exception:
             # No question data (offline/unsupported) — submit base fields and
             # let the API report any missing required questions.
-            pass
+            logger.warning("failed to fetch/map screening questions for job %s", job_id, exc_info=True)
 
         body, content_type = _build_multipart(fields)
         headers = {"Content-Type": content_type, "Referer": url, **_BROWSER_HEADERS}
