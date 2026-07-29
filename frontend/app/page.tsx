@@ -107,7 +107,7 @@ const PRICE_OPTIONS: { v: PricePref; label: string }[] = [
 function WaitlistForm() {
   const [email, setEmail] = useState('');
   const [pref, setPref] = useState<PricePref>('lifetime_99');
-  const [status, setStatus] = useState<'idle' | 'busy' | 'done'>('idle');
+  const [status, setStatus] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
 
   const submit = async () => {
     if (!email.includes('@')) return;
@@ -116,7 +116,10 @@ function WaitlistForm() {
       await joinWaitlist(email, pref);
       setStatus('done');
     } catch {
-      setStatus('idle');
+      // A silently-dropped signup is worse than a visible failure: the user
+      // walks away believing they're on the list, and the pricing data this
+      // form exists to collect is quietly wrong.
+      setStatus('error');
     }
   };
 
@@ -157,6 +160,11 @@ function WaitlistForm() {
           Join
         </button>
       </div>
+      {status === 'error' && (
+        <p className="mt-2 text-xs text-warn">
+          That didn&apos;t go through — please try again.
+        </p>
+      )}
     </div>
   );
 }

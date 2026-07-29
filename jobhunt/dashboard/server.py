@@ -42,8 +42,14 @@ Endpoints:
   POST /api/contacts/{id}/nudge   fire a follow-up notification + draft email
   GET  /api/analytics             funnel + résumé-strategy A/B experiment results
   POST /api/pageview              record one pageview (landing/ats_tool/public_resume)
-  GET  /api/pageview/stats        aggregate pageview counts (top-of-funnel traffic)
+  GET  /api/pageview/stats        aggregate pageview counts (admin token)
+  POST /api/waitlist              join the waitlist with a stated price preference
+  GET  /api/waitlist/stats        signup totals + price-preference split (admin token)
   WS   /ws/stream                 live thought stream
+
+Endpoints marked "(admin token)" require an ``X-Admin-Token`` header matching
+``JOBHUNT_ADMIN_TOKEN``; they expose aggregate business data, not per-user
+data, and are closed when that env var is unset.
 """
 
 from __future__ import annotations
@@ -79,8 +85,8 @@ from jobhunt.trace import ThoughtBus, TraceStore
 # globals when building route handlers.
 try:
     from fastapi import (
-        Depends, FastAPI, HTTPException, Request, Response as FastAPIResponse,
-        WebSocket, WebSocketDisconnect,
+        Depends, FastAPI, Header, HTTPException, Request,
+        Response as FastAPIResponse, WebSocket, WebSocketDisconnect,
     )
     from fastapi.responses import HTMLResponse, JSONResponse, Response
     from fastapi.staticfiles import StaticFiles
@@ -88,6 +94,7 @@ try:
 except ImportError as _exc:  # pragma: no cover
     _FASTAPI_IMPORT_ERROR = _exc
     Depends = FastAPI = HTTPException = Request = FastAPIResponse = None  # type: ignore
+    Header = None  # type: ignore
     WebSocket = WebSocketDisconnect = None  # type: ignore
     HTMLResponse = JSONResponse = Response = None  # type: ignore
 
@@ -1254,6 +1261,27 @@ def create_app(
         # the orchestrator).
         return workspace_factory(ws_id)
 
+    # ---------------------------------------------------------------- admin gate
+
+    def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
+        """Gate the aggregate business-stats endpoints on a shared secret.
+
+        Waitlist signups, stated price preferences and top-of-funnel traffic
+        are the product's own market-validation data — useful to a competitor
+        and nobody else's business. They were readable by anyone before this.
+
+        Deliberately closed-by-default: an unset ``JOBHUNT_ADMIN_TOKEN`` means
+        403, never "open to all". A deploy that forgets to set the token loses
+        access to its own dashboard, which is a loud, recoverable failure —
+        the opposite mistake silently republishes the data.
+        """
+        expected = os.environ.get("JOBHUNT_ADMIN_TOKEN", "")
+        supplied = x_admin_token or ""
+        # compare_digest on both branches so a missing token costs the same as
+        # a wrong one, and an unset server token can't be probed by timing.
+        if not expected or not secrets.compare_digest(expected, supplied):
+            raise HTTPException(status_code=403, detail="admin token required")
+
     # --------------------------------------------------------------- access gate
 
     if access_code:
@@ -2276,7 +2304,7 @@ def create_app(
         pageview_store.record(surface, ref=ref, day=datetime.utcnow().date().isoformat())
         return {"ok": True}
 
-    @app.get("/api/pageview/stats")
+    @app.get("/api/pageview/stats", dependencies=[Depends(require_admin)])
     def pageview_stats() -> dict:
         return pageview_store.counts()
 
@@ -2293,7 +2321,7 @@ def create_app(
         waitlist_store.join(email, price_pref, day=datetime.utcnow().date().isoformat())
         return {"ok": True}
 
-    @app.get("/api/waitlist/stats")
+    @app.get("/api/waitlist/stats", dependencies=[Depends(require_admin)])
     def waitlist_stats() -> dict:
         return waitlist_store.counts()
 

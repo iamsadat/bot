@@ -87,6 +87,41 @@ export type PricePref = 'monthly_19' | 'monthly_29' | 'lifetime_99' | 'lifetime_
 export const joinWaitlist = (email: string, price_pref: PricePref) =>
   req<{ ok: boolean }>('POST', '/api/waitlist', { email, price_pref });
 
+// ---- admin: founder-facing validation stats -------------------------------
+// Both endpoints below are gated on JOBHUNT_ADMIN_TOKEN server-side and 403
+// without a matching X-Admin-Token header. The token is held in memory by the
+// /admin page only — never persisted to localStorage or a cookie.
+
+export interface WaitlistStats {
+  total: number;
+  by_price_pref: Record<PricePref, number>;
+}
+export interface SurfaceStats {
+  total: number;
+  by_day: Record<string, number>;
+  top_refs?: { ref: string; count: number }[];
+}
+export type PageviewStats = Record<'landing' | 'ats_tool' | 'public_resume', SurfaceStats>;
+
+async function adminReq<T>(path: string, token: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { 'X-Admin-Token': token },
+    credentials: 'include',
+  });
+  if (res.status === 403) throw new Error('forbidden');
+  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export const getAdminWaitlistStats = (token: string) =>
+  adminReq<WaitlistStats>('/api/waitlist/stats', token);
+
+export const getAdminPageviewStats = (token: string) =>
+  adminReq<PageviewStats>('/api/pageview/stats', token);
+
+export const billingStatus = () =>
+  req<{ plan: string; billing_configured: boolean }>('GET', '/api/billing/status');
+
 export interface Metrics {
   discovered: number; tailored: number; applied: number; interview: number; offer: number;
   callback_rate: number; evidence_coverage: number; applied_this_week: number;
