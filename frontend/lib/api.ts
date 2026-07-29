@@ -26,13 +26,17 @@ export const api = {
   autonomy: () => req<Autonomy>('GET', '/api/autonomy'),
   setAutonomy: (b: Partial<Autonomy>) => req<any>('POST', '/api/autonomy', b),
   document: (jobId: string) => req<{ document: Doc }>('GET', `/api/documents/${jobId}`),
-  profile: () => req<{ profile: Profile | null }>('GET', '/api/profile'),
+  profile: () => req<{ profile: Profile | null; ats_config?: AtsConfig }>('GET', '/api/profile'),
   parseResume: (text: string) => req<ParsedResume>('POST', '/api/onboarding/resume', { text }),
   parseResumeFile: (filename: string, content_base64: string) =>
     req<ParsedResume>('POST', '/api/profile/parse-resume-file', { filename, content_base64 }),
   importGithub: (username: string) =>
     req<{ added: number; projects: any[] }>('POST', '/api/profile/import-github', { username }),
   saveProfile: (p: any) => req<any>('POST', '/api/onboarding/profile', p),
+  saveAts: (a: AtsConfig) => req<{ ok: boolean; ats_config: AtsConfig }>(
+    'POST', '/api/onboarding/ats', a),
+  setJobStatus: (jobId: string, status: string) =>
+    req<any>('POST', `/api/jobs/${jobId}/status`, { status }),
   saveStructured: (p: any) => req<any>('PUT', '/api/profile/structured', p),
   startHunt: () => req<any>('POST', '/api/hunt/start'),
   discover: () => req<any>('POST', '/api/discover'),
@@ -160,6 +164,12 @@ export interface Status {
   approvals_pending: number; ats_configured: boolean; has_profile: boolean;
   auto_apply: boolean; applied_today: number; continuous: boolean;
   inbox_connected: boolean; llm?: { provider?: string };
+  hunt_error?: string | null;
+}
+// Only the three boards with real submitters are exposed in the UI; the
+// endpoint accepts recruitee/workable/personio too (discovery-only).
+export interface AtsConfig {
+  greenhouse_tokens?: string[]; lever_slugs?: string[]; ashby_slugs?: string[];
 }
 export interface Job {
   job_id: string; title: string; company: string; location: string; url: string;

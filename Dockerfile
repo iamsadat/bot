@@ -30,7 +30,8 @@ RUN pip install --upgrade pip && \
 COPY . .
 # Bring in the built static frontend so FastAPI serves it under /app.
 COPY --from=frontend /fe/out ./frontend/out
-RUN pip install -e .
+# [pdf,docx] or the résumé download buttons 503 in production.
+RUN pip install -e ".[pdf,docx]"
 
 EXPOSE 8000
 

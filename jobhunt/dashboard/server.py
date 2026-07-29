@@ -13,38 +13,65 @@ Endpoints:
   POST /api/onboarding/profile    save user info + preferences
   POST /api/onboarding/resume     parse pasted resume text → extract skills
   POST /api/onboarding/ats        save ATS handles (greenhouse/lever/ashby)
+  GET  /api/profile               current profile + ATS config
+  PUT  /api/profile               update profile fields
+  PUT  /api/profile/structured    replace experiences/education/projects sections
+  POST /api/profile/parse-resume-file
+                                  parse an uploaded résumé file (base64)
+  POST /api/profile/import-github import GitHub repos as project entries
   POST /api/hunt/start            kick off the background orchestrator
+  POST /api/discover              run one discovery sweep now (merge, don't clear)
+  GET  /api/autonomy              read auto-apply settings
+  POST /api/autonomy              update auto-apply settings
   POST /api/hunt/reset            clear everything and return to onboarding
   GET  /api/plan                  current execution plan (steps + statuses)
   GET  /api/jobs                  discovered job postings (Kanban source)
   POST /api/jobs/{job_id}/status  move a job between pipeline statuses
+  GET  /api/jobs/{job_id}/timeline
+                                  per-job event timeline
+  POST /api/jobs/{job_id}/notes   set per-application notes + next action
   GET  /api/applications          pipeline applications
   GET  /api/documents/{job_id}    fetch tailored resume + cover letter text
   GET  /api/documents/{job_id}/download
                                   download artifact (txt / pdf / docx)
   GET  /api/traces                reasoning traces (paginated)
+  GET  /api/activity              raw + grouped ThoughtBus event history
   GET  /api/metrics               funnel + streak + callback-rate metrics
   POST /api/digest/send           build + (optionally) send the activity digest
-  GET  /api/approvals             approval queue
-  POST /api/approve/{id}          human one-click decision
+  GET  /api/inbox/status          whether an email inbox source is connected
+  GET  /api/notify/status         configured notification channels
+  POST /api/notify/test           send a test notification to all channels
+  GET  /api/google/status         Gmail send/inbox + Calendar configuration state
+  POST /api/email/send            send a follow-up/thank-you email via Gmail
+  POST /api/calendar/hold         create a Google Calendar event
+  GET  /api/outreach/status       whether a contact-finder provider is configured
+  POST /api/outreach/find         find recruiter contacts for a job/company
+  POST /api/outreach/draft        draft an evidence-bound outreach email
+  POST /api/autofill              browser autofill a career-page application
+  GET  /api/market/status         salary/news provider configuration state
+  GET  /api/salary                salary estimate for a role + location
+  GET  /api/company/intel         recent company news/intel
   GET  /api/radar                 Career Radar hits + market-value history
   GET  /api/radar/settings        read Career Radar profile fields
   POST /api/radar/settings        update Career Radar profile fields
   POST /api/tools/ats-score       free, no-auth ATS keyword match score
   POST /api/publish               publish a tailored draft to a public handle
   GET  /p/{handle}                public, unauthenticated résumé page
+  POST /api/pageview              record one pageview (landing/ats_tool/public_resume)
+  GET  /api/pageview/stats        aggregate pageview counts (admin token)
+  POST /api/waitlist              join the waitlist with a stated price preference
+  GET  /api/waitlist/stats        signup totals + price-preference split (admin token)
   POST /api/interview/questions   AI interview prep — generate questions for a job
   POST /api/interview/feedback    AI interview prep — score a practice answer
   GET  /api/skills/gaps           skill-gap learning paths from missing ATS keywords
+  POST /api/inbox/sync            pull new inbox messages, match to applications
   POST /api/contacts              create/update a Career CRM contact (upsert by id)
   GET  /api/contacts              list contacts (?due=true → overdue follow-ups only)
   DELETE /api/contacts/{id}       remove a contact
   POST /api/contacts/{id}/nudge   fire a follow-up notification + draft email
   GET  /api/analytics             funnel + résumé-strategy A/B experiment results
-  POST /api/pageview              record one pageview (landing/ats_tool/public_resume)
-  GET  /api/pageview/stats        aggregate pageview counts (admin token)
-  POST /api/waitlist              join the waitlist with a stated price preference
-  GET  /api/waitlist/stats        signup totals + price-preference split (admin token)
+  GET  /api/approvals             approval queue
+  POST /api/approve/{id}          human one-click decision
   WS   /ws/stream                 live thought stream
 
 Endpoints marked "(admin token)" require an ``X-Admin-Token`` header matching
