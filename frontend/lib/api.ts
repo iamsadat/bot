@@ -26,13 +26,17 @@ export const api = {
   autonomy: () => req<Autonomy>('GET', '/api/autonomy'),
   setAutonomy: (b: Partial<Autonomy>) => req<any>('POST', '/api/autonomy', b),
   document: (jobId: string) => req<{ document: Doc }>('GET', `/api/documents/${jobId}`),
-  profile: () => req<{ profile: Profile | null }>('GET', '/api/profile'),
+  profile: () => req<{ profile: Profile | null; ats_config?: AtsConfig }>('GET', '/api/profile'),
   parseResume: (text: string) => req<ParsedResume>('POST', '/api/onboarding/resume', { text }),
   parseResumeFile: (filename: string, content_base64: string) =>
     req<ParsedResume>('POST', '/api/profile/parse-resume-file', { filename, content_base64 }),
   importGithub: (username: string) =>
     req<{ added: number; projects: any[] }>('POST', '/api/profile/import-github', { username }),
   saveProfile: (p: any) => req<any>('POST', '/api/onboarding/profile', p),
+  saveAts: (a: AtsConfig) => req<{ ok: boolean; ats_config: AtsConfig }>(
+    'POST', '/api/onboarding/ats', a),
+  setJobStatus: (jobId: string, status: string) =>
+    req<any>('POST', `/api/jobs/${jobId}/status`, { status }),
   saveStructured: (p: any) => req<any>('PUT', '/api/profile/structured', p),
   startHunt: () => req<any>('POST', '/api/hunt/start'),
   discover: () => req<any>('POST', '/api/discover'),
@@ -82,6 +86,46 @@ export function recordPageview(surface: 'landing' | 'ats_tool', ref?: string): v
   }).catch(() => {});
 }
 
+export type PricePref = 'monthly_19' | 'monthly_29' | 'lifetime_99' | 'lifetime_149';
+
+export const joinWaitlist = (email: string, price_pref: PricePref) =>
+  req<{ ok: boolean }>('POST', '/api/waitlist', { email, price_pref });
+
+// ---- admin: founder-facing validation stats -------------------------------
+// Both endpoints below are gated on JOBHUNT_ADMIN_TOKEN server-side and 403
+// without a matching X-Admin-Token header. The token is held in memory by the
+// /admin page only — never persisted to localStorage or a cookie.
+
+export interface WaitlistStats {
+  total: number;
+  by_price_pref: Record<PricePref, number>;
+}
+export interface SurfaceStats {
+  total: number;
+  by_day: Record<string, number>;
+  top_refs?: { ref: string; count: number }[];
+}
+export type PageviewStats = Record<'landing' | 'ats_tool' | 'public_resume', SurfaceStats>;
+
+async function adminReq<T>(path: string, token: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { 'X-Admin-Token': token },
+    credentials: 'include',
+  });
+  if (res.status === 403) throw new Error('forbidden');
+  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export const getAdminWaitlistStats = (token: string) =>
+  adminReq<WaitlistStats>('/api/waitlist/stats', token);
+
+export const getAdminPageviewStats = (token: string) =>
+  adminReq<PageviewStats>('/api/pageview/stats', token);
+
+export const billingStatus = () =>
+  req<{ plan: string; billing_configured: boolean }>('GET', '/api/billing/status');
+
 export interface Metrics {
   discovered: number; tailored: number; applied: number; interview: number; offer: number;
   callback_rate: number; evidence_coverage: number; applied_this_week: number;
@@ -120,6 +164,12 @@ export interface Status {
   approvals_pending: number; ats_configured: boolean; has_profile: boolean;
   auto_apply: boolean; applied_today: number; continuous: boolean;
   inbox_connected: boolean; llm?: { provider?: string };
+  hunt_error?: string | null;
+}
+// Only the three boards with real submitters are exposed in the UI; the
+// endpoint accepts recruitee/workable/personio too (discovery-only).
+export interface AtsConfig {
+  greenhouse_tokens?: string[]; lever_slugs?: string[]; ashby_slugs?: string[];
 }
 export interface Job {
   job_id: string; title: string; company: string; location: string; url: string;

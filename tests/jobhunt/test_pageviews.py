@@ -132,9 +132,15 @@ def _draft_dict() -> dict:
     return dataclasses.asdict(draft)
 
 
+#: The stats endpoint is admin-gated; every test that reads it sends this.
+_ADMIN_TOKEN = "test-admin-token"
+_ADMIN = {"X-Admin-Token": _ADMIN_TOKEN}
+
+
 def _client(tmp_path, monkeypatch):
     monkeypatch.setenv("JOBHUNT_PAGEVIEWS_DB_PATH", str(tmp_path / "pageviews.db"))
     monkeypatch.setenv("JOBHUNT_PUBLIC_DB_PATH", str(tmp_path / "public.db"))
+    monkeypatch.setenv("JOBHUNT_ADMIN_TOKEN", _ADMIN_TOKEN)
     state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus())
     state.documents["j1"] = {
         "company": "Acme", "title": "Backend Engineer", "draft": _draft_dict(),
@@ -162,7 +168,7 @@ def test_get_pageview_stats_reflects_recorded_views(tmp_path, monkeypatch):
     client.post("/api/pageview", json={"surface": "landing", "ref": None})
     client.post("/api/pageview", json={"surface": "ats_tool", "ref": None})
 
-    stats = client.get("/api/pageview/stats")
+    stats = client.get("/api/pageview/stats", headers=_ADMIN)
     assert stats.status_code == 200
     body = stats.json()
     assert body["landing"]["total"] == 2
@@ -177,19 +183,19 @@ def test_public_resume_page_increments_pageview_count(tmp_path, monkeypatch):
     handle = pub.json()["handle"]
 
     # No view recorded yet.
-    stats = client.get("/api/pageview/stats").json()
+    stats = client.get("/api/pageview/stats", headers=_ADMIN).json()
     assert stats["public_resume"]["total"] == 0
 
     page = client.get(f"/p/{handle}")
     assert page.status_code == 200
 
-    stats = client.get("/api/pageview/stats").json()
+    stats = client.get("/api/pageview/stats", headers=_ADMIN).json()
     assert stats["public_resume"]["total"] == 1
     assert stats["public_resume"]["top_refs"] == [{"ref": handle, "count": 1}]
 
     # A second view increments further.
     client.get(f"/p/{handle}")
-    stats = client.get("/api/pageview/stats").json()
+    stats = client.get("/api/pageview/stats", headers=_ADMIN).json()
     assert stats["public_resume"]["total"] == 2
     assert stats["public_resume"]["top_refs"] == [{"ref": handle, "count": 2}]
 
@@ -198,5 +204,36 @@ def test_public_resume_404_does_not_record_a_view(tmp_path, monkeypatch):
     _, client = _client(tmp_path, monkeypatch)
     r = client.get("/p/does-not-exist")
     assert r.status_code == 404
-    stats = client.get("/api/pageview/stats").json()
+    stats = client.get("/api/pageview/stats", headers=_ADMIN).json()
     assert stats["public_resume"]["total"] == 0
+
+
+# ----------------------------------------------------------------- admin gate
+
+def test_pageview_stats_requires_admin_token(tmp_path, monkeypatch):
+    _, client = _client(tmp_path, monkeypatch)
+    assert client.get("/api/pageview/stats").status_code == 403
+
+
+def test_pageview_stats_rejects_wrong_admin_token(tmp_path, monkeypatch):
+    _, client = _client(tmp_path, monkeypatch)
+    r = client.get("/api/pageview/stats", headers={"X-Admin-Token": "nope"})
+    assert r.status_code == 403
+
+
+def test_pageview_stats_closed_when_admin_token_unset(tmp_path, monkeypatch):
+    """An unset server token must mean "closed", never "open to everyone"."""
+    _, client = _client(tmp_path, monkeypatch)
+    monkeypatch.delenv("JOBHUNT_ADMIN_TOKEN")
+    assert client.get("/api/pageview/stats").status_code == 403
+    # ...and an empty supplied token can't match an empty server token either.
+    r = client.get("/api/pageview/stats", headers={"X-Admin-Token": ""})
+    assert r.status_code == 403
+
+
+def test_recording_a_pageview_stays_unauthenticated(tmp_path, monkeypatch):
+    """The write path is public by design — only the aggregate read is gated."""
+    _, client = _client(tmp_path, monkeypatch)
+    monkeypatch.delenv("JOBHUNT_ADMIN_TOKEN")
+    r = client.post("/api/pageview", json={"surface": "landing", "ref": None})
+    assert r.status_code == 200

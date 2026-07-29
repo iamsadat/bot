@@ -34,9 +34,18 @@ export default function Onboarding() {
   const [links, setLinks] = useState<Record<string, string>>({});
   const [paste, setPaste] = useState('');
   const [msg, setMsg] = useState('');
+  const [ghTokens, setGhTokens] = useState('');
+  const [leverSlugs, setLeverSlugs] = useState('');
+  const [ashbySlugs, setAshbySlugs] = useState('');
 
   useEffect(() => {
     api.profile().then((r) => {
+      const a = r.ats_config;
+      if (a) {
+        setGhTokens((a.greenhouse_tokens || []).join(', '));
+        setLeverSlugs((a.lever_slugs || []).join(', '));
+        setAshbySlugs((a.ashby_slugs || []).join(', '));
+      }
       const p = r.profile;
       if (!p) return;
       setName(p.name || ''); setEmail(p.email || ''); setPhone(p.phone || '');
@@ -106,6 +115,11 @@ export default function Onboarding() {
         links,
       });
       await api.saveStructured({ experiences: exps, education: edu, projects: projs, links });
+      await api.saveAts({
+        greenhouse_tokens: ghTokens.split(',').map((x) => x.trim()).filter(Boolean),
+        lever_slugs: leverSlugs.split(',').map((x) => x.trim()).filter(Boolean),
+        ashby_slugs: ashbySlugs.split(',').map((x) => x.trim()).filter(Boolean),
+      });
       setMsg('Saved ✓');
     } catch {
       setMsg('Save failed — check name/email/role.');
@@ -215,6 +229,18 @@ export default function Onboarding() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className={card}>
+          <h2 className="mb-1 text-sm font-semibold">Connect job boards</h2>
+          <p className="mb-3 text-[11px] text-muted">
+            Connecting a board is what makes "Approve & apply" actually submit — without one, approving only marks the job Applied and you finish the application on the company site.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Greenhouse board tokens (comma-sep)" value={ghTokens} onChange={(e: any) => setGhTokens(e.target.value)} />
+            <Field label="Lever company slugs (comma-sep)" value={leverSlugs} onChange={(e: any) => setLeverSlugs(e.target.value)} />
+            <Field label="Ashby company slugs (comma-sep)" value={ashbySlugs} onChange={(e: any) => setAshbySlugs(e.target.value)} />
           </div>
         </div>
 

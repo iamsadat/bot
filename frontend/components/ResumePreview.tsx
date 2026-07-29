@@ -57,12 +57,17 @@ function money(n: number, ccy: string) {
   return `${ccy === 'USD' ? '$' : ccy === 'GBP' ? '£' : ccy + ' '}${Math.round(n / 1000)}k`;
 }
 
+const STATUSES = ['Saved', 'Applied', 'Assessment', 'Interview', 'Offer', 'Closed'];
+const sel = 'rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-ink';
+
 export default function ResumePreview({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [salary, setSalary] = useState<any>(null);
+  const [dlErr, setDlErr] = useState('');
   useEffect(() => {
     setDoc(null);
     setSalary(null);
+    setDlErr('');
     if (job) {
       api.document(job.job_id).then((r) => setDoc(r.document)).catch(() => setDoc(null));
       // Salary intel is optional (needs Adzuna keys) — silently skip if off.
@@ -71,6 +76,27 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
         .catch(() => {});
     }
   }, [job]);
+
+  const download = async (jobId: string, fmt: string) => {
+    setDlErr('');
+    try {
+      // credentials: the old <a href> sent the workspace cookie implicitly;
+      // a cross-origin fetch (NEXT_PUBLIC_API_BASE in dev) would not.
+      const res = await fetch(api.downloadUrl(jobId, fmt), { credentials: 'include' });
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `resume.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDlErr(`${fmt.toUpperCase()} isn't available right now — try again later.`);
+    }
+  };
 
   return (
     <AnimatePresence>
@@ -106,16 +132,27 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               </div>
             )}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {['pdf', 'docx', 'html', 'txt'].map((f) => (
-                <a
+                <button
                   key={f}
-                  href={api.downloadUrl(job.job_id, f)}
+                  onClick={() => download(job.job_id, f)}
                   className="glass rounded-lg px-3 py-1.5 text-xs font-medium transition hover:border-white/20"
                 >
                   ↓ {f.toUpperCase()}
-                </a>
+                </button>
               ))}
+              {dlErr && <span className="text-xs text-warn">{dlErr}</span>}
+              <select
+                key={job.job_id}
+                defaultValue={job.status}
+                onChange={(e) => api.setJobStatus(job.job_id, e.target.value)}
+                className={sel}
+              >
+                {STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
               <button
                 onClick={async () => {
                   try {

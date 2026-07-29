@@ -1,7 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ActivityEvent } from '@/lib/api';
+import { api, ActivityEvent } from '@/lib/api';
 import { useReasoningStream } from '@/lib/useLive';
 
 const phaseColor: Record<string, string> = {
@@ -26,7 +27,14 @@ function Confidence({ v }: { v: number }) {
 }
 
 export default function ReasoningFeed() {
-  const events = useReasoningStream();
+  const liveEvents = useReasoningStream();
+  const [history, setHistory] = useState<ActivityEvent[]>([]);
+
+  useEffect(() => {
+    api.activity().then((d) => setHistory(d.activity.slice().reverse())).catch(() => {});
+  }, []);
+
+  const events = [...liveEvents, ...history];
   return (
     <div className="glass flex h-full flex-col rounded-xl2 shadow-card">
       <div className="flex items-center gap-2 border-b border-white/5 px-4 py-3">

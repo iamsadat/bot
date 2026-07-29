@@ -44,7 +44,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest fastapi httpx sqlalchemy ruff mypy
+          # fpdf2/python-docx are needed or the résumé download tests silently
+          # skip — which is how the PDF/DOCX 503 shipped unnoticed.
+          pip install pytest fastapi httpx sqlalchemy ruff mypy fpdf2 python-docx
 
       - name: Run tests
         run: python -m pytest tests/jobhunt/ -q
