@@ -11,6 +11,7 @@ package ships:
 """
 
 from jobhunt.adapters.adzuna import AdzunaSource
+from jobhunt.adapters.arbeitnow import ArbeitnowSource
 from jobhunt.adapters.ashby import AshbySource
 from jobhunt.adapters.base import JobSource, SourceUnavailable
 from jobhunt.adapters.fixture import FixtureSource
@@ -19,11 +20,13 @@ from jobhunt.adapters.indeed import IndeedSource
 from jobhunt.adapters.lever import LeverSource
 from jobhunt.adapters.personio import PersonioSource
 from jobhunt.adapters.recruitee import RecruiteeSource
+from jobhunt.adapters.remoteok import RemoteOKSource
 from jobhunt.adapters.usajobs import USAJobsSource
 from jobhunt.adapters.workable import WorkableSource
 
 __all__ = [
     "AdzunaSource",
+    "ArbeitnowSource",
     "AshbySource",
     "FixtureSource",
     "GreenhouseSource",
@@ -32,6 +35,7 @@ __all__ = [
     "LeverSource",
     "PersonioSource",
     "RecruiteeSource",
+    "RemoteOKSource",
     "USAJobsSource",
     "WorkableSource",
     "SourceUnavailable",

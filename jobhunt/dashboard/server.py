@@ -190,6 +190,20 @@ class DashboardState:
     billing_plan: str = "free"  # "free" | "pro" — set only by the Stripe webhook handler
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
+    # Last sweep's per-source outcome, for the dashboard's source panel:
+    # name → {"status": ok|degraded, "jobs": int, "checked_at": epoch}.
+    # Discovery already tracked this (DiscoveryBatch.sources_used /
+    # .degraded_sources) but nothing ever surfaced it, so a source that
+    # silently failed looked identical to one that found nothing.
+    # Deliberately NOT persisted: both describe the last sweep, not the
+    # user's data, and adding snapshot columns breaks older SQLite files
+    # (there is no migration for this store). Losing them on restart just
+    # means an empty panel until the next fetch, and re-serving page 1 —
+    # whose jobs dedupe by fingerprint anyway.
+    source_status: dict[str, dict] = field(default_factory=dict)
+    # Arbeitnow is the one source with real pagination; advancing this is
+    # what makes a second "Fetch more" return jobs you haven't seen.
+    source_page: int = 1
 
     # ------------------------------------------------------------ persistence
     def persist(self) -> None:
@@ -246,6 +260,27 @@ class DashboardState:
         if self.hunt_status == "running":
             self.hunt_status = "idle"
         restore_approval_queue(self.approval_queue, snap.get("approvals", []))
+        self._prune_orphans()
+
+    def _prune_orphans(self) -> None:
+        """Drop approvals/documents whose job no longer exists.
+
+        Repairs workspaces damaged by the unstable-job_id bug, where every
+        discovery sweep queued a fresh approval for the same role. Those
+        stale requests are not merely cosmetic: ``_maybe_auto_apply_batch``
+        resolves ``req.job_id`` against ``state.jobs`` and silently skips
+        when it finds nothing, so autonomous apply stayed dead for as long
+        as the orphans were around.
+        """
+        live = {j.get("job_id") for j in self.jobs}
+        if not live:
+            return  # nothing discovered yet — don't mistake empty for orphaned
+        for req in list(self.approval_queue.all()):
+            if req.job_id not in live:
+                self.approval_queue.remove(req.request_id)
+        self.documents = {
+            job_id: doc for job_id, doc in self.documents.items() if job_id in live
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -300,12 +335,28 @@ class WorkspaceManager:
 # Background hunt runner
 # ---------------------------------------------------------------------------
 
-def _build_sources(ats_config: dict):
-    """Construct JobSources from the user's ATS handles, fixture fallback."""
+def _build_sources(ats_config: dict, page: int = 1):
+    """Construct JobSources from the user's ATS handles, plus keyless defaults.
+
+    ``page`` only affects Arbeitnow, the one source with real pagination.
+    Greenhouse/Lever/Ashby return their entire board per request, so there is
+    no page 2 to ask for — repeat fetches against them correctly find nothing
+    new until the company posts again.
+    """
     from jobhunt.adapters import (
-        AdzunaSource, AshbySource, FixtureSource, GreenhouseSource, LeverSource,
-        PersonioSource, RecruiteeSource, USAJobsSource, WorkableSource,
+        AdzunaSource, ArbeitnowSource, AshbySource, FixtureSource,
+        GreenhouseSource, LeverSource, PersonioSource, RecruiteeSource,
+        RemoteOKSource, USAJobsSource, WorkableSource,
     )
+
+    # The offline test suite and the demo must never touch the network.
+    if os.environ.get("JOBHUNT_OFFLINE") == "1":
+        return [
+            FixtureSource(name="greenhouse",
+                          only_sources=["greenhouse", "ashby", "lever"]),
+            FixtureSource(name="linkedin", only_sources=["linkedin"]),
+            FixtureSource(name="indeed", only_sources=["indeed"]),
+        ]
 
     def _slugs(key: str) -> list[str]:
         return [s.strip() for s in ats_config.get(key, []) if s.strip()]
@@ -337,14 +388,11 @@ def _build_sources(ats_config: dict):
     if usa_email and usa_key:
         sources.append(USAJobsSource(email=usa_email, api_key=usa_key))
 
-    if not sources:
-        # Offline fallback — uses fixture jobs so the demo always has data
-        sources = [
-            FixtureSource(name="greenhouse",
-                          only_sources=["greenhouse", "ashby", "lever"]),
-            FixtureSource(name="linkedin", only_sources=["linkedin"]),
-            FixtureSource(name="indeed", only_sources=["indeed"]),
-        ]
+    # Keyless public boards — these run for everyone, with or without a
+    # connected ATS, so a brand-new workspace sees real jobs instead of six
+    # fixture rows. Arbeitnow is paginated; Remote OK returns one board.
+    sources.append(ArbeitnowSource(page=max(1, page)))
+    sources.append(RemoteOKSource())
     return sources
 
 
@@ -819,12 +867,19 @@ def _update_market_value(state: DashboardState, salary_client) -> bool:
 def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg") -> int:
     """Store tailored docs + open approvals for any not already present.
 
-    Idempotent by job_id, so it's safe to call repeatedly in continuous mode
-    without re-queuing the same resume. Returns the count newly tailored.
+    Idempotent per job: skipped when we already hold a document for the job,
+    and — belt and braces — when the approval queue already carries a request
+    for it. The second check matters because an adapter that ever hands out an
+    unstable job_id would otherwise re-queue the same role on every sweep,
+    which is exactly how the queue filled with duplicates before.
+
+    Returns the count newly tailored.
     """
     new = 0
     for doc in docs:
         if doc.job_id in state.documents:
+            continue
+        if state.approval_queue.by_job(doc.job_id):
             continue
         state.documents[doc.job_id] = {
             "job_id": doc.job_id,
@@ -888,6 +943,7 @@ def _execute_hunt(state: DashboardState, registry=None) -> None:
     batch = output.results.get("discovery")
     if batch:
         state.jobs = [_job_dict_from_posting(p) for p in batch.postings]
+    _record_source_status(state, batch)
 
     # Populate submission packages
     subs = output.results.get("submission", [])
@@ -1005,6 +1061,60 @@ def _maybe_auto_apply_batch(state: DashboardState, registry) -> int:
     return applied
 
 
+def _github_username(raw: str) -> str:
+    """Reduce whatever the user pasted to a bare GitHub username.
+
+    Accepts ``ada``, ``@ada``, ``github.com/ada``, ``https://github.com/ada``
+    and ``https://github.com/ada/some-repo``. Normalising only in the browser
+    left the API accepting ``github.com/ada`` verbatim, which requested
+    ``/users/github.com/ada/repos`` and came back 404.
+    """
+    s = raw.strip()
+    s = re.sub(r"^[a-zA-Z]+://", "", s)          # scheme
+    s = re.sub(r"^(www\.)?github\.com/?", "", s)  # host
+    s = s.lstrip("@").strip("/")
+    return s.split("/")[0].split("?")[0]
+
+
+def _advance_page(state: DashboardState, sources) -> None:
+    """Move the pagination cursor on for the next fetch.
+
+    Advance whenever the paginated source says there IS a next page — not
+    only when this sweep added something. Gating on "added" deadlocks: the
+    cursor stays on page 1, page 1 is entirely known by the second fetch, so
+    nothing is ever added, so the cursor never moves. Wrap back to 1 at the
+    end of the feed so fetching keeps working instead of running off into
+    empty pages.
+    """
+    paginated = [s for s in sources if hasattr(s, "has_next")]
+    if not paginated:
+        return
+    state.source_page = state.source_page + 1 if any(
+        s.has_next for s in paginated) else 1
+
+
+def _record_source_status(state: DashboardState, batch) -> None:
+    """Snapshot each source's outcome from the discovery batch.
+
+    ``DiscoveryAgent`` has always tracked ``sources_used`` and
+    ``degraded_sources``; nothing read them, so a source that was failing
+    every sweep was indistinguishable from one that simply had no matches.
+    """
+    if batch is None:
+        return
+    degraded = set(getattr(batch, "degraded_sources", []) or [])
+    per_source: dict[str, int] = {}
+    for p in getattr(batch, "postings", []) or []:
+        per_source[p.source] = per_source.get(p.source, 0) + 1
+    now = time.time()
+    for name in getattr(batch, "sources_used", []) or []:
+        state.source_status[name] = {
+            "status": "degraded" if name in degraded else "ok",
+            "jobs": per_source.get(name, 0),
+            "checked_at": now,
+        }
+
+
 def _discover_once(state: DashboardState, registry) -> dict:
     """One continuous-mode cycle: discover → merge → tailor new → auto-apply.
 
@@ -1018,12 +1128,15 @@ def _discover_once(state: DashboardState, registry) -> dict:
     if state.user_profile is None:
         return {"added": 0, "tailored": 0, "applied": 0}
 
-    sources = _build_sources(state.ats_config)
+    sources = _build_sources(state.ats_config, page=state.source_page)
     llm_client = build_llm_client_from_env()
     llm_cb = resume_callback(llm_client) if llm_client is not None else None
     orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)
     result = orch.run(
-        OrchestratorInputs(profile=state.user_profile, sources=sources),
+        OrchestratorInputs(
+            profile=state.user_profile, sources=sources,
+            already_tailored=set(state.documents),
+        ),
         task_id="discover-bg",
     )
     output = result.output
@@ -1032,7 +1145,10 @@ def _discover_once(state: DashboardState, registry) -> dict:
 
     state.plan = output.plan
     batch = output.results.get("discovery")
+    seen = len(batch.postings) if batch else 0
     added = _merge_discovered(state, batch.postings) if batch else 0
+    _record_source_status(state, batch)
+    _advance_page(state, sources)
     tailored = _persist_tailored_docs(state, output.results.get("resume", []),
                                       task="discover-bg")
     if added:
@@ -1055,7 +1171,14 @@ def _discover_once(state: DashboardState, registry) -> dict:
 
     applied = _maybe_auto_apply_batch(state, registry)
     state.persist()
-    return {"added": added, "tailored": tailored, "applied": applied, "radar_hits": radar_hits}
+    return {
+        "added": added, "tailored": tailored, "applied": applied,
+        "radar_hits": radar_hits,
+        # What the UI needs to say something honest instead of nothing:
+        # how many postings came back at all, and how many were already known.
+        "seen": seen, "duplicates": max(0, seen - added),
+        "sources": state.source_status,
+    }
 
 
 async def _run_hunt_bg(state: DashboardState, registry=None) -> None:
@@ -1731,13 +1854,25 @@ def create_app(
         """Import a GitHub user's public repos as Project entries."""
         if state.user_profile is None:
             raise HTTPException(status_code=400, detail="no profile yet — onboard first")
-        username = str(body.get("username", "")).strip().lstrip("@")
+        username = _github_username(str(body.get("username", "")))
         if not username:
             raise HTTPException(status_code=422, detail="username is required")
         from jobhunt.integrations import GitHubClient, GitHubError, repos_to_projects
         try:
             repos = GitHubClient().fetch_repos(username)
         except GitHubError as exc:
+            # Every failure used to collapse into a bare 502, so "you typed the
+            # username wrong" and "GitHub is rate-limiting you" looked identical.
+            status = getattr(exc, "status", None)
+            if status == 404:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No GitHub user '{username}' — check the spelling.")
+            if status == 403:
+                raise HTTPException(
+                    status_code=429,
+                    detail="GitHub rate limit reached (60 requests/hour without a "
+                           "token). Wait an hour, or set GITHUB_TOKEN to raise it.")
             raise HTTPException(status_code=502, detail=str(exc))
         projects = repos_to_projects(repos)
         p = state.user_profile
@@ -1779,6 +1914,21 @@ def create_app(
         state.bus.set_loop(asyncio.get_event_loop())
         res = await asyncio.to_thread(_discover_once, state, registry)
         return {"ok": True, **res}
+
+    @app.get("/api/sources")
+    def get_sources(state: DashboardState = Depends(get_state)) -> dict:
+        """Per-source outcome of the last sweep, for the dashboard panel."""
+        return {
+            "sources": [
+                {"name": name, **info}
+                for name, info in sorted(state.source_status.items())
+            ],
+            "page": state.source_page,
+            # Connected boards hand back their whole board at once, so once
+            # you've fetched there is nothing more until the company posts.
+            # The UI uses this to explain a legitimate "0 new".
+            "ats_connected": _ats_connected(state),
+        }
 
     @app.get("/api/autonomy")
     def get_autonomy(state: DashboardState = Depends(get_state)) -> dict:

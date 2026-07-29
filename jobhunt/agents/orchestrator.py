@@ -55,6 +55,11 @@ class OrchestratorInputs:
     shortlist_cap: int = field(default_factory=lambda: _env_int("JOBHUNT_SHORTLIST_CAP", 10))
     # Optional override for the vetting pass threshold (None → agent default 0.5).
     vetting_threshold: float | None = None
+    # job_ids already tailored, skipped by the resume step. Continuous mode
+    # re-discovers the same postings every sweep; without this the Resume
+    # Architect regenerates identical drafts each time — free on fixtures,
+    # real spend once an LLM key is configured.
+    already_tailored: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -234,9 +239,12 @@ class Orchestrator(BaseAgent[OrchestratorInputs, OrchestratorOutput]):
             vetted = out.results.get("vetting", [])
             cap = max(1, inputs.shortlist_cap)
             allowed_companies = {s.company_id for s in vetted if s.pass_threshold}
+            fresh = [
+                p for p in batch.postings if p.job_id not in inputs.already_tailored
+            ]
             shortlisted = (
-                [p for p in batch.postings if p.company in allowed_companies][:cap]
-                or batch.postings[:cap]
+                [p for p in fresh if p.company in allowed_companies][:cap]
+                or fresh[:cap]
             )
             result = self.resume.run(
                 ResumeInputs(profile=inputs.profile, postings=shortlisted),

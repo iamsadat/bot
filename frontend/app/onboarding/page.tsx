@@ -91,16 +91,24 @@ export default function Onboarding() {
     }
   };
 
+  const normalizeGithubUser = (raw: string) => {
+    let u = raw.trim();
+    u = u.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/^github\.com\//i, '').replace(/^@/, '');
+    u = u.split('?')[0];
+    u = u.replace(/^\/+|\/+$/g, '');
+    return u.split('/')[0].trim();
+  };
+
   const importGithub = async () => {
-    const u = (links.github || '').replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '');
+    const u = normalizeGithubUser(links.github || '');
     if (!u) { setMsg('Enter your GitHub (in Links) first.'); return; }
     setMsg('Importing GitHub…');
     try {
       const r = await api.importGithub(u);
       if (r.projects?.length) setProjs(r.projects as Proj[]);
       setMsg(`Imported ${r.added} project(s) from GitHub.`);
-    } catch {
-      setMsg('GitHub import failed.');
+    } catch (e) {
+      setMsg((e as Error).message || 'GitHub import failed.');
     }
   };
 

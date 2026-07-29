@@ -10,7 +10,14 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     body: body ? JSON.stringify(body) : undefined,
     credentials: 'include',
   });
-  if (!res.ok) throw new Error(`${method} ${path} → ${res.status}`);
+  if (!res.ok) {
+    // Surface the API's own explanation when it sent one. Without this the
+    // caller only ever sees a status code, so "no such GitHub user" and
+    // "GitHub is rate-limiting you" both render as a generic failure.
+    let detail = '';
+    try { detail = (await res.clone().json())?.detail || ''; } catch { /* not JSON */ }
+    throw new Error(detail || `${method} ${path} → ${res.status}`);
+  }
   const ct = res.headers.get('content-type') || '';
   return (ct.includes('application/json') ? res.json() : (res.text() as any)) as T;
 }
@@ -39,7 +46,8 @@ export const api = {
     req<any>('POST', `/api/jobs/${jobId}/status`, { status }),
   saveStructured: (p: any) => req<any>('PUT', '/api/profile/structured', p),
   startHunt: () => req<any>('POST', '/api/hunt/start'),
-  discover: () => req<any>('POST', '/api/discover'),
+  discover: () => req<DiscoverResult>('POST', '/api/discover'),
+  sources: () => req<SourcesInfo>('GET', '/api/sources'),
   approve: (id: string, decision = 'approve') =>
     req<any>('POST', `/api/approve/${id}?decision=${decision}`),
   downloadUrl: (jobId: string, fmt: string, kind = 'resume') =>
@@ -170,6 +178,16 @@ export interface Status {
 // endpoint accepts recruitee/workable/personio too (discovery-only).
 export interface AtsConfig {
   greenhouse_tokens?: string[]; lever_slugs?: string[]; ashby_slugs?: string[];
+}
+export interface SourceStatus {
+  name: string; status: 'ok' | 'degraded'; jobs: number; checked_at: number;
+}
+export interface SourcesInfo {
+  sources: SourceStatus[]; page: number; ats_connected: boolean;
+}
+export interface DiscoverResult {
+  ok: boolean; added: number; tailored: number; applied: number;
+  seen: number; duplicates: number;
 }
 export interface Job {
   job_id: string; title: string; company: string; location: string; url: string;
