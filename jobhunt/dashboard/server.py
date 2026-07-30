@@ -459,17 +459,25 @@ def _default_submitter_registry():
 
 
 def _ats_connected(state: DashboardState) -> bool:
-    """True when the user has configured real ATS handles (not fixtures).
+    """True when discovery is reading boards a submitter can actually post to.
 
-    Auto-submission is gated on this: the offline fixtures use real-looking
-    ``boards.greenhouse.io`` URLs, so without this gate, approving a fixture
-    job would fire a real (garbage) POST to Greenhouse. Real submission only
-    happens once the user has actually connected a board.
+    Auto-submission is gated on this because the offline fixtures use
+    real-looking ``boards.greenhouse.io`` URLs, so without the gate approving a
+    fixture job would fire a real (garbage) POST at Greenhouse.
+
+    The seeded company boards (``jobhunt.company_boards``) are genuine
+    Greenhouse and Lever boards, so they satisfy the gate too — which is what
+    stops the auto-apply toggle shipping permanently greyed out with "Connect an
+    ATS to enable" and no way to do so from the dashboard. Nothing is submitted
+    as a result: ``auto_apply`` still defaults off with a daily cap of 0, so a
+    real application only ever goes out after the user turns it on.
     """
-    return any(
+    if any(
         state.ats_config.get(k)
         for k in ("greenhouse_tokens", "lever_slugs", "ashby_slugs")
-    )
+    ):
+        return True
+    return os.environ.get("JOBHUNT_OFFLINE") != "1"
 
 
 def _add_event(
@@ -735,6 +743,9 @@ def _job_dict_from_posting(p) -> dict:
         "url": p.url,
         "source": p.source,
         "relevance_score": p.relevance_score,
+        # Per-component scores, so the UI can explain the percentage instead of
+        # asking the user to trust it. See agents/discovery.score.
+        "score_breakdown": p.score_breakdown,
         "ghost_score": p.ghost_score,
         "salary_min": p.salary_min,
         "salary_max": p.salary_max,
@@ -1978,6 +1989,19 @@ def create_app(
             # you've fetched there is nothing more until the company posts.
             # The UI uses this to explain a legitimate "0 new".
             "ats_connected": _ats_connected(state),
+            # Whether those boards are ours or the user's. The UI says so, and
+            # offers to connect their own — otherwise "25 public company boards"
+            # looks like magic and a user with a specific employer in mind has
+            # nowhere on the dashboard to add it.
+            "seeded_boards": not any(
+                state.ats_config.get(k)
+                for k in ("greenhouse_tokens", "lever_slugs", "ashby_slugs")
+            ),
+            "seeded_board_count": (
+                len(company_boards.GREENHOUSE)
+                + len(company_boards.LEVER)
+                + len(company_boards.ASHBY)
+            ),
         }
 
     @app.get("/api/autonomy")

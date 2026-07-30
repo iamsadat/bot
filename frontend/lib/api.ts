@@ -184,6 +184,17 @@ export interface SourceStatus {
 }
 export interface SourcesInfo {
   sources: SourceStatus[]; page: number; ats_connected: boolean;
+  // True when discovery is using the curated public company boards because the
+  // user has connected none of their own.
+  seeded_boards?: boolean; seeded_board_count?: number;
+}
+// Why a job scored what it did. Each component is 0..1; `skills_scored` is false
+// when the description was too thin to judge coverage from (a listing snippet),
+// in which case the skill figure was not counted against the job.
+export interface ScoreBreakdown {
+  total: number; title: number; skills: number; seniority: number; location: number;
+  candidate_level_name?: string | null; posting_level_name?: string | null;
+  matched_keywords?: string[]; missing_keywords?: string[]; skills_scored?: boolean;
 }
 export interface DiscoverResult {
   ok: boolean; added: number; tailored: number; applied: number;
@@ -192,6 +203,7 @@ export interface DiscoverResult {
 export interface Job {
   job_id: string; title: string; company: string; location: string; url: string;
   status: string; relevance_score?: number; remote?: boolean; submitted?: boolean;
+  score_breakdown?: ScoreBreakdown;
   events?: { ts: number; stage: string; detail: string; status: string }[];
 }
 export interface Approval {
