@@ -206,6 +206,11 @@ class DashboardState:
     # Arbeitnow is the one source with real pagination; advancing this is
     # what makes a second "Fetch more" return jobs you haven't seen.
     source_page: int = 1
+    # The most recent résumé parse, kept until the profile is saved. Onboarding
+    # parses a CV before any profile exists, and the form has no field for
+    # measured experience — so without this, everything the résumé worked out
+    # was thrown away by the very next request. Transient, like the two above.
+    last_resume_parse: dict = field(default_factory=dict)
 
     # ------------------------------------------------------------ persistence
     def persist(self) -> None:
@@ -1755,6 +1760,13 @@ def create_app(
         if not body["target_roles"]:
             raise HTTPException(status_code=422, detail="at least one target role required")
         state.user_profile = build_user_profile(body)
+        # Re-apply the last résumé parse. Onboarding parses a CV first and saves
+        # the form second, and the form has no field for measured experience, so
+        # building a fresh profile here discarded it — which left the seniority
+        # gate with no candidate level and let Staff roles back in. The merge is
+        # fill-empty, so anything the user typed still wins.
+        if state.last_resume_parse:
+            _apply_parsed_resume(state.user_profile, state.last_resume_parse)
         state.persist()
         return {"ok": True, "user_id": state.user_profile.user_id}
 
@@ -1764,6 +1776,9 @@ def create_app(
         if not text.strip():
             raise HTTPException(status_code=422, detail="resume text is required")
         result = parse_resume_text(text)
+        # Remembered so saving the form later cannot discard it; see
+        # save_profile. Onboarding parses before a profile exists.
+        state.last_resume_parse = result
         if state.user_profile is not None:
             _apply_parsed_resume(state.user_profile, result)
             state.persist()
@@ -1905,6 +1920,9 @@ def create_app(
         except ResumeFileError as exc:
             raise HTTPException(status_code=415, detail=str(exc))
         result = parse_resume_text(text)
+        # Remembered so saving the form later cannot discard it; see
+        # save_profile. Onboarding parses before a profile exists.
+        state.last_resume_parse = result
         if state.user_profile is not None:
             _apply_parsed_resume(state.user_profile, result)
             state.persist()

@@ -341,6 +341,20 @@ def test_a_snippet_length_description_is_not_counted_against_a_job():
     assert score(snippet, _profile())["total"] > 0.5
 
 
+def test_matching_none_of_a_short_skill_list_still_counts_against_a_job():
+    """A long Android JD naming only "android" and "kotlin" scored 82% for a
+    candidate with neither, because the list was too short to be "scored"."""
+    android_jd = (
+        "We are hiring an Android engineer. You will build our Kotlin "
+        "application and own the Android release process. " * 12
+    )
+    result = score(_posting(title="Software Engineer, Android", jd_text=android_jd),
+                   _profile())
+    assert result["skills_scored"] is True
+    assert result["skills"] == 0.0
+    assert result["total"] < 0.7, result
+
+
 def test_a_snippet_that_does_name_skills_still_gets_credit():
     with_skills = _posting(jd_text="PySpark and Databricks engineer, Hyderabad.")
     without = _posting(jd_text="Engineer wanted. Great team, great benefits.")

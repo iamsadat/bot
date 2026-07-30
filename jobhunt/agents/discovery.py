@@ -198,9 +198,14 @@ def score(posting: JobPosting, profile: UserProfile) -> dict[str, Any]:
     # match. That is the intended direction — we genuinely do not know the thin
     # one is weak — and it keeps Adzuna, the source with the best regional
     # coverage, from being buried for returning short descriptions.
-    skills_scored = (
-        len(posting.jd_text or "") >= _MIN_JD_FOR_SKILLS
-        and len(matched) + len(missing) >= _MIN_SKILLS_FOR_RATIO
+    required = len(matched) + len(missing)
+    skills_scored = len(posting.jd_text or "") >= _MIN_JD_FOR_SKILLS and (
+        required >= _MIN_SKILLS_FOR_RATIO
+        # Matching *none* of a JD's named technologies is real evidence even from
+        # a short list. Waiving the component here scored an Android role at 82%
+        # for a candidate with no Android or Kotlin, because its description
+        # happened to name only those two.
+        or (required >= 2 and not matched)
     )
     effective_sk = sk if skills_scored else max(sk, _UNKNOWN_SKILL_FIT)
 
