@@ -79,9 +79,17 @@ BOARDS_PER_PAGE = 6
 
 
 def _slice(items: tuple[str, ...], page: int, per_page: int) -> list[str]:
+    """The ``page``-th slice of ``items``, wrapping to the start when exhausted.
+
+    Wrapping is by *page*, not by item offset. Taking ``offset % len(items)``
+    put the cycle out of step — with 20 boards read 6 at a time, the fifth
+    sweep started at board 4 rather than back at board 0, so some boards were
+    read twice as often as others and the cycle never repeated cleanly.
+    """
     if not items:
         return []
-    start = ((max(1, page) - 1) * per_page) % len(items)
+    pages = max(1, -(-len(items) // per_page))
+    start = ((max(1, page) - 1) % pages) * per_page
     return list(items[start:start + per_page])
 
 
