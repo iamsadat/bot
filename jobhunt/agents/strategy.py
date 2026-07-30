@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from jobhunt.agents.base import BaseAgent
 from jobhunt.models import JobHuntPlan, PlanStep, ReasoningTrace, UserProfile
+from jobhunt.seniority import level_from_profile
 
 
 @dataclass
@@ -49,6 +50,9 @@ class StrategyAgent(BaseAgent[StrategyInputs, JobHuntPlan]):
 
         # Build per-role search queries with the user's top skills appended.
         top_skills = p.skills[:3]
+        # Adapters filter out postings well above or below the candidate's level.
+        # ``None`` when unknown, which the filter reads as "do not gate on level".
+        candidate_level = level_from_profile(p)
         queries: list[dict] = []
         for role in p.target_roles:
             for loc in p.locations or [""]:
@@ -59,6 +63,11 @@ class StrategyAgent(BaseAgent[StrategyInputs, JobHuntPlan]):
                         "remote_ok": p.remote_ok,
                         "skills": top_skills,
                         "exclude_companies": p.veto_companies,
+                        "candidate_level": candidate_level,
+                        # Every location, not just this query's — a remote
+                        # posting scoped to "India" has to satisfy a
+                        # "Hyderabad" search. See adapters/filters.py.
+                        "all_locations": list(p.locations),
                     }
                 )
 

@@ -90,7 +90,7 @@ def parse_resume_text(text: str) -> dict[str, Any]:
 
     result: dict[str, Any] = {
         "skills": skills,
-        "inferred_titles": titles[:4],
+        "inferred_titles": _widen_titles(titles, skills),
     }
     # Structured sections are best-effort; never let a parse failure drop the
     # primary keys above (the offline test suite depends on them).
@@ -105,6 +105,54 @@ def parse_resume_text(text: str) -> dict[str, Any]:
 
     result["experience_years"] = _experience_years(text, result["experiences"])
     return result
+
+
+# Adjacent roles a candidate is qualified for, keyed by the skills that show it.
+# Titles found verbatim in a résumé are a narrow slice of what somebody can
+# apply to: this candidate's résumé names only "Data Engineer" while its own
+# summary claims a "strong backend and full-stack engineering foundation". Since
+# these titles now prefill the search, a two-role prefill returns a nearly empty
+# board — so the obvious neighbours are offered too, for the user to trim.
+_ROLE_EVIDENCE: tuple[tuple[str, frozenset[str]], ...] = (
+    ("Data Engineer", frozenset({
+        "pyspark", "spark", "etl", "databricks", "airflow", "hadoop", "sql",
+        "snowflake", "dbt", "sas",
+    })),
+    ("Backend Engineer", frozenset({
+        "golang", "go", "java", "express", "node", "nodejs", "spring", "django",
+        "flask", "fastapi", "postgresql", "postgres", "mongodb", "microservices",
+    })),
+    ("Full Stack Engineer", frozenset({
+        "react", "nextjs", "typescript", "javascript", "node", "nodejs",
+        "prisma", "tailwind",
+    })),
+    ("Software Engineer", frozenset()),
+)
+
+# How much evidence a suggested role needs, and how many roles to offer. The cap
+# matters: each role multiplies the number of source requests per sweep.
+_ROLE_MIN_EVIDENCE = 2
+_MAX_TITLES = 5
+
+
+def _widen_titles(found: list[str], skills: list[str]) -> list[str]:
+    """Titles from the résumé, plus adjacent roles its skills support."""
+    have = {s.lower() for s in skills}
+    out = list(found[:3])
+    seen = {t.lower() for t in out}
+    for role, evidence in _ROLE_EVIDENCE:
+        if role.lower() in seen:
+            continue
+        # The catch-all generalist title only earns a place on a résumé with
+        # real engineering breadth; otherwise it drags in unrelated roles.
+        enough = (
+            len(have) >= 4 if not evidence
+            else len(have & evidence) >= _ROLE_MIN_EVIDENCE
+        )
+        if enough:
+            out.append(role)
+            seen.add(role.lower())
+    return out[:_MAX_TITLES]
 
 
 def _experience_years(text: str, experiences: list[dict[str, Any]]) -> int | None:

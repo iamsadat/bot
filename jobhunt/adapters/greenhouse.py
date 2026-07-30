@@ -71,21 +71,40 @@ class GreenhouseSource(JobSource):
             raise ValueError("at least one board_token is required")
         self._tokens = list(board_tokens)
         self._http = http or UrllibHTTPClient()
+        self._cache: list[JobPosting] | None = None
+
+    def _fetch_all(self) -> list[JobPosting]:
+        """Every posting on every configured board, fetched once per instance.
+
+        Discovery calls ``search()`` once per (role, location) pair — a dozen
+        times for a typical profile — and this API has no native search, so the
+        response is identical every time. Fetching per call meant a dozen
+        full-board downloads per board per sweep, which with a seeded list of
+        company boards is hundreds of megabyte-scale requests.
+        """
+        postings: list[JobPosting] = []
+        failures: list[str] = []
+        for token in self._tokens:
+            try:
+                payload = self._http.get_json(_API.format(board=token))
+            except HTTPClientError as exc:
+                # One retired board must not take out the rest. Only a total
+                # failure counts as the source being unavailable.
+                failures.append(f"{token}: {exc}")
+                continue
+            company = token.replace("-", " ").title()
+            postings.extend(
+                self._row_to_posting(row, company)
+                for row in payload.get("jobs", [])
+            )
+        if failures and len(failures) == len(self._tokens):
+            raise SourceUnavailable("; ".join(failures[:3]))
+        return postings
 
     def search(self, query: dict) -> list[JobPosting]:
-        out: list[JobPosting] = []
-        for token in self._tokens:
-            url = _API.format(board=token)
-            try:
-                payload = self._http.get_json(url)
-            except HTTPClientError as exc:
-                raise SourceUnavailable(str(exc)) from exc
-            company = token.replace("-", " ").title()
-            for row in payload.get("jobs", []):
-                posting = self._row_to_posting(row, company)
-                if passes_local_filters(posting, query):
-                    out.append(posting)
-        return out
+        if self._cache is None:
+            self._cache = self._fetch_all()
+        return [p for p in self._cache if passes_local_filters(p, query)]
 
     @staticmethod
     def _row_to_posting(row: dict[str, Any], company: str) -> JobPosting:

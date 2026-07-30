@@ -94,7 +94,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from jobhunt import company_boards
 from jobhunt.ab import Experiment, ExperimentRegistry, Variant
+from jobhunt.adapters.adzuna import country_for as _adzuna_country_for
 from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
 from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue
 from jobhunt.digest import build_digest
@@ -335,18 +337,35 @@ class WorkspaceManager:
 # Background hunt runner
 # ---------------------------------------------------------------------------
 
-def _build_sources(ats_config: dict, page: int = 1):
+def adzuna_country(profile) -> str:
+    """Which Adzuna country to search for this profile.
+
+    ``ADZUNA_COUNTRY`` remains the override and the fallback; the profile's own
+    locations win when they name somewhere Adzuna covers.
+    """
+    default = os.environ.get("ADZUNA_COUNTRY", "us")
+    locations = list(getattr(profile, "locations", None) or [])
+    return _adzuna_country_for(locations, default=default)
+
+
+def _build_sources(ats_config: dict, page: int = 1, profile=None):
     """Construct JobSources from the user's ATS handles, plus keyless defaults.
 
-    ``page`` only affects Arbeitnow, the one source with real pagination.
-    Greenhouse/Lever/Ashby return their entire board per request, so there is
-    no page 2 to ask for — repeat fetches against them correctly find nothing
-    new until the company posts again.
+    ``page`` advances every paginated source: Arbeitnow's page cursor, Himalayas'
+    offset, Adzuna's page, and — for a workspace with no boards of its own — the
+    slice of seeded company boards being searched (see
+    ``jobhunt.company_boards``). A company's *own* board still has no page 2:
+    Greenhouse/Lever/Ashby hand back their whole board per request, so repeat
+    fetches against a connected board correctly find nothing new until that
+    company posts again.
+
+    ``profile`` supplies the candidate's locations, used to pick Adzuna's country
+    so a Hyderabad user is not silently searching the US.
     """
     from jobhunt.adapters import (
         AdzunaSource, ArbeitnowSource, AshbySource, FixtureSource,
-        GreenhouseSource, LeverSource, PersonioSource, RecruiteeSource,
-        RemoteOKSource, USAJobsSource, WorkableSource,
+        GreenhouseSource, HimalayasSource, LeverSource, PersonioSource,
+        RecruiteeSource, RemoteOKSource, USAJobsSource, WorkableSource,
     )
 
     # The offline test suite and the demo must never touch the network.
@@ -364,12 +383,32 @@ def _build_sources(ats_config: dict, page: int = 1):
     sources = []
     gh, lv, ab = _slugs("greenhouse_tokens"), _slugs("lever_slugs"), _slugs("ashby_slugs")
     rc, wk, pn = _slugs("recruitee_slugs"), _slugs("workable_slugs"), _slugs("personio_slugs")
+
+    # A workspace that has connected nothing gets a curated slice of public
+    # company boards instead of an empty result. These are first-party postings
+    # with full descriptions, they need no credentials, and — because they are
+    # Greenhouse and Lever URLs — they are the only postings the submitters can
+    # actually apply to, which is what makes auto-apply usable by default.
+    seeded_boards = not (gh or lv or ab)
+    if seeded_boards:
+        seeded = company_boards.page(page)
+        gh, lv, ab = seeded["greenhouse"], seeded["lever"], seeded["ashby"]
+
+    board_sources = []
     if gh:
-        sources.append(GreenhouseSource(board_tokens=gh))
+        board_sources.append(GreenhouseSource(board_tokens=gh))
     if lv:
-        sources.append(LeverSource(companies=lv))
+        board_sources.append(LeverSource(companies=lv))
     if ab:
-        sources.append(AshbySource(companies=ab))
+        board_sources.append(AshbySource(companies=ab))
+    if seeded_boards:
+        # Seeded boards are the paginated thing here: each sweep reads a
+        # different slice of the list, so "Fetch more" reaches new companies.
+        # A user's *own* connected board has no next page and is left alone.
+        remaining = company_boards.has_next(page)
+        for src in board_sources:
+            src.has_next = remaining
+    sources.extend(board_sources)
     if rc:
         sources.append(RecruiteeSource(companies=rc))
     if wk:
@@ -383,15 +422,17 @@ def _build_sources(ats_config: dict, page: int = 1):
     if adz_id and adz_key:
         sources.append(AdzunaSource(
             app_id=adz_id, app_key=adz_key,
-            country=os.environ.get("ADZUNA_COUNTRY", "us")))
+            country=adzuna_country(profile), page=max(1, page)))
     usa_email, usa_key = os.environ.get("USAJOBS_EMAIL"), os.environ.get("USAJOBS_API_KEY")
     if usa_email and usa_key:
         sources.append(USAJobsSource(email=usa_email, api_key=usa_key))
 
     # Keyless public boards — these run for everyone, with or without a
     # connected ATS, so a brand-new workspace sees real jobs instead of six
-    # fixture rows. Arbeitnow is paginated; Remote OK returns one board.
+    # fixture rows. Arbeitnow and Himalayas are paginated. Remote OK goes last:
+    # its board is small and carries a lot of junk rows.
     sources.append(ArbeitnowSource(page=max(1, page)))
+    sources.append(HimalayasSource(page=max(1, page)))
     sources.append(RemoteOKSource())
     return sources
 
@@ -929,7 +970,7 @@ def _execute_hunt(state: DashboardState, registry=None) -> None:
     from jobhunt.llm.callbacks import resume_callback
     from jobhunt.llm.factory import build_llm_client_from_env
 
-    sources = _build_sources(state.ats_config)
+    sources = _build_sources(state.ats_config, profile=state.user_profile)
 
     assert state.user_profile is not None
     llm_client = build_llm_client_from_env()
@@ -1136,7 +1177,8 @@ def _discover_once(state: DashboardState, registry) -> dict:
     if state.user_profile is None:
         return {"added": 0, "tailored": 0, "applied": 0}
 
-    sources = _build_sources(state.ats_config, page=state.source_page)
+    sources = _build_sources(
+        state.ats_config, page=state.source_page, profile=state.user_profile)
     llm_client = build_llm_client_from_env()
     llm_cb = resume_callback(llm_client) if llm_client is not None else None
     orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)

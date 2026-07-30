@@ -81,6 +81,88 @@ def level_from_title(title: str | None) -> int | None:
     return max(found) if found else None
 
 
+# Experience written into the title itself: "(2-4 years)", "(4+ YOE)",
+# "Big Data (7 to 11 years)". Extremely common on Indian job boards, and often
+# the only level signal a title carries.
+_YEARS_RE = re.compile(
+    r"(\d{1,2})\s*(?:\+|\s*(?:to|-|–|—)\s*\d{1,2}\+?)?\s*(?:years?|yrs?|yoe)\b",
+    re.I,
+)
+
+
+# Numeric career ladders: "Software Engineer 3", "Software Engineer (L1)",
+# "Software Development Engineer III", "SDE IV". Widely used and, without it,
+# an SDE III read as unmarked and scored 100% for a candidate with one year.
+# Lone "I" is deliberately excluded — far too ambiguous in a job title.
+_RANK_RE = re.compile(
+    r"(?:\bL(?P<l>[1-6])\b"
+    r"|\b(?P<roman>IV|V|III|II)\b"
+    r"|[(\-–—,]\s*(?P<paren>[1-6])\s*[)\s]?\s*$"
+    r"|\s(?P<trailing>[1-6])$)"
+)
+
+_ROMAN = {"II": 2, "III": 3, "IV": 4, "V": 5}
+
+# Ladder rung → level. L1 is an entry hire, L3 is where "senior" usually starts.
+_RANK_LEVEL = {1: JUNIOR, 2: MID, 3: SENIOR, 4: STAFF, 5: STAFF, 6: DIRECTOR}
+
+
+def rank_in_title(title: str | None) -> int | None:
+    """Level implied by a numeric or roman ladder rung in the title."""
+    if not title:
+        return None
+    m = _RANK_RE.search(title)
+    if not m:
+        return None
+    if m.group("roman"):
+        rung = _ROMAN[m.group("roman")]
+    else:
+        rung = int(m.group("l") or m.group("paren") or m.group("trailing"))
+    return _RANK_LEVEL.get(rung)
+
+
+def years_in_title(title: str | None) -> int | None:
+    """Lowest years-of-experience figure stated in a title, if any.
+
+    The *lowest* because a range is a floor plus room: "4 to 8 years" is open to
+    somebody with four. Titles only — hunting the same pattern through a job
+    description picks up company history and benefit tenures.
+    """
+    if not title:
+        return None
+    values = [int(m.group(1)) for m in _YEARS_RE.finditer(title)]
+    return min(values) if values else None
+
+
+def level_from_posting(posting: Any) -> int | None:
+    """A posting's level, preferring declared data over anything inferred.
+
+    Four signals in falling order of trust: what the board declares (Himalayas'
+    ``seniority``, copied by adapters into ``raw["seniority"]``), a level word in
+    the title, years of experience stated in the title, then a numeric ladder
+    rung. A posting open to several levels is treated as reachable at the lowest
+    of them — "Entry-level, Mid-level" is an entry-level opportunity.
+    """
+    raw = getattr(posting, "raw", None) or {}
+    declared = raw.get("seniority")
+    if declared:
+        values = declared if isinstance(declared, (list, tuple)) else [declared]
+        levels = [lvl for v in values if (lvl := level_from_title(str(v))) is not None]
+        if levels:
+            return min(levels)
+
+    title = getattr(posting, "title", "")
+    marked = level_from_title(title)
+    if marked is not None:
+        return marked
+    # Years before rank: "(3-5 Years)" is a clearer statement than any numeral
+    # that happens to sit at the end of a title.
+    from_years = level_from_years(years_in_title(title))
+    if from_years is not None:
+        return from_years
+    return rank_in_title(title)
+
+
 def level_from_years(years: int | float | None) -> int | None:
     """Map years of professional experience onto the scale.
 

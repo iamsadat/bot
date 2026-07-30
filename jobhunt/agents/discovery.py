@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from jobhunt.adapters.base import JobSource
+from jobhunt.adapters.filters import ANYWHERE as _ANYWHERE_PLACES
+from jobhunt.adapters.filters import place_matches, remote_scope, words
 from jobhunt.agents.base import BaseAgent
 from jobhunt.models import (
     DiscoveryBatch,
@@ -26,7 +28,7 @@ from jobhunt.models import (
 )
 from jobhunt.seniority import LEVEL_NAMES
 from jobhunt.seniority import fit as seniority_fit
-from jobhunt.seniority import level_from_profile, level_from_title
+from jobhunt.seniority import level_from_posting, level_from_profile
 from jobhunt.skills_taxonomy import canonical, expand_terms, skills_in_text
 
 
@@ -140,19 +142,32 @@ def skill_fit(jd_text: str, skills: list[str]) -> tuple[float, list[str], list[s
 
 
 def location_fit(posting: JobPosting, profile: UserProfile) -> float:
-    """0..1 — how well a posting's location suits the candidate."""
-    wanted = [loc.strip().lower() for loc in (profile.locations or []) if loc.strip()]
+    """0..1 — how well a posting's location suits the candidate.
+
+    Uses whole-word place matching, and reads a remote role's declared scope
+    rather than treating "remote" as a universal yes. Substring comparison had
+    scored "Remote US" as a perfect location for a candidate in Hyderabad,
+    simply because the word "remote" appeared in both.
+    """
+    wanted = [loc.strip() for loc in (profile.locations or []) if loc.strip()]
+    real = [loc for loc in wanted if loc.lower() not in _ANYWHERE_PLACES]
     if not wanted:
         return 1.0
-    here = (posting.location or "").lower()
-    if any(loc in here or here in loc for loc in wanted if loc):
+
+    # Sited where the candidate actually is.
+    if any(place_matches(loc, posting.location) for loc in real):
         return 1.0
-    if any(loc in {"remote", "anywhere", "worldwide"} for loc in wanted):
-        return 1.0 if posting.remote else 0.2
-    # Remote is a partial answer to "somewhere I can work" — real, but weaker
-    # than a posting actually sited where the candidate is.
-    if profile.remote_ok and posting.remote:
-        return 0.8
+
+    if posting.remote and (profile.remote_ok or wanted != real):
+        scope = remote_scope(posting)
+        if not scope or any(words(s) & _ANYWHERE_PLACES for s in scope):
+            # Open remote: a real answer, but weaker than a role in their city.
+            return 0.9 if wanted != real else 0.8
+        if not real:
+            return 0.8
+        if any(place_matches(w, s) or place_matches(s, w) for s in scope for w in real):
+            return 1.0
+        return 0.15  # remote, but not open to where they are
     return 0.2
 
 
@@ -169,7 +184,7 @@ def score(posting: JobPosting, profile: UserProfile) -> dict[str, Any]:
     t = title_fit(posting.title, list(profile.target_roles))
     sk, matched, missing = skill_fit(posting.jd_text, list(profile.skills))
     cand_level = level_from_profile(profile)
-    post_level = level_from_title(posting.title)
+    post_level = level_from_posting(posting)
     sen = seniority_fit(cand_level, post_level)
     loc = location_fit(posting, profile)
 

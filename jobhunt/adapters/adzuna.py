@@ -13,10 +13,38 @@ from typing import Any
 from urllib.parse import urlencode
 
 from jobhunt.adapters.base import JobSource, SourceUnavailable
+from jobhunt.adapters.filters import country_of
 from jobhunt.http import HTTPClient, HTTPClientError, UrllibHTTPClient
 from jobhunt.models import JobPosting
 
-_BASE = "https://api.adzuna.com/v1/api/jobs/{country}/search/1?{qs}"
+_BASE = "https://api.adzuna.com/v1/api/jobs/{country}/search/{page}?{qs}"
+
+# Adzuna is per-country, and it is the only source with real coverage of
+# non-remote jobs outside the US/EU remote market. Guessing "us" for a candidate
+# in Hyderabad silently searched the wrong continent, so the country is derived
+# from the profile's locations, reusing the shared city table in
+# ``jobhunt.adapters.filters``. Codes there are Adzuna's own country codes.
+_ISO_BY_COUNTRY: dict[str, str] = {
+    "india": "in", "united states": "us", "united kingdom": "gb",
+    "canada": "ca", "australia": "au", "germany": "de", "france": "fr",
+    "netherlands": "nl", "singapore": "sg", "poland": "pl", "spain": "es",
+    "italy": "it", "brazil": "br", "mexico": "mx", "south africa": "za",
+    "new zealand": "nz", "austria": "at", "switzerland": "ch",
+    "belgium": "be", "ireland": "ie", "portugal": "pt", "japan": "jp",
+}
+
+
+def country_for(locations: list[str] | None, default: str = "us") -> str:
+    """Adzuna country code for a candidate's locations.
+
+    First recognised place wins. "Remote" and unknown places fall through to
+    ``default`` so nothing is guessed from a location Adzuna cannot search.
+    """
+    for place in locations or []:
+        country = country_of(place or "")
+        if country and country in _ISO_BY_COUNTRY:
+            return _ISO_BY_COUNTRY[country]
+    return default
 
 
 def _iso(s: str | None) -> float | None:
@@ -43,6 +71,7 @@ class AdzunaSource(JobSource):
     def __init__(
         self, app_id: str, app_key: str, country: str = "us",
         results_per_page: int = 50, http: HTTPClient | None = None,
+        page: int = 1, max_days_old: int = 30,
     ) -> None:
         if not app_id or not app_key:
             raise ValueError("Adzuna app_id and app_key are required")
@@ -50,7 +79,10 @@ class AdzunaSource(JobSource):
         self._key = app_key
         self._country = country
         self._rpp = results_per_page
+        self._page = max(1, page)
+        self._max_days_old = max_days_old
         self._http = http or UrllibHTTPClient()
+        self.has_next = False
 
     def _url(self, query: dict) -> str:
         # Fixed param order → deterministic URL (offline tests key on it).
@@ -60,18 +92,35 @@ class AdzunaSource(JobSource):
             ("results_per_page", str(self._rpp)),
             ("what", query.get("role", "") or ""),
             ("where", query.get("location", "") or ""),
+            # Adzuna keeps expired listings around, so without a freshness bound
+            # a sweep is mostly archaeology. Newest first for the same reason.
+            ("max_days_old", str(self._max_days_old)),
+            ("sort_by", "date"),
             ("content-type", "application/json"),
         ]
-        return _BASE.format(country=self._country, qs=urlencode(params))
+        return _BASE.format(
+            country=self._country, page=self._page, qs=urlencode(params)
+        )
 
     def search(self, query: dict) -> list[JobPosting]:
+        # Unlike the board adapters this has native search, so every distinct
+        # (role, location) pair is a genuinely different request — no caching.
         try:
             payload = self._http.get_json(self._url(query))
         except HTTPClientError as exc:
             raise SourceUnavailable(str(exc)) from exc
+        if not isinstance(payload, dict):
+            return []
+        rows = payload.get("results", [])
+        # "count" is the total across all pages, so more remain whenever this
+        # page came back full and the total says so.
+        total = int(payload.get("count") or 0)
+        if len(rows) >= self._rpp and self._page * self._rpp < total:
+            self.has_next = True
+
         excluded = {c.lower() for c in query.get("exclude_companies", [])}
         out: list[JobPosting] = []
-        for row in (payload.get("results", []) if isinstance(payload, dict) else []):
+        for row in rows:
             posting = self._row_to_posting(row)
             if posting.company.lower() not in excluded:
                 out.append(posting)

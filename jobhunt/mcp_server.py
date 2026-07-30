@@ -91,15 +91,18 @@ class JobHuntTools:
         """Run discovery only (no persist) and return ranked matches."""
         from jobhunt.agents.discovery import DiscoveryAgent, DiscoveryInputs
         from jobhunt.dashboard.server import _build_sources
+        from jobhunt.seniority import level_from_profile
 
         profile = self.state.user_profile
         if profile is None:
             return {"error": "no profile yet — onboard first", "matches": []}
-        sources = _build_sources(self.state.ats_config)
+        sources = _build_sources(self.state.ats_config, profile=profile)
         agent = DiscoveryAgent(self.state.trace_store, self.state.bus)
         query = {"role": role, "location": location,
                  "remote_ok": getattr(profile, "remote_ok", True) if profile else True,
-                 "exclude_companies": getattr(profile, "veto_companies", []) if profile else []}
+                 "exclude_companies": getattr(profile, "veto_companies", []) if profile else [],
+                 "candidate_level": level_from_profile(profile),
+                 "all_locations": list(getattr(profile, "locations", []) or [])}
         res = agent.run(
             DiscoveryInputs(profile=profile, queries=[query], sources=sources, plan_id="mcp"),
             task_id="mcp-search")
