@@ -32,23 +32,37 @@ class LeverSource(JobSource):
             raise ValueError("at least one company slug is required")
         self._companies = list(companies)
         self._http = http or UrllibHTTPClient()
+        self._cache: list[JobPosting] | None = None
 
-    def search(self, query: dict) -> list[JobPosting]:
-        out: list[JobPosting] = []
+    def _fetch_all(self) -> list[JobPosting]:
+        """Every posting on every configured board, fetched once per instance.
+
+        See ``GreenhouseSource._fetch_all`` — same reasoning: no native search,
+        one call per (role, location) pair, and one retired slug must not take
+        out the whole source.
+        """
+        postings: list[JobPosting] = []
+        failures: list[str] = []
         for slug in self._companies:
-            url = _API.format(company=slug)
             try:
-                payload = self._http.get_json(url)
+                payload = self._http.get_json(_API.format(company=slug))
             except HTTPClientError as exc:
-                raise SourceUnavailable(str(exc)) from exc
+                failures.append(f"{slug}: {exc}")
+                continue
             if not isinstance(payload, list):
                 continue
             display_company = slug.replace("-", " ").title()
-            for row in payload:
-                posting = self._row_to_posting(row, display_company)
-                if passes_local_filters(posting, query):
-                    out.append(posting)
-        return out
+            postings.extend(
+                self._row_to_posting(row, display_company) for row in payload
+            )
+        if failures and len(failures) == len(self._companies):
+            raise SourceUnavailable("; ".join(failures[:3]))
+        return postings
+
+    def search(self, query: dict) -> list[JobPosting]:
+        if self._cache is None:
+            self._cache = self._fetch_all()
+        return [p for p in self._cache if passes_local_filters(p, query)]
 
     @staticmethod
     def _row_to_posting(row: dict[str, Any], company: str) -> JobPosting:

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
 import Nav from '@/components/Nav';
 import SaveProgressBanner from '@/components/SaveProgressBanner';
@@ -52,6 +53,15 @@ function SourcesPanel() {
             </div>
           ))}
         </div>
+      )}
+      {sourcesData?.seeded_boards && (
+        <p className="mt-3 text-xs text-muted">
+          Searching {sourcesData.seeded_board_count} curated public company boards.{' '}
+          <Link href="/onboarding#boards" className="text-accent underline decoration-accent/40">
+            Add your own employers
+          </Link>{' '}
+          to search them too.
+        </p>
       )}
     </section>
   );

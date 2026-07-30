@@ -60,6 +60,69 @@ function money(n: number, ccy: string) {
 const STATUSES = ['Saved', 'Applied', 'Assessment', 'Interview', 'Offer', 'Closed'];
 const sel = 'rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-ink';
 
+// Why the match percentage is what it is. A bare number invites the reader to
+// distrust it — especially a low one — so each component is shown with the
+// skills the job asked for and whether the candidate has them.
+function MatchBreakdown({ job }: { job: Job }) {
+  const b = job.score_breakdown;
+  if (!b || typeof b.total !== 'number') return null;
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
+  const rows: { label: string; value: number; note?: string }[] = [
+    { label: 'Role match', value: b.title },
+    {
+      label: 'Skills they asked for',
+      value: b.skills,
+      note: b.skills_scored === false ? 'short description — not counted' : undefined,
+    },
+    {
+      label: 'Level',
+      value: b.seniority,
+      note: b.posting_level_name
+        ? `${b.posting_level_name} role${b.candidate_level_name ? ` · you: ${b.candidate_level_name}` : ''}`
+        : 'level not stated',
+    },
+    { label: 'Location', value: b.location },
+  ];
+  return (
+    <div className="glass rounded-xl2 p-3">
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3 className="text-sm font-semibold">Why {pct(b.total)} match</h3>
+      </div>
+      <div className="space-y-1.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center gap-2 text-xs">
+            <span className="w-40 shrink-0 text-muted">{r.label}</span>
+            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+              <span
+                className="block h-full rounded-full bg-grad"
+                style={{ width: `${Math.round(Math.max(0, Math.min(1, r.value)) * 100)}%` }}
+              />
+            </span>
+            <span className="w-9 shrink-0 text-right tabular-nums text-ink/90">{pct(r.value)}</span>
+          </div>
+        ))}
+      </div>
+      {(b.matched_keywords?.length || b.missing_keywords?.length) && (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {b.matched_keywords?.map((k) => (
+            <span key={`m${k}`} className="rounded-full bg-good/15 px-2 py-0.5 text-[11px] text-good">
+              {k}
+            </span>
+          ))}
+          {b.missing_keywords?.map((k) => (
+            <span key={`x${k}`} className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-muted">
+              {k}
+            </span>
+          ))}
+        </div>
+      )}
+      {rows.map((r) => r.note && (
+        <p key={`n${r.label}`} className="mt-2 text-[11px] text-muted">{r.label}: {r.note}</p>
+      ))}
+    </div>
+  );
+}
+
 export default function ResumePreview({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [salary, setSalary] = useState<any>(null);
@@ -119,6 +182,8 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               </div>
               <button onClick={onClose} className="glass rounded-full px-3 py-1 text-sm">✕</button>
             </div>
+
+            <MatchBreakdown job={job} />
 
             {salary && (
               <div className="glass rounded-xl2 p-3 text-sm">

@@ -1002,7 +1002,7 @@
           <!-- Step 3 -->
           <div class="step-panel" id="step-3">
             <h2>Where should we hunt?</h2>
-            <div class="lede">Optional. Add public Greenhouse / Lever / Ashby handles for live discovery. Skip to use offline fixtures.</div>
+            <div class="lede">Optional. Skip this and we search a curated set of public company boards plus keyless job feeds. Add Greenhouse / Lever / Ashby handles to search specific employers as well.</div>
             <div class="field">
               <div class="field-label">Greenhouse boards <span class="hint">e.g. stripe, airtable</span></div>
               <input class="input" type="text" id="f-greenhouse" placeholder="stripe, airtable, retool" />
@@ -1588,7 +1588,7 @@
     const gh = $('f-greenhouse').value.trim(); if (gh) ats.push(`GH: ${gh}`);
     const lv = $('f-lever').value.trim();      if (lv) ats.push(`Lever: ${lv}`);
     const ab = $('f-ashby').value.trim();      if (ab) ats.push(`Ashby: ${ab}`);
-    row('ATS sources', ats.length ? ats.join(' · ') : '<span style="color:var(--muted)">offline fixtures</span>');
+    row('ATS sources', ats.length ? ats.join(' · ') : '<span style="color:var(--muted)">curated public company boards</span>');
 
     const prefs = [];
     if (state.minSalary) prefs.push(`≥ $${state.minSalary.toLocaleString()}`);

@@ -240,15 +240,15 @@ export default function Onboarding() {
           </div>
         </div>
 
-        <div className={card}>
-          <h2 className="mb-1 text-sm font-semibold">Connect job boards</h2>
+        <div className={card} id="boards">
+          <h2 className="mb-1 text-sm font-semibold">Search specific employers</h2>
           <p className="mb-3 text-[11px] text-muted">
-            Connecting a board is what makes "Approve & apply" actually submit — without one, approving only marks the job Applied and you finish the application on the company site.
+            Optional. We already search a curated set of public company boards. Add handles here to search particular employers as well — and note that Greenhouse and Lever are the two boards "Approve &amp; apply" can submit to directly.
           </p>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Greenhouse board tokens (comma-sep)" value={ghTokens} onChange={(e: any) => setGhTokens(e.target.value)} />
             <Field label="Lever company slugs (comma-sep)" value={leverSlugs} onChange={(e: any) => setLeverSlugs(e.target.value)} />
-            <Field label="Ashby company slugs (comma-sep)" value={ashbySlugs} onChange={(e: any) => setAshbySlugs(e.target.value)} />
+            <Field label="Ashby company slugs — discovery only" value={ashbySlugs} onChange={(e: any) => setAshbySlugs(e.target.value)} />
           </div>
         </div>
 

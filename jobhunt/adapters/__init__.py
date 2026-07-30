@@ -16,7 +16,7 @@ from jobhunt.adapters.ashby import AshbySource
 from jobhunt.adapters.base import JobSource, SourceUnavailable
 from jobhunt.adapters.fixture import FixtureSource
 from jobhunt.adapters.greenhouse import GreenhouseSource
-from jobhunt.adapters.indeed import IndeedSource
+from jobhunt.adapters.himalayas import HimalayasSource
 from jobhunt.adapters.lever import LeverSource
 from jobhunt.adapters.personio import PersonioSource
 from jobhunt.adapters.recruitee import RecruiteeSource
@@ -30,7 +30,7 @@ __all__ = [
     "AshbySource",
     "FixtureSource",
     "GreenhouseSource",
-    "IndeedSource",
+    "HimalayasSource",
     "JobSource",
     "LeverSource",
     "PersonioSource",
