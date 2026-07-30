@@ -583,6 +583,14 @@ def _apply_parsed_resume(profile, result: dict) -> None:
     for k, v in (result.get("links") or {}).items():
         profile.links.setdefault(k, v)
 
+    # Seniority and target roles used to be computed here and thrown away, which
+    # is why a candidate with one year of experience was shown Staff roles and
+    # had to type their own job titles despite the résumé naming them.
+    if profile.experience_years is None and result.get("experience_years") is not None:
+        profile.experience_years = result["experience_years"]
+    if not profile.target_roles and result.get("inferred_titles"):
+        profile.target_roles = list(result["inferred_titles"])
+
 
 def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
     """Attempt real submission for a just-approved job. Returns a status dict.

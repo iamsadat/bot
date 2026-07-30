@@ -6,11 +6,15 @@ build a UserProfile from the multi-step onboarding form.
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
+from datetime import date
 from typing import Any
 
 from jobhunt.models import UserProfile
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Skill vocabulary — tokens that map to known engineering skills
@@ -84,26 +88,64 @@ def parse_resume_text(text: str) -> dict[str, Any]:
             titles.append(t)
             seen.add(t.lower())
 
-    years = sorted({int(y) for y in _YEAR_RE.findall(text)})
-    experience_years: int | None = None
-    if len(years) >= 2:
-        experience_years = max(years) - min(years)
-
     result: dict[str, Any] = {
         "skills": skills,
         "inferred_titles": titles[:4],
-        "experience_years": experience_years,
     }
     # Structured sections are best-effort; never let a parse failure drop the
     # primary keys above (the offline test suite depends on them).
     try:
         result.update(_parse_sections(text))
     except Exception:  # pragma: no cover - defensive
+        logger.exception("structured résumé parse failed; returning skills only")
         result.setdefault("experiences", [])
         result.setdefault("education", [])
         result.setdefault("projects", [])
         result.setdefault("links", {})
+
+    result["experience_years"] = _experience_years(text, result["experiences"])
     return result
+
+
+def _experience_years(text: str, experiences: list[dict[str, Any]]) -> int | None:
+    """Years of professional experience, measured from the job history.
+
+    Reads the dated *experience* entries rather than every 4-digit number in the
+    document. Spanning the whole résumé counted degree start years, project
+    years and copyright footers, so a candidate who began their first job in
+    2025 was scored at 5 years' experience — which then made every Staff role
+    look plausible.
+
+    Falls back to the document-wide span only when no experience entry carries a
+    date, since a résumé with no recognised experience section is the one case
+    where the crude estimate beats no estimate at all.
+    """
+    spans = [
+        (start, end)
+        for e in experiences
+        if (start := _first_year(e.get("start"))) is not None
+        and (end := _end_year(e.get("end"))) is not None
+    ]
+    if spans:
+        # Union of the spans, not their sum: overlapping roles are one career,
+        # and a promotion listed as two entries is not two careers.
+        return max(max(e for _, e in spans) - min(s for s, _ in spans), 0)
+
+    years = sorted({int(y) for y in _YEAR_RE.findall(text)})
+    return max(years) - min(years) if len(years) >= 2 else None
+
+
+def _first_year(value: Any) -> int | None:
+    m = _YEAR_RE.search(str(value or ""))
+    return int(m.group(1)) if m else None
+
+
+def _end_year(value: Any) -> int | None:
+    """Year an entry ended; open-ended entries end today."""
+    raw = str(value or "").strip().lower()
+    if raw in {"present", "current", "now", "date", "ongoing", "till date"}:
+        return date.today().year
+    return _first_year(raw)
 
 
 # --------------------------------------------------------------------------- #

@@ -90,6 +90,13 @@ class UserProfile:
     links: dict[str, str] = field(default_factory=dict)
     veto_companies: list[str] = field(default_factory=list)
     weekly_target: int = 10
+    # Seniority, so the engine stops offering Staff roles to new grads. Both are
+    # optional and ``None`` means "unknown" — see jobhunt/seniority.py, which
+    # treats unknown as neutral rather than guessing a level.
+    # ``experience_years`` is measured from the résumé's dated experience
+    # entries; ``seniority_level`` is a 0..5 override the user can set directly.
+    experience_years: int | None = None
+    seniority_level: int | None = None
     # Standard answers to common ATS screening / custom questions, used when
     # auto-submitting (work authorization, sponsorship, years of experience,
     # LinkedIn/website, optional EEO). Free-form so new keys can be added.
@@ -185,6 +192,10 @@ class JobPosting:
     remote: bool = False
     relevance_score: float = 0.0
     ghost_score: float = 0.0
+    # Why ``relevance_score`` came out the way it did: the per-component scores
+    # plus the matched/missing keywords. Shown in the UI so a match percentage
+    # is explainable instead of an unarguable number. See agents/discovery.py.
+    score_breakdown: dict[str, Any] = field(default_factory=dict)
     fingerprint: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 

@@ -197,6 +197,8 @@ def _profile_from_dict(d: dict) -> UserProfile:
         links=dict(d.get("links", {})),
         veto_companies=list(d.get("veto_companies", [])),
         weekly_target=int(d.get("weekly_target", 10)),
+        experience_years=d.get("experience_years"),
+        seniority_level=d.get("seniority_level"),
         application_answers=dict(d.get("application_answers", {})),
         auto_apply=bool(d.get("auto_apply", False)),
         daily_apply_cap=int(d.get("daily_apply_cap", 0)),
