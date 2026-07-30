@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import urllib.error
 from io import BytesIO
 
 import pytest
@@ -12,8 +13,8 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from jobhunt.dashboard.server import DashboardState, create_app  # noqa: E402
-from jobhunt.http import FakeHTTPClient  # noqa: E402
-from jobhunt.integrations.github import GitHubClient, repos_to_projects  # noqa: E402
+from jobhunt.http import FakeHTTPClient, HTTPClientError  # noqa: E402
+from jobhunt.integrations.github import GitHubClient, GitHubError, repos_to_projects  # noqa: E402
 from jobhunt.onboarding import ResumeFileError, extract_resume_text  # noqa: E402
 from jobhunt.trace import ThoughtBus, TraceStore  # noqa: E402
 
@@ -72,6 +73,72 @@ def test_repos_to_projects_skips_forks_and_maps_skills():
     assert [p["name"] for p in projs] == ["real"]
     assert "python" in projs[0]["skills"] and "fastapi" in projs[0]["skills"]
     assert projs[0]["link"] == "u"
+
+
+class _ErrorHTTPClient:
+    """Raises a canned HTTPClientError instead of returning JSON."""
+
+    def __init__(self, exc: HTTPClientError) -> None:
+        self._exc = exc
+
+    def get_json(self, url, *, timeout=10.0, headers=None):
+        raise self._exc
+
+    def get_text(self, url, *, timeout=10.0, headers=None):
+        raise self._exc
+
+
+class _HeaderCapturingHTTPClient:
+    """Records the headers it was called with; returns an empty repo list."""
+
+    def __init__(self) -> None:
+        self.headers: dict[str, str] | None = None
+
+    def get_json(self, url, *, timeout=10.0, headers=None):
+        self.headers = headers
+        return []
+
+    def get_text(self, url, *, timeout=10.0, headers=None):
+        self.headers = headers
+        return ""
+
+
+def test_github_404_surfaces_as_github_error_with_status(monkeypatch):
+    http = _ErrorHTTPClient(HTTPClientError("boom", status=404))
+    with pytest.raises(GitHubError) as exc_info:
+        GitHubClient(http=http).fetch_repos("ada")
+    assert exc_info.value.status == 404
+
+
+def test_github_403_rate_limit_surfaces_with_status():
+    http = _ErrorHTTPClient(HTTPClientError("boom", status=403))
+    with pytest.raises(GitHubError) as exc_info:
+        GitHubClient(http=http).fetch_repos("ada")
+    assert exc_info.value.status == 403
+
+
+def test_github_network_failure_surfaces_with_no_status():
+    underlying = urllib.error.URLError("dns failure")
+    http = _ErrorHTTPClient(HTTPClientError(f"failed: {underlying}"))
+    with pytest.raises(GitHubError) as exc_info:
+        GitHubClient(http=http).fetch_repos("ada")
+    assert exc_info.value.status is None
+
+
+def test_github_token_sent_when_env_set(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "secret123")
+    http = _HeaderCapturingHTTPClient()
+    GitHubClient(http=http).fetch_repos("ada")
+    assert http.headers is not None
+    assert http.headers["Authorization"] == "Bearer secret123"
+
+
+def test_github_token_absent_when_env_unset(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    http = _HeaderCapturingHTTPClient()
+    GitHubClient(http=http).fetch_repos("ada")
+    assert http.headers is not None
+    assert "Authorization" not in http.headers
 
 
 # ----- endpoints -----------------------------------------------------------

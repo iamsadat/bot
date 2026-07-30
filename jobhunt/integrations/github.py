@@ -7,6 +7,7 @@ recency; language + topics become the project's skills.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from jobhunt.http import HTTPClient, HTTPClientError, UrllibHTTPClient
@@ -16,6 +17,10 @@ _REPOS = "https://api.github.com/users/{user}/repos?sort=updated&per_page=100"
 
 class GitHubError(Exception):
     """Raised when the GitHub API can't be reached or the user is unknown."""
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class GitHubClient:
@@ -27,10 +32,14 @@ class GitHubClient:
         if not username:
             raise GitHubError("github username is required")
         url = _REPOS.format(user=username)
+        headers = {"Accept": "application/vnd.github+json"}
+        token = os.environ.get("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         try:
-            payload = self._http.get_json(url, headers={"Accept": "application/vnd.github+json"})
+            payload = self._http.get_json(url, headers=headers)
         except HTTPClientError as exc:
-            raise GitHubError(str(exc)) from exc
+            raise GitHubError(str(exc), status=exc.status) from exc
         return payload if isinstance(payload, list) else []
 
 

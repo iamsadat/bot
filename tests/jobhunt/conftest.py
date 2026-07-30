@@ -9,6 +9,17 @@ from jobhunt.models import UserProfile
 from jobhunt.trace import ThoughtBus, TraceStore
 
 
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch) -> None:
+    """Force the fixture-backed source list for every test.
+
+    ``_build_sources`` now includes the keyless public boards (Arbeitnow,
+    Remote OK) by default, which are real network calls. The suite must stay
+    fully offline, so pin it here rather than in each test.
+    """
+    monkeypatch.setenv("JOBHUNT_OFFLINE", "1")
+
+
 @pytest.fixture
 def profile() -> UserProfile:
     return UserProfile(

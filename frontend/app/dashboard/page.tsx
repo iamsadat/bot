@@ -12,6 +12,51 @@ import ResumePreview from '@/components/ResumePreview';
 import { api, Approval, Job } from '@/lib/api';
 import { usePoll } from '@/lib/useLive';
 
+function ago(epochSeconds: number): string {
+  const diffMs = Date.now() - epochSeconds * 1000;
+  const s = Math.max(0, Math.round(diffMs / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  return `${h}h ago`;
+}
+
+function SourcesPanel() {
+  const sourcesData = usePoll(() => api.sources(), 5000);
+  const sources = sourcesData?.sources || [];
+
+  return (
+    <section className="glass mt-4 rounded-xl2 p-4 shadow-card">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold">Sources</h2>
+        {sourcesData && <span className="text-xs text-muted">page {sourcesData.page}</span>}
+      </div>
+      {sources.length === 0 ? (
+        <p className="text-xs text-muted">No sweep yet — hit Run hunt or Fetch more.</p>
+      ) : (
+        <div className="space-y-2">
+          {sources.map((s) => (
+            <div
+              key={s.name}
+              className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.02] p-2.5"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`text-lg leading-none ${s.status === 'ok' ? 'text-good' : 'text-warn'}`}>•</span>
+                <span className="truncate text-sm font-medium">{s.name}</span>
+              </div>
+              <div className="flex shrink-0 items-center gap-3 text-xs text-muted">
+                <span>{s.jobs} jobs</span>
+                <span>checked {ago(s.checked_at)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Stat({
   label, value, accent, onClick,
 }: { label: string; value: number; accent?: boolean; onClick?: () => void }) {
@@ -91,11 +136,36 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [showApprovals, setShowApprovals] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState<{ text: string; warn?: boolean } | null>(null);
   const jobs = jobsData?.jobs || [];
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try { await fn(); } finally { setBusy(false); }
+  };
+
+  const fetchMore = async () => {
+    setFetchMsg(null);
+    setBusy(true);
+    try {
+      const r = await api.discover();
+      if (r.added > 0) {
+        setFetchMsg({ text: `Fetched ${r.seen} postings · ${r.added} new · ${r.duplicates} already seen` });
+      } else if (r.seen > 0) {
+        let text = `Checked ${r.seen} postings — nothing new.`;
+        const sources = await api.sources();
+        if (sources.ats_connected) {
+          text += ' Connected job boards return their whole board at once, so new roles only appear when a company posts one.';
+        }
+        setFetchMsg({ text });
+      } else {
+        setFetchMsg({ text: 'No postings came back. Check the source panel below.' });
+      }
+    } catch (e) {
+      setFetchMsg({ text: e instanceof Error ? e.message : String(e), warn: true });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -104,7 +174,7 @@ export default function Dashboard() {
         right={
           <>
             <button
-              onClick={() => run(api.discover)}
+              onClick={fetchMore}
               disabled={busy || !status?.has_profile}
               className="glass rounded-full px-4 py-2 text-sm font-medium transition hover:border-white/20 disabled:opacity-40"
             >
@@ -138,6 +208,10 @@ export default function Dashboard() {
           <Stat label="Applied today" value={status?.applied_today ?? 0} />
         </motion.div>
 
+        {fetchMsg && (
+          <p className={`mt-2 text-xs ${fetchMsg.warn ? 'text-warn' : 'text-muted'}`}>{fetchMsg.text}</p>
+        )}
+
         {showApprovals && <ApprovalsPanel />}
 
         <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -146,6 +220,7 @@ export default function Dashboard() {
               <h2 className="mb-3 text-sm font-semibold">Pipeline</h2>
               <Kanban jobs={jobs} onSelect={setSelected} />
             </section>
+            <SourcesPanel />
           </div>
 
           <div className="space-y-4">

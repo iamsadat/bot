@@ -113,6 +113,14 @@ class ApprovalQueue:
     def all(self) -> list[ApprovalRequest]:
         return list(self._items.values())
 
+    def remove(self, request_id: str) -> bool:
+        """Drop a request outright. Returns True if one was removed.
+
+        Not part of the review workflow — that's what ``transition`` is for.
+        This exists to discard requests whose job no longer exists.
+        """
+        return self._items.pop(request_id, None) is not None
+
     # ----------------------------------------------------------- transitions
 
     def transition(

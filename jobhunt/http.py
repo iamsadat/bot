@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 class HTTPClientError(Exception):
     """Transport-level error from a job-board API."""
 
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 class HTTPClient(Protocol):
     def get_json(
@@ -56,6 +60,8 @@ class UrllibHTTPClient:
                 if resp.status != 200:
                     raise HTTPClientError(f"{url} returned {resp.status}")
                 body = resp.read()
+        except urllib.error.HTTPError as exc:
+            raise HTTPClientError(f"{url} failed: {exc}", status=exc.code) from exc
         except urllib.error.URLError as exc:
             raise HTTPClientError(f"{url} failed: {exc}") from exc
         try:
@@ -79,6 +85,8 @@ class UrllibHTTPClient:
                 if resp.status != 200:
                     raise HTTPClientError(f"{url} returned {resp.status}")
                 body = resp.read()
+        except urllib.error.HTTPError as exc:
+            raise HTTPClientError(f"{url} failed: {exc}", status=exc.code) from exc
         except urllib.error.URLError as exc:
             raise HTTPClientError(f"{url} failed: {exc}") from exc
         try:

@@ -26,11 +26,10 @@ or you're testing the wrong thing.
 1. **Onboarding** — go to `/onboarding`.
    - Paste any résumé text and hit **Parse & prefill**. Skills, experience,
      education and projects should populate below.
-   - **Enter several target roles.** This matters: the offline fixture set is
-     six postings, and the role/location filter is a real filter. With only
-     `backend engineer` + `Remote` you get **1** job, which looks broken but
-     isn't. With `backend engineer, software engineer, backend developer` and
-     locations `Remote, San Francisco CA, New York NY` you get **3**.
+   - **Enter several target roles.** The role/location filter is a real
+     filter — one narrow role returns very little. Something like
+     `backend engineer, software engineer, backend developer` with
+     `Remote, Berlin, New York NY` gives a much better spread.
    - Optionally fill **Connect job boards** (Greenhouse token / Lever slug /
      Ashby slug). Leave it empty for the offline run — see step 5 for what
      changes when it's set.
@@ -71,11 +70,20 @@ or you're testing the wrong thing.
 
 ## Known limits, so they don't read as bugs
 
-- **Six fixture postings.** Narrow role/location filters legitimately reduce
-  that to 1–3 results.
-- **Connecting a real board makes discovery hit the network.** On a machine
-  without outbound access to `boards.greenhouse.io` the hunt will block on
-  those requests. Leave boards empty to stay fully offline.
+- **Two keyless sources run by default** — Arbeitnow (paginated, Europe-heavy)
+  and Remote OK (remote-only). They need no keys and no configuration. "Fetch
+  more" advances Arbeitnow's page cursor, so repeat clicks return genuinely new
+  roles; the source panel on the dashboard shows the page number climbing.
+- **Connected ATS boards have no page 2.** Greenhouse/Lever/Ashby hand back
+  their entire board in one request, so once you've fetched, nothing new
+  appears until that company posts a role. The fetch message says so rather
+  than leaving you guessing.
+- **Fully offline runs**: set `JOBHUNT_OFFLINE=1` to skip the network sources
+  and use the six-row fixture set instead. The test suite pins this
+  automatically.
+- **GitHub import is rate-limited** to 60 requests/hour per IP when
+  unauthenticated. Set `GITHUB_TOKEN` (a classic token, no scopes) to raise it
+  to 5000/hour. The error message tells you which limit you hit.
 - **Free-tier deploys lose per-workspace data.** Multi-tenant workspaces sit
   on ephemeral disk; a redeploy or idle spin-down resets them. Set
   `DATABASE_URL` for the shared stores (public résumés, auth, waitlist,

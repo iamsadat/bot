@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from pathlib import Path
 
 from jobhunt.adapters.base import JobSource, SourceUnavailable
@@ -59,7 +58,12 @@ class FixtureSource(JobSource):
             if posted_at is None and "posted_days_ago" in r:
                 posted_at = time.time() - r["posted_days_ago"] * 86400
             posting = JobPosting(
-                job_id=uuid.uuid4().hex,
+                # Stable across repeated searches, like the real adapters
+                # (gh:{id}, lever:{id}, ...). A random id here made every
+                # sweep look like a brand-new job to anything keyed on
+                # job_id — documents and the approval queue — so repeated
+                # discovery piled up duplicate approvals for the same role.
+                job_id=f"{r['source']}:{r['source_id']}",
                 source=r["source"],
                 source_id=r["source_id"],
                 url=r["url"],
