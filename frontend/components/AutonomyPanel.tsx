@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
 import { api, Autonomy } from '@/lib/api';
+import { Card, CardKicker, Field, Input } from './ui';
 
 export default function AutonomyPanel() {
   const [a, setA] = useState<Autonomy | null>(null);
@@ -25,50 +25,49 @@ export default function AutonomyPanel() {
 
   if (!a) return null;
 
+  const label = a.auto_apply ? 'Auto-apply' : 'Co-pilot';
+  const note = !a.ats_connected
+    ? 'Connect an ATS to enable auto-apply.'
+    : a.auto_apply
+      ? 'Submits matches automatically.'
+      : 'Fills the form, leaves the final submit to you.';
+
   return (
-    <div className="glass rounded-xl2 p-4 shadow-card">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Autonomy</h3>
+    <Card elevation="sm">
+      <div className="flex items-center justify-between">
+        <CardKicker>Autonomy</CardKicker>
         {saving && <span className="text-[10px] text-muted">saving…</span>}
       </div>
+      <div className="text-[17px] leading-[1.15]" style={{ fontFamily: 'var(--font-heading)' }}>
+        {label}
+      </div>
+      <div className="text-[11.5px] leading-[1.4] text-muted">{note}</div>
 
       <button
+        type="button"
         onClick={() => update({ auto_apply: !a.auto_apply })}
         disabled={!a.ats_connected}
-        className={`flex w-full items-center justify-between rounded-lg border p-3 transition ${
-          a.auto_apply
-            ? 'border-good/40 bg-good/10'
-            : 'border-white/10 bg-white/[0.02] hover:border-white/20'
-        } ${!a.ats_connected ? 'cursor-not-allowed opacity-50' : ''}`}
+        aria-label="Toggle auto-apply"
+        aria-pressed={a.auto_apply}
+        className="relative h-[25px] w-[46px] rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+        style={{ background: a.auto_apply ? 'var(--color-accent-2)' : 'var(--color-neutral-400)' }}
       >
-        <span className="text-left">
-          <span className="block text-sm font-medium">Auto-apply</span>
-          <span className="block text-[11px] text-muted">
-            {a.ats_connected ? 'Submits matches automatically' : 'Connect an ATS to enable'}
-          </span>
-        </span>
-        <span className={`relative h-6 w-11 rounded-full transition ${a.auto_apply ? 'bg-grad' : 'bg-white/15'}`}>
-          <motion.span
-            layout
-            className="absolute top-0.5 h-5 w-5 rounded-full bg-white"
-            style={{ left: a.auto_apply ? 22 : 2 }}
-          />
-        </span>
+        <span
+          className="absolute top-[3px] h-[19px] w-[19px] rounded-full transition-all"
+          style={{ left: a.auto_apply ? 24 : 3, background: 'var(--color-bg)' }}
+        />
       </button>
 
-      <div className="mt-3 grid grid-cols-2 gap-3">
-        <label className="text-[11px] text-muted">
-          Daily cap
-          <input
+      <div className="mt-1 grid grid-cols-2 gap-3">
+        <Field label="Daily cap">
+          <Input
             type="number"
             min={0}
             defaultValue={a.daily_apply_cap}
             onBlur={(e) => update({ daily_apply_cap: parseInt(e.target.value || '0', 10) })}
-            className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-sm text-ink"
           />
-        </label>
-        <label className="text-[11px] text-muted">
-          Min match {Math.round(a.relevance_floor * 100)}%
+        </Field>
+        <Field label={`Min match ${Math.round(a.relevance_floor * 100)}%`}>
           <input
             type="range"
             min={0}
@@ -79,18 +78,23 @@ export default function AutonomyPanel() {
             }
             className="mt-2 w-full accent-accent"
           />
-        </label>
+        </Field>
       </div>
 
-      <div className="mt-3 flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 text-[11px]">
+      <div
+        className="flex items-center justify-between rounded-[16px] px-3 py-2 text-[11px]"
+        style={{ background: 'var(--color-bg)' }}
+      >
         <span className="text-muted">Applied today</span>
-        <span className="font-semibold text-ink">
+        <span className="font-semibold">
           {a.applied_today}{a.effective_cap ? ` / ${a.effective_cap}` : ''}
         </span>
       </div>
       {a.continuous && (
-        <p className="mt-2 text-center text-[10px] text-good">● continuous discovery on</p>
+        <p className="text-center text-[10px]" style={{ color: 'var(--color-accent-2-700)' }}>
+          ● continuous discovery on
+        </p>
       )}
-    </div>
+    </Card>
   );
 }

@@ -40,14 +40,19 @@ function ParticleField({ count = 2600 }: { count?: number }) {
           itemSize={3}
         />
       </bufferGeometry>
+      {/* #c67139 mirrors --color-accent (Grove's terracotta). PointsMaterial
+          is unlit — colour is applied directly and scene lights have no
+          effect on it — so the old ambient/point lights were dead code and
+          are dropped. Normal (not additive) blending plus a lower opacity is
+          what keeps the dots from blowing out to white against the cream
+          #f5ead8 backdrop the way the additive light-blue version did. */}
       <pointsMaterial
-        size={0.022}
-        color="#8db4ff"
+        size={0.026}
+        color="#c67139"
         transparent
-        opacity={0.85}
+        opacity={0.6}
         sizeAttenuation
         depthWrite={false}
-        blending={THREE.AdditiveBlending}
       />
     </points>
   );
@@ -61,8 +66,6 @@ export default function Hero3D() {
       gl={{ antialias: true, alpha: true }}
       style={{ position: 'absolute', inset: 0 }}
     >
-      <ambientLight intensity={0.6} />
-      <pointLight position={[5, 5, 5]} intensity={1.2} color="#a78bfa" />
       <ParticleField />
     </Canvas>
   );

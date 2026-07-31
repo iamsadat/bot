@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { Button, Input } from './ui';
 
 // Minimal "save my progress" prompt: ties the anonymous jh_ws workspace
 // cookie to a verified email via a magic link, so a user's résumés/
@@ -34,44 +35,39 @@ export default function SaveProgressBanner() {
   };
 
   return (
-    <div className="glass mx-6 mt-4 flex flex-wrap items-center gap-3 rounded-xl2 p-4 text-sm shadow-card">
+    <div
+      className="mx-6 mt-4 flex flex-wrap items-center gap-3 rounded-[26px] p-4 text-sm elev-sm"
+      style={{ background: 'var(--color-surface)' }}
+    >
       {sent ? (
         <>
-          <span className="text-ink">
+          <span>
             Check <span className="font-semibold">{email}</span> for a sign-in link.
           </span>
           {devLink && (
-            <a href={devLink} className="text-grad underline">
+            <a href={devLink} className="underline" style={{ color: 'var(--color-accent)' }}>
               dev link (no SMTP configured)
             </a>
           )}
         </>
       ) : (
         <>
-          <span className="text-ink">Save your progress — verify your email to keep your workspace.</span>
-          <input
+          <span>Save your progress — verify your email to keep your workspace.</span>
+          <Input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="glass rounded-full px-3 py-1.5 text-sm outline-none"
+            className="max-w-[220px]"
           />
-          <button
-            onClick={submit}
-            disabled={busy}
-            className="rounded-full bg-grad px-4 py-1.5 text-sm font-semibold text-bg disabled:opacity-40"
-          >
+          <Button variant="primary" onClick={submit} disabled={busy}>
             Send link
-          </button>
+          </Button>
         </>
       )}
-      <button
-        onClick={() => setDismissed(true)}
-        className="ml-auto text-muted hover:text-ink"
-        aria-label="Dismiss"
-      >
+      <Button variant="ghost" icon onClick={() => setDismissed(true)} className="ml-auto" aria-label="Dismiss">
         ✕
-      </button>
+      </Button>
     </div>
   );
 }

@@ -4,12 +4,14 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import Nav from '@/components/Nav';
+import Rail from '@/components/Rail';
 import SaveProgressBanner from '@/components/SaveProgressBanner';
 import AnimatedNumber from '@/components/AnimatedNumber';
 import Kanban from '@/components/Kanban';
 import ReasoningFeed from '@/components/ReasoningFeed';
 import AutonomyPanel from '@/components/AutonomyPanel';
 import ResumePreview from '@/components/ResumePreview';
+import { Button, Card, PageHead, SectionHead, Stat } from '@/components/ui';
 import { api, Approval, Job } from '@/lib/api';
 import { usePoll } from '@/lib/useLive';
 
@@ -23,26 +25,34 @@ function ago(epochSeconds: number): string {
   return `${h}h ago`;
 }
 
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning.';
+  if (h < 18) return 'Good afternoon.';
+  return 'Good evening.';
+}
+
 function SourcesPanel() {
   const sourcesData = usePoll(() => api.sources(), 5000);
   const sources = sourcesData?.sources || [];
 
   return (
-    <section className="glass mt-4 rounded-xl2 p-4 shadow-card">
-      <div className="mb-3 flex items-center justify-between">
+    <Card elevation="sm" className="mt-4">
+      <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">Sources</h2>
         {sourcesData && <span className="text-xs text-muted">page {sourcesData.page}</span>}
       </div>
       {sources.length === 0 ? (
-        <p className="text-xs text-muted">No sweep yet — hit Run hunt or Fetch more.</p>
+        <p className="text-xs text-muted">No sweep yet — hit Run a hunt or Check email.</p>
       ) : (
         <div className="space-y-2">
           {sources.map((s) => (
             <div
               key={s.name}
-              className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.02] p-2.5"
+              className="flex items-center justify-between rounded-xl2 p-2.5"
+              style={{ background: 'var(--color-bg)' }}
             >
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
                 <span className={`text-lg leading-none ${s.status === 'ok' ? 'text-good' : 'text-warn'}`}>•</span>
                 <span className="truncate text-sm font-medium">{s.name}</span>
               </div>
@@ -55,31 +65,15 @@ function SourcesPanel() {
         </div>
       )}
       {sourcesData?.seeded_boards && (
-        <p className="mt-3 text-xs text-muted">
+        <p className="mt-1 text-xs text-muted">
           Searching {sourcesData.seeded_board_count} curated public company boards.{' '}
-          <Link href="/onboarding#boards" className="text-accent underline decoration-accent/40">
+          <Link href="/onboarding#boards" style={{ color: 'var(--color-accent)' }}>
             Add your own employers
           </Link>{' '}
           to search them too.
         </p>
       )}
-    </section>
-  );
-}
-
-function Stat({
-  label, value, accent, onClick,
-}: { label: string; value: number; accent?: boolean; onClick?: () => void }) {
-  return (
-    <div
-      onClick={onClick}
-      className={`glass rounded-xl2 p-4 shadow-card ${onClick ? 'cursor-pointer transition hover:border-white/20' : ''}`}
-    >
-      <div className={`text-3xl font-extrabold tabular-nums ${accent ? 'text-grad' : 'text-ink'}`}>
-        <AnimatedNumber value={value} />
-      </div>
-      <div className="mt-1 text-xs text-muted">{label}</div>
-    </div>
+    </Card>
   );
 }
 
@@ -98,45 +92,37 @@ function ApprovalsPanel() {
   };
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-      className="glass mt-3 rounded-xl2 p-4 shadow-card"
-    >
-      <h2 className="mb-3 text-sm font-semibold">Pending approval</h2>
-      {approvals.length === 0 ? (
-        <p className="text-xs text-muted">Nothing waiting on you.</p>
-      ) : (
-        <div className="space-y-2">
-          {approvals.map((a) => (
-            <div
-              key={a.request_id}
-              className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.02] p-2.5"
-            >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">{a.title}</div>
-                <div className="truncate text-xs text-muted">{a.company}</div>
+    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+      <Card elevation="sm">
+        <h2 className="text-sm font-semibold">Pending approval</h2>
+        {approvals.length === 0 ? (
+          <p className="text-xs text-muted">Nothing waiting on you.</p>
+        ) : (
+          <div className="space-y-2">
+            {approvals.map((a) => (
+              <div
+                key={a.request_id}
+                className="flex items-center justify-between rounded-xl2 p-2.5"
+                style={{ background: 'var(--color-bg)' }}
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{a.title}</div>
+                  <div className="truncate text-xs text-muted">{a.company}</div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button variant="primary" onClick={() => decide(a, 'approve')} disabled={busyId === a.request_id}>
+                    Approve
+                  </Button>
+                  <Button variant="secondary" onClick={() => decide(a, 'reject')} disabled={busyId === a.request_id}>
+                    Reject
+                  </Button>
+                </div>
               </div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  onClick={() => decide(a, 'approve')}
-                  disabled={busyId === a.request_id}
-                  className="rounded-full bg-grad px-3 py-1.5 text-xs font-semibold text-bg disabled:opacity-40"
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={() => decide(a, 'reject')}
-                  disabled={busyId === a.request_id}
-                  className="glass rounded-full px-3 py-1.5 text-xs font-medium text-warn disabled:opacity-40"
-                >
-                  Reject
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </motion.section>
+            ))}
+          </div>
+        )}
+      </Card>
+    </motion.div>
   );
 }
 
@@ -178,84 +164,123 @@ export default function Dashboard() {
     }
   };
 
+  // Neither figure has its own API field — both are derived client-side from
+  // the already-polled `jobs` list, so no new network calls are introduced.
+  const vettedCount = jobs.filter((j) => typeof j.relevance_score === 'number' && j.relevance_score > 0).length;
+  const interviewCount = jobs.filter((j) => j.status === 'Interview').length;
+
+  const actions = (
+    <>
+      <Button variant="secondary" onClick={fetchMore} disabled={busy || !status?.has_profile}>
+        Check email
+      </Button>
+      <Button
+        variant="primary"
+        className="anim-pulse"
+        onClick={() => run(api.startHunt)}
+        disabled={busy || !status?.has_profile}
+      >
+        {status?.hunt_status === 'running' ? 'Hunting…' : 'Run a hunt'}
+      </Button>
+    </>
+  );
+
   return (
-    <main className="relative z-10 mx-auto min-h-screen max-w-7xl">
-      <Nav
-        right={
-          <>
-            <button
-              onClick={fetchMore}
-              disabled={busy || !status?.has_profile}
-              className="glass rounded-full px-4 py-2 text-sm font-medium transition hover:border-white/20 disabled:opacity-40"
-            >
-              Fetch more
-            </button>
-            <button
-              onClick={() => run(api.startHunt)}
-              disabled={busy || !status?.has_profile}
-              className="rounded-full bg-grad px-4 py-2 text-sm font-semibold text-bg shadow-glow disabled:opacity-40"
-            >
-              {status?.hunt_status === 'running' ? 'Hunting…' : 'Run hunt'}
-            </button>
-          </>
-        }
-      />
-
-      <SaveProgressBanner />
-
-      <div className="px-6 pb-10">
-        <motion.div
-          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="grid grid-cols-2 gap-3 sm:grid-cols-4"
-        >
-          <Stat label="Discovered" value={status?.jobs_count ?? 0} accent />
-          <Stat
-            label="Pending approval"
-            value={status?.approvals_pending ?? 0}
-            onClick={() => setShowApprovals((v) => !v)}
-          />
-          <Stat label="Applied" value={status?.applied_count ?? 0} />
-          <Stat label="Applied today" value={status?.applied_today ?? 0} />
-        </motion.div>
-
-        {fetchMsg && (
-          <p className={`mt-2 text-xs ${fetchMsg.warn ? 'text-warn' : 'text-muted'}`}>{fetchMsg.text}</p>
-        )}
-
-        {showApprovals && <ApprovalsPanel />}
-
-        <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="min-w-0 space-y-4">
-            <section className="glass rounded-xl2 p-4 shadow-card">
-              <h2 className="mb-3 text-sm font-semibold">Pipeline</h2>
-              <Kanban jobs={jobs} onSelect={setSelected} />
-            </section>
-            <SourcesPanel />
-          </div>
-
-          <div className="space-y-4">
-            <AutonomyPanel />
-            <div className="h-[460px]">
-              <ReasoningFeed />
-            </div>
-          </div>
+    <>
+      <Rail />
+      <div className="lg:pl-[220px]">
+        <div className="lg:hidden">
+          <Nav right={actions} />
         </div>
 
-        {!status?.has_profile && (
-          <div className="glass mt-4 rounded-xl2 p-5 text-center text-sm text-muted">
-            Build your profile first to start tailoring résumés →{' '}
-            <a href="/onboarding" className="text-accent">Onboarding</a>
-          </div>
-        )}
+        <main className="relative z-10 mx-auto min-h-screen max-w-7xl">
+          <SaveProgressBanner />
 
-        {!!status?.hunt_error && (
-          <div className="glass mt-4 rounded-xl2 p-5 text-center text-sm text-warn">
-            The last hunt failed: {status.hunt_error}
+          <div className="space-y-5 px-6 pb-10 pt-6">
+            <PageHead
+              kicker={`${new Date().toLocaleDateString(undefined, { weekday: 'long' })} · ${
+                status?.hunt_status === 'running' ? 'hunting now' : status?.hunt_status ?? 'idle'
+              }`}
+              title={greeting()}
+              subtitle={
+                <>
+                  {status?.approvals_pending
+                    ? `${status.approvals_pending} résumé${status.approvals_pending === 1 ? '' : 's'} waiting on your approval.`
+                    : 'All caught up — nothing waiting on you right now.'}
+                  {!!status?.approvals_pending && (
+                    <button
+                      type="button"
+                      onClick={() => setShowApprovals((v) => !v)}
+                      className="ml-2 font-semibold"
+                      style={{ color: 'var(--color-accent)' }}
+                    >
+                      Review now →
+                    </button>
+                  )}
+                </>
+              }
+              actions={<div className="hidden items-center gap-3 lg:flex">{actions}</div>}
+            />
+
+            <motion.div
+              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+              className="grid grid-cols-2 gap-3 sm:grid-cols-4"
+            >
+              <Stat label="Discovered" value={<AnimatedNumber value={status?.jobs_count ?? 0} />} />
+              <Stat
+                label="Vetted in"
+                value={<AnimatedNumber value={vettedCount} />}
+                note={`of ${status?.jobs_count ?? 0}`}
+              />
+              <Stat
+                label="Applied"
+                value={<AnimatedNumber value={status?.applied_count ?? 0} />}
+                note={status?.applied_today ? `+${status.applied_today} today` : undefined}
+                noteTone="good"
+              />
+              <Stat label="Interviews" value={<AnimatedNumber value={interviewCount} />} accent />
+            </motion.div>
+
+            {fetchMsg && (
+              <p className={`text-xs ${fetchMsg.warn ? 'text-warn' : 'text-muted'}`}>{fetchMsg.text}</p>
+            )}
+
+            {showApprovals && <ApprovalsPanel />}
+
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="min-w-0 space-y-4">
+                <Card elevation="sm">
+                  <SectionHead title="Pipeline" />
+                  <Kanban jobs={jobs} onSelect={setSelected} />
+                </Card>
+                <SourcesPanel />
+              </div>
+
+              <div className="space-y-4">
+                <AutonomyPanel />
+                <div className="h-[460px]">
+                  <ReasoningFeed />
+                </div>
+              </div>
+            </div>
+
+            {!status?.has_profile && (
+              <Card elevation="sm" className="text-center text-sm text-muted">
+                Build your profile first to start tailoring résumés →{' '}
+                <a href="/onboarding" style={{ color: 'var(--color-accent)' }}>Onboarding</a>
+              </Card>
+            )}
+
+            {!!status?.hunt_error && (
+              <Card elevation="sm" className="text-center text-sm text-warn">
+                The last hunt failed: {status.hunt_error}
+              </Card>
+            )}
           </div>
-        )}
+
+          <ResumePreview job={selected} onClose={() => setSelected(null)} />
+        </main>
       </div>
-
-      <ResumePreview job={selected} onClose={() => setSelected(null)} />
-    </main>
+    </>
   );
 }

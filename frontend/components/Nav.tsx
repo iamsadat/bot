@@ -2,7 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { Mark, Wordmark } from './Rail';
 
+// The small-screen top bar. Rail.tsx is the primary shell at lg+ (it renders
+// `hidden lg:flex`), so this is the mirror breakpoint: visible below lg only.
 const tabs = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/insights', label: 'Insights' },
@@ -13,22 +16,19 @@ const tabs = [
 export default function Nav({ right }: { right?: React.ReactNode }) {
   const path = usePathname();
   return (
-    <header className="relative z-20 flex items-center justify-between px-6 py-4">
-      <Link href="/" className="flex items-center gap-2 font-extrabold tracking-tight">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-grad text-bg">J</span>
-        <span>Job<span className="text-grad">Hunt</span></span>
+    <header
+      className="relative z-20 flex items-center justify-between gap-3 px-4 py-3 lg:hidden"
+      style={{ background: 'var(--color-surface)' }}
+    >
+      <Link href="/" className="flex items-center gap-2 no-underline" style={{ color: 'inherit' }}>
+        <Mark size={24} />
+        <Wordmark size={18} />
       </Link>
-      <nav className="glass hidden rounded-full p-1 sm:flex">
+      <nav className="hidden flex-1 items-center justify-center gap-1 sm:flex">
         {tabs.map((t) => {
           const active = path?.startsWith(t.href);
           return (
-            <Link
-              key={t.href}
-              href={t.href}
-              className={`rounded-full px-4 py-1.5 text-sm transition ${
-                active ? 'bg-grad text-bg font-semibold' : 'text-muted hover:text-ink'
-              }`}
-            >
+            <Link key={t.href} href={t.href} className="rail-link" aria-current={active ? 'page' : undefined}>
               {t.label}
             </Link>
           );

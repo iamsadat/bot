@@ -10,6 +10,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import Rail from '@/components/Rail';
+import { Button, Card, Input, Meter, PageHead, SectionHead } from '@/components/ui';
 import {
   billingStatus,
   getAdminPageviewStats,
@@ -37,11 +39,11 @@ function Section({ title, hint, children }: {
   title: string; hint?: string; children: React.ReactNode;
 }) {
   return (
-    <section className="glass rounded-xl2 p-4 shadow-card">
-      <h2 className="text-sm font-semibold">{title}</h2>
-      {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
-      <div className="mt-3">{children}</div>
-    </section>
+    <Card elevation="sm">
+      <SectionHead title={title} />
+      {hint && <p className="-mt-1.5 text-xs text-muted">{hint}</p>}
+      {children}
+    </Card>
   );
 }
 
@@ -51,9 +53,7 @@ function Bar({ label, count, total }: { label: string; count: number; total: num
   return (
     <div className="flex items-center gap-3 text-sm">
       <span className="w-28 shrink-0 text-muted">{label}</span>
-      <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
-        <div className="h-full rounded-full bg-grad" style={{ width: `${pct}%` }} />
-      </div>
+      <Meter value={pct / 100} className="flex-1" />
       <span className="w-16 shrink-0 text-right tabular-nums">
         {count} <span className="text-xs text-muted">({pct}%)</span>
       </span>
@@ -72,8 +72,8 @@ function DaySeries({ byDay }: { byDay: Record<string, number> }) {
         <div
           key={d}
           title={`${d}: ${byDay[d]}`}
-          className="min-w-[3px] flex-1 rounded-t bg-accent/60"
-          style={{ height: `${Math.max(4, (byDay[d] / peak) * 100)}%` }}
+          className="min-w-[3px] flex-1 rounded-t"
+          style={{ height: `${Math.max(4, (byDay[d] / peak) * 100)}%`, background: 'color-mix(in srgb, var(--color-accent) 60%, transparent)' }}
         />
       ))}
     </div>
@@ -82,14 +82,12 @@ function DaySeries({ byDay }: { byDay: Record<string, number> }) {
 
 function SurfaceCard({ label, stats }: { label: string; stats?: SurfaceStats }) {
   return (
-    <div className="glass rounded-xl2 p-4 shadow-card">
-      <div className="text-3xl font-extrabold tabular-nums text-ink">
-        {stats?.total ?? 0}
-      </div>
-      <div className="mt-1 text-xs text-muted">{label}</div>
-      <div className="mt-3"><DaySeries byDay={stats?.by_day ?? {}} /></div>
+    <Card elevation="sm">
+      <div style={{ fontFamily: 'var(--font-heading)', fontSize: 30 }}>{stats?.total ?? 0}</div>
+      <div className="text-xs text-muted">{label}</div>
+      <DaySeries byDay={stats?.by_day ?? {}} />
       {!!stats?.top_refs?.length && (
-        <ul className="mt-3 space-y-1 text-xs text-muted">
+        <ul className="space-y-1 text-xs text-muted">
           {stats.top_refs.slice(0, 5).map((r) => (
             <li key={r.ref} className="flex justify-between gap-2">
               <span className="truncate">/p/{r.ref}</span>
@@ -98,7 +96,7 @@ function SurfaceCard({ label, stats }: { label: string; stats?: SurfaceStats }) 
           ))}
         </ul>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -135,113 +133,110 @@ export default function Admin() {
 
   if (!authed) {
     return (
-      <main className="relative z-10 mx-auto grid min-h-screen max-w-md place-items-center px-6">
-        <div className="glass w-full rounded-xl2 p-5 shadow-card">
-          <h1 className="font-semibold">Validation dashboard</h1>
-          <p className="mt-1 text-xs text-muted">
-            Enter the admin token (server env <code>JOBHUNT_ADMIN_TOKEN</code>).
-          </p>
-          <form
-            className="mt-3 flex gap-2"
-            onSubmit={(e) => { e.preventDefault(); load(token); }}
-          >
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="admin token"
-              className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-ink"
-            />
-            <button
-              type="submit"
-              className="shrink-0 rounded-lg bg-grad px-4 py-2 text-sm font-semibold text-bg"
-            >
-              View
-            </button>
-          </form>
-          {error && <p className="mt-3 text-xs text-warn">{error}</p>}
+      <>
+        <Rail />
+        <div className="lg:pl-[220px]">
+          <main className="relative z-10 mx-auto grid min-h-screen max-w-md place-items-center px-6">
+            <Card elevation="sm" className="w-full">
+              <h1 className="font-semibold">Validation dashboard</h1>
+              <p className="-mt-1.5 text-xs text-muted">
+                Enter the admin token (server env <code>JOBHUNT_ADMIN_TOKEN</code>).
+              </p>
+              <form
+                className="flex gap-2"
+                onSubmit={(e) => { e.preventDefault(); load(token); }}
+              >
+                <Input
+                  type="password"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="admin token"
+                />
+                <Button variant="primary" type="submit" className="shrink-0">View</Button>
+              </form>
+              {error && <p className="text-xs text-warn">{error}</p>}
+            </Card>
+          </main>
         </div>
-      </main>
+      </>
     );
   }
 
   const total = waitlist?.total ?? 0;
 
   return (
-    <main className="relative z-10 mx-auto min-h-screen max-w-5xl px-6 py-8">
-      <header className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-extrabold tracking-tight">Validation dashboard</h1>
-          <p className="text-xs text-muted">
-            Is anyone showing up, and would any of them pay?
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => load(token)}
-            className="glass rounded-full px-4 py-1.5 text-sm text-muted hover:text-ink"
-          >
-            Refresh
-          </button>
-          <Link href="/" className="text-sm text-muted hover:text-ink">← Site</Link>
-        </div>
-      </header>
+    <>
+      <Rail />
+      <div className="lg:pl-[220px]">
+        <main className="relative z-10 mx-auto min-h-screen max-w-5xl px-6 py-8">
+          <PageHead
+            title="Validation dashboard"
+            subtitle="Is anyone showing up, and would any of them pay?"
+            actions={
+              <>
+                <Button variant="secondary" onClick={() => load(token)}>Refresh</Button>
+                <Link href="/" className="text-sm text-muted hover:text-ink">← Site</Link>
+              </>
+            }
+          />
 
-      <div className="space-y-4">
-        <Section
-          title="Waitlist — stated willingness to pay"
-          hint="What people picked when asked what they'd actually pay. A stated preference is not a sale, but zero signups is a clear answer."
-        >
-          <div className="mb-4 text-4xl font-extrabold tabular-nums text-grad">
-            {total}
-            <span className="ml-2 text-sm font-normal text-muted">
-              signup{total === 1 ? '' : 's'}
-            </span>
+          <div className="mt-4 space-y-4">
+            <Section
+              title="Waitlist — stated willingness to pay"
+              hint="What people picked when asked what they'd actually pay. A stated preference is not a sale, but zero signups is a clear answer."
+            >
+              <div className="text-4xl font-extrabold tabular-nums" style={{ color: 'var(--color-accent)' }}>
+                {total}
+                <span className="ml-2 text-sm font-normal text-muted">
+                  signup{total === 1 ? '' : 's'}
+                </span>
+              </div>
+              {total === 0 ? (
+                <p className="text-sm text-muted">
+                  Nobody has signed up yet. Until this moves, there's no pricing signal
+                  to act on — the next step is traffic, not more features.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {PRICE_LABELS.map((o) => (
+                    <Bar
+                      key={o.v}
+                      label={o.label}
+                      count={waitlist?.by_price_pref?.[o.v] ?? 0}
+                      total={total}
+                    />
+                  ))}
+                </div>
+              )}
+            </Section>
+
+            <Section
+              title="Top-of-funnel traffic"
+              hint="Coarse day-level counts only — no IPs, user agents, or precise timestamps are stored."
+            >
+              <div className="grid gap-3 sm:grid-cols-3">
+                {SURFACES.map((s) => (
+                  <SurfaceCard key={s.key} label={s.label} stats={pageviews?.[s.key]} />
+                ))}
+              </div>
+            </Section>
+
+            <Section title="Billing">
+              <p className="text-sm">
+                Stripe is{' '}
+                <span className={billing?.billing_configured ? 'text-good' : 'text-warn'}>
+                  {billing?.billing_configured ? 'configured' : 'not configured'}
+                </span>
+                .{' '}
+                <span className="text-muted">
+                  Checkout rails exist but no price is live — that decision waits on the
+                  numbers above.
+                </span>
+              </p>
+            </Section>
           </div>
-          {total === 0 ? (
-            <p className="text-sm text-muted">
-              Nobody has signed up yet. Until this moves, there's no pricing signal
-              to act on — the next step is traffic, not more features.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {PRICE_LABELS.map((o) => (
-                <Bar
-                  key={o.v}
-                  label={o.label}
-                  count={waitlist?.by_price_pref?.[o.v] ?? 0}
-                  total={total}
-                />
-              ))}
-            </div>
-          )}
-        </Section>
-
-        <Section
-          title="Top-of-funnel traffic"
-          hint="Coarse day-level counts only — no IPs, user agents, or precise timestamps are stored."
-        >
-          <div className="grid gap-3 sm:grid-cols-3">
-            {SURFACES.map((s) => (
-              <SurfaceCard key={s.key} label={s.label} stats={pageviews?.[s.key]} />
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Billing">
-          <p className="text-sm">
-            Stripe is{' '}
-            <span className={billing?.billing_configured ? 'text-good' : 'text-warn'}>
-              {billing?.billing_configured ? 'configured' : 'not configured'}
-            </span>
-            .{' '}
-            <span className="text-muted">
-              Checkout rails exist but no price is live — that decision waits on the
-              numbers above.
-            </span>
-          </p>
-        </Section>
+        </main>
       </div>
-    </main>
+    </>
   );
 }

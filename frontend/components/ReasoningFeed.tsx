@@ -4,26 +4,19 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { api, ActivityEvent } from '@/lib/api';
 import { useReasoningStream } from '@/lib/useLive';
+import { Tag } from './ui';
 
-const phaseColor: Record<string, string> = {
-  deliberate: 'text-accent',
-  act: 'text-ink',
-  critique: 'text-warn',
-  decide: 'text-good',
-};
+// ponytail: the backend sends `decision` as free text, not a signed outcome —
+// a reject/refuse keyword is the cheapest honest way to pick the accent vs
+// olive conclusion colour the mock calls for without inventing a new field.
+function decisionTone(decision: string): string {
+  return /reject|refus/i.test(decision) ? 'var(--color-accent-700)' : 'var(--color-accent-2-700)';
+}
 
-function Confidence({ v }: { v: number }) {
-  return (
-    <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-muted">
-      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-white/10">
-        <span
-          className="block h-full rounded-full bg-grad"
-          style={{ width: `${Math.round(v * 100)}%` }}
-        />
-      </span>
-      {Math.round(v * 100)}%
-    </span>
-  );
+// ponytail: no "which colour" signal exists per event either; alternating by
+// index gives the same visual variety the mock has without faking meaning.
+function dotColor(i: number): string {
+  return i % 2 === 0 ? 'var(--color-accent)' : 'var(--color-accent-2)';
 }
 
 export default function ReasoningFeed() {
@@ -36,15 +29,16 @@ export default function ReasoningFeed() {
 
   const events = [...liveEvents, ...history];
   return (
-    <div className="glass flex h-full flex-col rounded-xl2 shadow-card">
-      <div className="flex items-center gap-2 border-b border-white/5 px-4 py-3">
-        <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-good" />
-        </span>
-        <h3 className="text-sm font-semibold">Live agent reasoning</h3>
+    <div className="flex h-full flex-col gap-2.5">
+      <div className="flex items-baseline gap-2 px-1">
+        <h4 className="m-0 text-[16px]">Reasoning stream</h4>
+        <span
+          className="anim-blink h-[7px] w-[7px] rounded-full"
+          style={{ background: 'var(--color-accent)' }}
+        />
+        <span className="ml-auto text-[11px] text-muted">live</span>
       </div>
-      <div className="flex-1 space-y-2 overflow-y-auto p-3">
+      <div className="flex-1 space-y-2 overflow-y-auto">
         {events.length === 0 && (
           <p className="px-2 py-8 text-center text-xs text-muted">
             Run a hunt to watch the agents think…
@@ -58,36 +52,38 @@ export default function ReasoningFeed() {
               animate={{ opacity: 1, x: 0, height: 'auto' }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.25 }}
-              className="rounded-lg border border-white/5 bg-white/[0.02] p-2.5"
+              className="rounded-[24px] p-4"
+              style={{ background: 'var(--color-surface)' }}
             >
-              <div className="flex items-center gap-2 text-[11px]">
-                <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-muted">
-                  {e.agent}
-                </span>
-                {e.phase && (
-                  <span className={`font-medium ${phaseColor[e.phase] || 'text-muted'}`}>
-                    {e.phase}
+              <div className="mb-1.5 flex flex-nowrap items-center gap-2">
+                <span
+                  className="h-[17px] w-[17px] flex-none rounded-full"
+                  style={{ background: dotColor(i) }}
+                />
+                <span className="whitespace-nowrap text-[12px] font-bold">{e.agent}</span>
+                {typeof e.confidence === 'number' && (
+                  <span className="ml-auto whitespace-nowrap text-[11px] text-muted">
+                    confidence {e.confidence.toFixed(2)}
                   </span>
                 )}
-                {typeof e.confidence === 'number' && <Confidence v={e.confidence} />}
               </div>
-              <p className="mt-1 text-[13px] leading-snug text-ink/90">{e.thought}</p>
+              <p className="text-[13px] leading-[1.5]">{e.thought}</p>
+              {e.decision && (
+                <p className="mt-1.5 text-[11.5px]" style={{ color: decisionTone(e.decision) }}>
+                  {e.decision}
+                </p>
+              )}
               {!!e.considered?.length && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {e.considered.slice(0, 6).map((c) => (
-                    <span
-                      key={c}
-                      className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent"
-                    >
-                      {c}
-                    </span>
+                    <Tag key={c} tone="accent">{c}</Tag>
                   ))}
                 </div>
               )}
               {!!e.rejected?.length && (
                 <ul className="mt-1.5 space-y-0.5">
                   {e.rejected.slice(0, 4).map((r, j) => (
-                    <li key={j} className="text-[11px] text-bad/80">
+                    <li key={j} className="text-[11px]" style={{ color: 'var(--color-accent-700)' }}>
                       ✕ {r.item} <span className="text-muted">— {r.reason}</span>
                     </li>
                   ))}

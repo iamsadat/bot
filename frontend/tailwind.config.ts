@@ -8,27 +8,28 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        bg: '#06070d',
-        surface: 'rgba(255,255,255,0.03)',
-        ink: '#e7e9f3',
-        muted: '#8c92a8',
-        accent: '#6ea8fe',
-        accent2: '#a78bfa',
-        good: '#22d3a8',
-        warn: '#fbbf24',
-        bad: '#f87171',
+        bg: '#f5ead8',
+        surface: '#ebddc5',
+        ink: '#201e1d',
+        muted: '#82796a',
+        accent: '#c67139',
+        accent2: '#7a8a5e',
+        good: '#56633f',
+        warn: '#d67f48',
+        bad: '#8c491a',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Figtree', 'system-ui', 'sans-serif'],
+        display: ['Caprasimo', 'system-ui', 'serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
-      borderRadius: { xl2: '1.25rem' },
+      borderRadius: { xl2: '32px' },
       boxShadow: {
-        glow: '0 0 0 1px rgba(110,168,254,0.15), 0 20px 60px -20px rgba(110,168,254,0.35)',
-        card: 'inset 0 1px 0 rgba(255,255,255,0.06), 0 18px 40px -24px rgba(0,0,0,0.8)',
+        glow: '0 12px 32px rgba(46,43,37,0.22)',
+        card: '0 3px 10px rgba(46,43,37,0.16)',
       },
       backgroundImage: {
-        grad: 'linear-gradient(135deg, #6ea8fe 0%, #a78bfa 100%)',
+        grad: 'linear-gradient(135deg, #c67139 0%, #b2622d 100%)',
       },
       keyframes: {
         shimmer: { '100%': { transform: 'translateX(100%)' } },

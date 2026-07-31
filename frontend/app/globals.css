@@ -2,15 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import './grove.css';
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 html, body {
-  background: #06070d;
-  color: #e7e9f3;
+  background: var(--color-bg);
+  color: var(--color-text);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -20,26 +20,20 @@ html, body {
   position: fixed;
   inset: -20% -10% auto -10%;
   height: 70vh;
-  background:
-    radial-gradient(40% 50% at 20% 10%, rgba(110, 168, 254, 0.22), transparent 70%),
-    radial-gradient(45% 55% at 85% 0%, rgba(167, 139, 250, 0.20), transparent 70%);
+  background: radial-gradient(50% 60% at 20% 0%, rgba(198,113,57,0.10), transparent 70%);
   filter: blur(40px);
   pointer-events: none;
   z-index: 0;
 }
 
 .glass {
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(18px) saturate(140%);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
 }
 
 .text-grad {
-  background: linear-gradient(135deg, #6ea8fe 0%, #a78bfa 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--color-accent);
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; }
+::-webkit-scrollbar-thumb { background: var(--color-neutral-400); border-radius: 8px; }

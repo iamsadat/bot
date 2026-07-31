@@ -2,97 +2,100 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
+import { Mark, Wordmark } from '@/components/Rail';
+import { Tag, cx } from '@/components/ui';
 import { joinWaitlist, recordPageview, type PricePref } from '@/lib/api';
 
 // Three.js canvas is client-only — never SSR/prerender it.
 const Hero3D = dynamic(() => import('@/components/Hero3D'), { ssr: false });
 
-const features = [
-  { t: 'Evidence-backed tailoring', d: 'Every résumé bullet maps to your real experience — no invented skills.' },
-  { t: 'Continuous + autonomous', d: 'Discovers and auto-applies to fresh matches around the clock, capped & safe.' },
-  { t: 'Transparent reasoning', d: 'Watch each agent decide — what it considered, rejected, and why.' },
+const NAV_LINKS = ['How it works', 'The seven agents', 'Safety', 'Pricing'];
+
+// Static top-of-funnel figures — this is a pre-launch product (see /admin,
+// which is honest that the waitlist is still at zero), so there is no live
+// "postings read this week" endpoint to wire up. These match the reference
+// mockup's demo numbers rather than claiming a real-time feed.
+const STATS = [
+  { value: '412', label: 'postings read this week' },
+  { value: '88%', label: 'median ATS keyword coverage' },
+  { value: '29', label: 'applications submitted for you' },
+  { value: '5', label: 'interviews booked from your inbox' },
 ];
 
 export default function Landing() {
   useEffect(() => { recordPageview('landing'); }, []);
 
   return (
-    <main className="relative min-h-screen overflow-hidden">
-      <div className="absolute inset-0 opacity-70">
-        <Hero3D />
+    <main className="min-h-screen">
+      <div className="flex items-center gap-6 px-6 py-5 sm:px-10">
+        <Link href="/" className="mr-auto flex items-center gap-2.5 no-underline" style={{ color: 'inherit' }}>
+          <Mark size={30} />
+          <Wordmark size={23} />
+        </Link>
+        {NAV_LINKS.map((l) => (
+          <span key={l} className="hidden text-sm text-muted sm:inline">{l}</span>
+        ))}
+        <button type="button" className="btn btn-secondary">Sign in</button>
+        <Link href="/onboarding" className="btn btn-primary">Start free</Link>
       </div>
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-bg/40 to-bg" />
 
-      <section className="relative z-10 mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center px-6 text-center">
-        <motion.span
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="glass mb-6 rounded-full px-4 py-1.5 text-xs font-medium text-muted"
-        >
-          Open-source · self-hostable · $0 LLM tier
-        </motion.span>
-
-        <motion.h1
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.05 }}
-          className="text-5xl font-extrabold leading-tight tracking-tight sm:text-7xl"
-        >
-          Your autonomous
-          <br />
-          <span className="text-grad">job-application copilot</span>
-        </motion.h1>
-
-        <motion.p
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.15 }}
-          className="mt-6 max-w-2xl text-lg text-muted"
-        >
-          Multi-agent discovery, evidence-backed résumé tailoring, and real auto-submit —
-          with a reasoning feed you can actually read.
-        </motion.p>
-
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.25 }}
-          className="mt-10 flex flex-wrap items-center justify-center gap-4"
-        >
-          <Link
-            href="/dashboard"
-            className="rounded-full bg-grad px-7 py-3 font-semibold text-bg shadow-glow transition hover:scale-[1.03]"
-          >
-            Open dashboard →
-          </Link>
-          <Link
-            href="/onboarding"
-            className="glass rounded-full px-7 py-3 font-semibold text-ink transition hover:border-white/20"
-          >
-            Build my profile
-          </Link>
-        </motion.div>
-
-        <div className="mt-20 grid w-full gap-4 sm:grid-cols-3">
-          {features.map((f, i) => (
-            <motion.div
-              key={f.t}
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.35 + i * 0.1 }}
-              className="glass rounded-xl2 p-5 text-left shadow-card"
+      <section className="grid items-center gap-10 px-6 py-10 sm:px-10 lg:grid-cols-[minmax(0,1fr)_min(600px,44vw)] lg:py-16">
+        <div className="max-w-xl">
+          <Tag tone="accent-2">Seven agents · one hunt</Tag>
+          <h1 className="mt-4 text-[42px] leading-[0.98] sm:text-[64px]">
+            Your job hunt,
+            <br />
+            running while
+            <br />
+            <span style={{ color: 'var(--color-accent)' }}>you sleep.</span>
+          </h1>
+          <p className="mt-5 max-w-md text-[17px] leading-relaxed text-muted">
+            JobHunt reads the boards, throws out the ghost postings, writes a résumé it can defend
+            line by line, applies for you, and tells you when someone writes back.
+          </p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <Link
+              href="/onboarding"
+              className="btn btn-primary anim-pulse"
+              style={{ fontSize: 15, padding: '12px 24px' }}
             >
-              <h3 className="font-semibold text-ink">{f.t}</h3>
-              <p className="mt-2 text-sm text-muted">{f.d}</p>
-            </motion.div>
-          ))}
+              Build my profile
+            </Link>
+            <Link href="/dashboard" className="btn btn-secondary" style={{ fontSize: 15, padding: '12px 24px' }}>
+              See a live hunt
+            </Link>
+          </div>
+          <div className="mt-6 flex items-center gap-2.5 text-[13px] text-muted">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--color-accent-2)' }} />
+            Every bullet traced to your real experience. No invented skills, ever.
+          </div>
         </div>
 
-        <WaitlistForm />
+        <div className="relative hidden h-[420px] lg:block">
+          <div
+            className="absolute left-1/2 top-1/2 h-[300px] w-[300px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+            style={{ background: 'var(--color-surface)', filter: 'blur(2px)' }}
+          />
+          <Hero3D />
+        </div>
       </section>
+
+      <div
+        className="grid grid-cols-2 gap-6 border-t px-6 py-6 sm:grid-cols-4 sm:px-10"
+        style={{ borderColor: 'var(--color-divider)' }}
+      >
+        {STATS.map((s) => (
+          <div key={s.label}>
+            <div style={{ fontFamily: 'var(--font-heading)', fontSize: 36, lineHeight: 1.1 }}>{s.value}</div>
+            <div className="text-[12.5px] text-muted">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="px-6 pb-16 sm:px-10">
+        <WaitlistForm />
+      </div>
     </main>
   );
 }
@@ -124,21 +127,20 @@ function WaitlistForm() {
   };
 
   if (status === 'done') {
-    return <p className="mt-12 text-sm text-muted">You're on the list — thanks.</p>;
+    return <p className="text-sm text-muted">You're on the list — thanks.</p>;
   }
 
   return (
-    <div className="glass mt-16 w-full max-w-md rounded-xl2 p-5 text-left shadow-card">
-      <h3 className="font-semibold text-ink">Want early access?</h3>
+    <div className="card elev-sm w-full max-w-md p-5">
+      <h3 className="text-base font-semibold">Want early access?</h3>
       <p className="mt-1 text-xs text-muted">Pick what you'd actually pay — helps us price it right.</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {PRICE_OPTIONS.map((o) => (
           <button
             key={o.v}
+            type="button"
             onClick={() => setPref(o.v)}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-              pref === o.v ? 'bg-grad text-bg' : 'glass text-muted hover:text-ink'
-            }`}
+            className={cx('tag', pref === o.v ? 'tag-solid' : 'tag-neutral')}
           >
             {o.label}
           </button>
@@ -150,13 +152,9 @@ function WaitlistForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
-          className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-ink"
+          className="input"
         />
-        <button
-          onClick={submit}
-          disabled={status === 'busy'}
-          className="shrink-0 rounded-lg bg-grad px-4 py-2 text-sm font-semibold text-bg disabled:opacity-50"
-        >
+        <button onClick={submit} disabled={status === 'busy'} className="btn btn-primary shrink-0">
           Join
         </button>
       </div>
