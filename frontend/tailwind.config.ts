@@ -19,8 +19,8 @@ const config: Config = {
         bad: '#8c491a',
       },
       fontFamily: {
-        sans: ['Figtree', 'system-ui', 'sans-serif'],
-        display: ['Caprasimo', 'system-ui', 'serif'],
+        sans: ['var(--font-body-src)', 'system-ui', 'sans-serif'],
+        display: ['var(--font-heading-src)', 'system-ui', 'serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
       borderRadius: { xl2: '32px' },

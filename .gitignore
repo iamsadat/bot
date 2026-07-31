@@ -19,3 +19,6 @@ jobhunt.db
 *.db
 # tracker preview throwaways
 jobhunt/tracker/_preview_*.png
+
+# serena mcp local project config
+.serena/

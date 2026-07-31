@@ -8,8 +8,6 @@
    components/ui are thin wrappers over these classes, not reimplementations.
    ───────────────────────────────────────────────────────────────────────── */
 
-@import url('https://fonts.googleapis.com/css2?family=Caprasimo:wght@400&family=Figtree:wght@400;600;700&display=swap');
-
 :root {
   color-scheme: light;
 
@@ -52,9 +50,10 @@
   --color-accent-2-800: #3d472b;
   --color-accent-2-900: #272e1b;
 
-  --font-heading: 'Caprasimo', system-ui, sans-serif;
+  /* next/font sets --font-*-src in layout.tsx; the literals are the fallback. */
+  --font-heading: var(--font-heading-src, 'Caprasimo'), system-ui, sans-serif;
   --font-heading-weight: 400;
-  --font-body: 'Figtree', system-ui, sans-serif;
+  --font-body: var(--font-body-src, 'Figtree'), system-ui, sans-serif;
 
   --space-1: 4.4px;
   --space-2: 8.8px;

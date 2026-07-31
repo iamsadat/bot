@@ -12,8 +12,6 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-import { cx } from './ui';
-
 export function Mark({ size = 28 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 26 26" fill="none" aria-hidden>
@@ -42,13 +40,7 @@ const links = [
   { href: '/tools/ats-score', label: 'ATS score' },
 ];
 
-export type AutonomySummary = {
-  label: string;
-  note: string;
-  on: boolean;
-};
-
-export default function Rail({ autonomy }: { autonomy?: AutonomySummary }) {
+export default function Rail() {
   const path = usePathname();
 
   return (
@@ -77,43 +69,6 @@ export default function Rail({ autonomy }: { autonomy?: AutonomySummary }) {
           );
         })}
       </nav>
-
-      {autonomy ? (
-        <div
-          className="mt-auto flex flex-col gap-2.5 rounded-[26px] p-4 elev-sm"
-          style={{ background: 'var(--color-bg)' }}
-        >
-          <div
-            className="text-[10px] uppercase tracking-[0.1em]"
-            style={{ color: 'var(--color-accent)' }}
-          >
-            Autonomy
-          </div>
-          <div
-            className="text-[17px] leading-[1.15]"
-            style={{ fontFamily: 'var(--font-heading)' }}
-          >
-            {autonomy.label}
-          </div>
-          <div className="text-[11.5px] leading-[1.4]" style={{ color: 'var(--color-neutral-600)' }}>
-            {autonomy.note}
-          </div>
-          <div
-            className={cx('relative h-[25px] w-[46px] rounded-full transition-colors')}
-            style={{
-              background: autonomy.on ? 'var(--color-accent-2)' : 'var(--color-neutral-400)',
-            }}
-          >
-            <div
-              className="absolute top-[3px] h-[19px] w-[19px] rounded-full transition-all"
-              style={{
-                left: autonomy.on ? 24 : 3,
-                background: 'var(--color-bg)',
-              }}
-            />
-          </div>
-        </div>
-      ) : null}
     </aside>
   );
 }
