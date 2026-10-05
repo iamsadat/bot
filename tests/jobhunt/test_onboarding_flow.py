@@ -108,3 +108,48 @@ def test_sources_endpoint_discloses_which_boards_are_being_searched(monkeypatch)
 
     client.post("/api/onboarding/ats", json={"greenhouse_tokens": ["acme"]})
     assert client.get("/api/sources").json()["seeded_boards"] is False
+
+
+TEMPLATE_RESUME = """P. SADATULLAH KHAN
+DATA ENGINEER
+Hyderabad, India  |  [Phone]  |  [Email]  |  [LinkedIn]
+EXPERIENCE
+Junior Data Engineer  |  [Company Name]  |  Feb 2026 – Present
+• Built PySpark pipelines on Databricks.
+SELECTED PROJECT
+Real-Time Crypto Platform  |  Kafka, PySpark, Docker
+• Streamed market data through Kafka.
+OPEN SOURCE & PROBLEM SOLVING
+Contributed to 4 open-source organizations.
+EDUCATION
+Bachelor's Degree in Information Technology  |  [University Name]
+"""
+
+
+def test_template_placeholders_are_blanked_and_named():
+    """A résumé still holding "[Company Name]" would put exactly that into
+    every tailored résumé and application."""
+    from jobhunt.onboarding import parse_resume_text
+    r = parse_resume_text(TEMPLATE_RESUME)
+    assert {"Phone", "Email", "Company Name", "University Name"} <= set(r["placeholders"])
+    assert r["experiences"][0]["company"] == ""
+    assert "[" not in r["education"][0]["school"]
+    assert r["contact"]["name"] == "P. Sadatullah Khan"
+    assert r["inferred_titles"][0] == "Data Engineer"
+
+
+def test_project_stack_and_achievements_are_not_projects():
+    from jobhunt.onboarding import parse_resume_text
+    r = parse_resume_text(TEMPLATE_RESUME)
+    assert [p["name"] for p in r["projects"]] == ["Real-Time Crypto Platform"]
+    assert r["projects"][0]["skills"] == ["kafka", "pyspark", "docker"]
+    assert r["achievements"] == ["Contributed to 4 open-source organizations."]
+
+
+def test_an_unsaved_upload_is_restored_on_return():
+    """Leaving onboarding without saving looped back to an empty form."""
+    _, client = _client()
+    client.post("/api/onboarding/resume", json={"text": TEMPLATE_RESUME})
+    body = client.get("/api/profile").json()
+    assert body["profile"] is None
+    assert body["pending_parse"]["contact"]["name"] == "P. Sadatullah Khan"

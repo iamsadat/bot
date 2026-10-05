@@ -92,7 +92,7 @@ export const api = {
   autonomy: () => req<Autonomy>('GET', '/api/autonomy'),
   setAutonomy: (b: Partial<Autonomy>) => req<any>('POST', '/api/autonomy', b),
   document: (jobId: string) => req<{ document: Doc }>('GET', `/api/documents/${jobId}`),
-  profile: () => req<{ profile: Profile | null; ats_config?: AtsConfig }>('GET', '/api/profile'),
+  profile: () => req<{ profile: Profile | null; ats_config?: AtsConfig; pending_parse?: any }>('GET', '/api/profile'),
   parseResume: (text: string) => req<ParsedResume>('POST', '/api/onboarding/resume', { text }),
   parseResumeFile: (filename: string, content_base64: string) =>
     req<ParsedResume>('POST', '/api/profile/parse-resume-file', { filename, content_base64 }),
@@ -146,7 +146,21 @@ export const api = {
   requestMagicLink: (email: string) =>
     req<{ sent: boolean; dev_link?: string }>('POST', '/api/auth/request-link', { email }),
   authStatus: () => req<{ linked_email: string | null }>('GET', '/api/auth/status'),
+  // --- in-app assistant: stateless chat; the client sends its own history ---
+  assistantChat: (messages: ChatMessage[], confirm?: AssistantAction[]) =>
+    req<AssistantResponse>('POST', '/api/assistant/chat', confirm ? { messages, confirm } : { messages }),
 };
+
+export interface ChatMessage { role: 'user' | 'assistant'; content: string }
+// An action the assistant proposed. `summary` is set on pending ones; send the
+// object back unchanged in `confirm` to run it.
+export interface AssistantAction { name: string; args: Record<string, unknown>; summary?: string }
+export interface AssistantApplied { action: string; ok: boolean; detail: string }
+export interface AssistantResponse {
+  reply: string; applied: AssistantApplied[]; pending: AssistantAction[];
+  // Whether a model wrote the reply (false: no model set up, or a confirm round).
+  llm: boolean;
+}
 
 // Fire-and-forget pageview beacon for the no-auth top-of-funnel surfaces
 // (landing page, ATS tool). Never throws — a failed beacon must never break

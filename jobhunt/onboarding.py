@@ -84,6 +84,8 @@ def parse_resume_text(text: str) -> dict[str, Any]:
     seen: set[str] = set()
     for m in _TITLE_RE.finditer(text):
         t = " ".join(m.group().split())  # normalise whitespace
+        if t.isupper():
+            t = t.title()  # a "DATA ENGINEER" header line
         if t and t.lower() not in seen:
             titles.append(t)
             seen.add(t.lower())
@@ -94,6 +96,7 @@ def parse_resume_text(text: str) -> dict[str, Any]:
     }
     # Structured sections are best-effort; never let a parse failure drop the
     # primary keys above (the offline test suite depends on them).
+    result["contact"] = contact_from_text(text)
     try:
         result.update(_parse_sections(text))
     except Exception:  # pragma: no cover - defensive
@@ -119,6 +122,10 @@ def parse_resume_text(text: str) -> dict[str, Any]:
     result["skills"] = sorted(merged_skills)
 
     result["experience_years"] = _experience_years(text, result["experiences"])
+    scrub_placeholders(result)
+    # Named from the whole text: the header's "[Phone] | [Email]" is in no field.
+    result["placeholders"] = list(dict.fromkeys(
+        m.group(1).strip() for m in _PLACEHOLDER_RE.finditer(text)))
     return result
 
 
@@ -240,6 +247,12 @@ _SECTION_WORDS: dict[str, frozenset[str]] = {
     "summary": frozenset({
         "summary", "professional", "profile", "objective", "about", "overview",
     }),
+    # Not projects: "Open Source & Problem Solving" was parsed as one.
+    "achievements": frozenset({
+        "achievements", "awards", "honors", "honours", "certifications",
+        "certificates", "publications", "activities", "extracurricular",
+        "open", "source", "problem", "solving", "and", "leadership", "key",
+    }),
 }
 
 # A heading must contain at least one of these, so a bullet like "Selected the
@@ -250,6 +263,10 @@ _SECTION_ANCHORS: dict[str, frozenset[str]] = {
     "projects": frozenset({"projects", "project", "portfolio"}),
     "skills": frozenset({"skills", "skill", "technologies", "technology", "competencies", "expertise", "stack"}),
     "summary": frozenset({"summary", "profile", "objective", "overview", "about"}),
+    "achievements": frozenset({
+        "achievements", "awards", "honors", "honours", "certifications",
+        "certificates", "publications", "activities", "extracurricular", "open",
+    }),
 }
 _DATE_RANGE_RE = re.compile(
     r"((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s*)?"
@@ -566,6 +583,13 @@ def _parse_projects_block(lines: list[str]) -> list[dict[str, Any]]:
 
         # A project name is short and label-like. Prose — long, or ending in a
         # full stop — describes the project above it.
+        # "Name  |  Kafka, PySpark, Docker": the part after a bar is the
+        # project's stack, not part of its name.
+        stack: list[str] = []
+        if "|" in body:
+            body, _, stack_text = body.partition("|")
+            body = body.strip()
+            stack = [t.strip().lower() for t in re.split(r"[,;/]", stack_text) if t.strip()]
         pieces = re.split(r"\s*[—–]\s*|\s+-\s+", body, maxsplit=1)
         name_part = pieces[0].strip()
         tail = pieces[1].strip() if len(pieces) > 1 else ""
@@ -577,7 +601,7 @@ def _parse_projects_block(lines: list[str]) -> list[dict[str, Any]]:
             if current is not None:
                 entries.append(current)
             current = {"name": name_part, "description": tail, "bullets": [],
-                       "link": link, "skills": []}
+                       "link": link, "skills": stack}
         else:
             current["description"] = f"{current['description']} {body}".strip()
             current["link"] = current["link"] or link
@@ -599,6 +623,10 @@ def _parse_sections(text: str) -> dict[str, Any]:
     if sections.get("projects"):
         out["projects"] = _parse_projects_block(sections["projects"])
     out["section_skills"] = _parse_skills_block(sections.get("skills") or [])
+    out["achievements"] = [
+        _BULLET_PREFIX_RE.sub("", ln).strip() for ln in sections.get("achievements") or []
+        if _BULLET_PREFIX_RE.sub("", ln).strip()
+    ]
     return out
 
 
@@ -701,3 +729,54 @@ def build_user_profile(form: dict[str, Any]) -> UserProfile:
         daily_apply_cap=int(form.get("daily_apply_cap", 0)),
         relevance_floor=float(form.get("relevance_floor", 0.0)),
     )
+
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s-]?)?(?:\d[\s-]?){9,11}\d")
+# Template blanks left in a résumé: "[Company Name]", "[Email]", "<Phone>".
+_PLACEHOLDER_RE = re.compile(r"[\[<]\s*([A-Za-z][A-Za-z ./&-]{1,30}?)\s*[\]>]")
+
+
+def contact_from_text(text: str) -> dict[str, str]:
+    """Name, email and phone from résumé text; the section parser skips the
+    header they live in."""
+    email = _EMAIL_RE.search(text)
+    phone = _PHONE_RE.search(text)
+    name = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,60}", line) and len(line.split()) <= 5:
+            name = line.title() if line.isupper() else line
+        break
+    return {
+        "name": name,
+        "email": email.group().lower() if email else "",
+        "phone": " ".join(phone.group().split()) if phone else "",
+    }
+
+
+def scrub_placeholders(result: dict[str, Any]) -> list[str]:
+    """Blank template placeholders out of a parse result, and name them.
+
+    A résumé still holding "[Company Name]" would put exactly that into every
+    tailored résumé and application form.
+    """
+    found: list[str] = []
+
+    def clean(value: Any) -> Any:
+        if isinstance(value, str):
+            for m in _PLACEHOLDER_RE.finditer(value):
+                found.append(m.group(1).strip())
+            return " ".join(_PLACEHOLDER_RE.sub("", value).split()).strip(" |,–—-")
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items()}
+        return value
+
+    for key in ("experiences", "education", "projects", "contact", "links"):
+        if key in result:
+            result[key] = clean(result[key])
+    return list(dict.fromkeys(found))

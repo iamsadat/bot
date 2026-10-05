@@ -12,7 +12,6 @@ Set ``JOBHUNT_PERSONAL=1`` to get the same behaviour from the ASGI entrypoint
 from __future__ import annotations
 
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -84,28 +83,7 @@ def display_available() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-_PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s-]?)?(?:\d[\s-]?){9,11}\d")
-
-
-def contact_from_text(text: str) -> dict[str, str]:
-    """Name, email and phone from résumé text — the parser skips the header."""
-    email = _EMAIL_RE.search(text)
-    phone = _PHONE_RE.search(text)
-    name = ""
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # The first line that reads as a name: letters only, a few words.
-        if re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,60}", line) and len(line.split()) <= 5:
-            name = line.title() if line.isupper() else line
-        break
-    return {
-        "name": name,
-        "email": email.group().lower() if email else "",
-        "phone": " ".join(phone.group().split()) if phone else "",
-    }
+from jobhunt.onboarding import contact_from_text  # noqa: E402,F401  (re-exported)
 
 
 def _split(value: str) -> list[str]:
