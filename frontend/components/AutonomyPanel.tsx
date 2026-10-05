@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { api, Autonomy } from '@/lib/api';
 import { Card, CardKicker, Field, Input } from './ui';
 
@@ -27,7 +28,14 @@ export default function AutonomyPanel() {
 
   const label = a.auto_apply ? 'Auto-apply' : 'Co-pilot';
   const note = !a.ats_connected
-    ? 'Connect an ATS to enable auto-apply.'
+    ? (
+      <>
+        <Link href="/onboarding#boards" style={{ color: 'var(--color-accent)' }}>
+          Connect an ATS
+        </Link>{' '}
+        to enable auto-apply.
+      </>
+    )
     : a.auto_apply
       ? 'Submits matches automatically.'
       : 'Fills the form, leaves the final submit to you.';

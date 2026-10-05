@@ -13,10 +13,25 @@ function decisionTone(decision: string): string {
   return /reject|refus/i.test(decision) ? 'var(--color-accent-700)' : 'var(--color-accent-2-700)';
 }
 
-// ponytail: no "which colour" signal exists per event either; alternating by
-// index gives the same visual variety the mock has without faking meaning.
-function dotColor(i: number): string {
-  return i % 2 === 0 ? 'var(--color-accent)' : 'var(--color-accent-2)';
+// Stable colour per agent: accent for agents that find/act, accent-2 for those
+// that judge/follow up, neutral for coordinators; anything else falls back.
+const AGENT_COLOR: Record<string, string> = {
+  discovery: 'var(--color-accent)',
+  resume: 'var(--color-accent)',
+  submission: 'var(--color-accent)',
+  approval: 'var(--color-accent)',
+  autonomy: 'var(--color-accent)',
+  vetting: 'var(--color-accent-2)',
+  peer_critique: 'var(--color-accent-2)',
+  tracking: 'var(--color-accent-2)',
+  inbox: 'var(--color-accent-2)',
+  improvement: 'var(--color-accent-2)',
+  orchestrator: 'var(--color-neutral-600)',
+  strategy: 'var(--color-neutral-600)',
+};
+
+function dotColor(agent: string): string {
+  return AGENT_COLOR[agent] ?? 'var(--color-neutral-400)';
 }
 
 export default function ReasoningFeed() {
@@ -58,7 +73,7 @@ export default function ReasoningFeed() {
               <div className="mb-1.5 flex flex-nowrap items-center gap-2">
                 <span
                   className="h-[17px] w-[17px] flex-none rounded-full"
-                  style={{ background: dotColor(i) }}
+                  style={{ background: dotColor(e.agent) }}
                 />
                 <span className="whitespace-nowrap text-[12px] font-bold">{e.agent}</span>
                 {typeof e.confidence === 'number' && (
