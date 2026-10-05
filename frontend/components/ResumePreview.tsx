@@ -59,7 +59,16 @@ function ResumeDoc({ d }: { d: ResumeDraft }) {
             >
               {s.title}
             </h2>
-            {s.kind === 'skills' && s.body && <p className="text-[9.5px] text-muted">{s.body}</p>}
+            {s.kind === 'skills' && s.body && s.body.split('\n').filter(Boolean).map((line, k) => {
+              const at = line.indexOf(': ');
+              const label = at > 0 && at <= 32 ? line.slice(0, at) : '';
+              return (
+                <p key={k} className="text-[9.5px] leading-[1.5]">
+                  {label && <span className="font-bold">{label}: </span>}
+                  <span className="text-muted">{label ? line.slice(at + 2) : line}</span>
+                </p>
+              );
+            })}
             {s.body && s.kind !== 'skills' && <p className="text-[9.5px] leading-[1.5]">{s.body}</p>}
             {(s.rows || []).map((r, j) => (
               <div key={j} className="mt-2.5 first:mt-0">

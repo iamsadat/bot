@@ -21,21 +21,47 @@ from jobhunt.llm.grounding import (
 
 
 _BULLET_SYSTEM = """\
-You rewrite resume bullets for ATS clarity and impact.
+You lightly edit resume bullets so they read crisply to a recruiter.
 Rules:
-- One sentence, ≤ 22 words.
-- Keep every factual claim from the draft — do NOT invent metrics or employers.
-- Lead with a strong action verb; weave in the ATS keyword naturally.
-- Tailor the emphasis to the target role/company when provided.
-- Return only the rewritten bullet, no preamble, no surrounding quotes."""
+- Keep every fact, number, tool and scope from the draft. Add none.
+- Keep roughly the same length. If the draft already reads well, return it
+  unchanged.
+- Start with a strong past-tense action verb. No first-person pronouns.
+- Do not insert words from the target job title, and do not force in a
+  keyword: use one only if the draft already describes that exact thing.
+- Return only the bullet. No notes, no explanations, no quotes, no brackets."""
+
+_BULLETS_SYSTEM = """\
+You lightly edit the bullets of ONE resume entry so they read crisply to a
+recruiter hiring for the target role.
+Rules:
+- Edit each bullet on its own; keep the same number of bullets, same order.
+- Keep every fact, number, tool and scope. Add none, remove none.
+- Keep each bullet roughly the same length. A bullet that already reads well
+  stays unchanged.
+- Each bullet starts with a strong past-tense action verb; vary the verbs
+  across bullets. No first-person pronouns.
+- Never repeat words from the target job title across bullets (no padding
+  every line with "reliable" for a reliability role). Never force in a
+  keyword: use a job keyword only where the bullet already describes that
+  exact thing under another name.
+- Never add notes, explanations, brackets or commentary.
+Return strict JSON only: an array of strings, one per input bullet."""
 
 _SUMMARY_SYSTEM = """\
-You write two-sentence resume summaries in third person.
+You write the professional summary at the top of a resume.
 Rules:
-- Sentence 1: candidate's role/specialty + top skills.
-- Sentence 2: why they're a strong fit for the specific role and company.
-- ATS keywords must appear naturally — do not invent experience.
-- Return only the two sentences, no preamble."""
+- 2 sentences, 35-60 words total, in implied first person: no name and no
+  pronouns (no he/she/they/I/my/his/her). Start with the candidate's title
+  without level words (no "Junior", "Associate", "Intern"), e.g.
+  "Data Engineer with ...".
+- Use ONLY the CANDIDATE FACTS. Never invent employers, numbers, years or
+  skills. Name 3-5 of the candidate's real skills that the job also wants.
+- Sentence 2 states one concrete result taken from the facts, exactly as
+  stated there: never combine numbers from different facts into one claim.
+- Never mention the target company, never say the candidate "is a fit", and
+  never add notes or commentary.
+Return only the summary."""
 
 _CRITIQUE_SYSTEM = """\
 You score a resume against a job description and return strict JSON.
@@ -55,31 +81,23 @@ def resume_callback(
 
     def _callback(action: str, payload: dict) -> str:
         if action == "rewrite_bullet":
+            draft = str(payload.get("draft", ""))
             keyword = payload.get("keyword", "")
-            draft = payload.get("draft", "")
-            company = payload.get("company", "")
             title = payload.get("title", "")
-            ctx = (
-                f"\nTarget role: {title} at {company}"
-                if (title or company) else ""
-            )
-            user = f"Keyword: {keyword}\nDraft bullet: {draft}{ctx}"
-            return client.complete(_BULLET_SYSTEM, user, max_tokens=80, model=model)
+            lines = [f"Draft bullet: {draft}"]
+            if keyword:
+                lines.append(f"Job keyword (use only if it fits): {keyword}")
+            if title:
+                lines.append(f"Target role: {title}")
+            text = clean_llm_text(client.complete(
+                _BULLET_SYSTEM, "\n".join(lines), max_tokens=120, model=model))
+            return text if bullet_ok(draft, text, title) else ""
+
+        if action == "rewrite_bullets":
+            return _rewrite_bullets(client, payload, model)
 
         if action == "summary":
-            profile = payload.get("profile", {})
-            title = payload.get("posting_title", "")
-            company = payload.get("posting_company", "")
-            keywords = payload.get("keywords", [])
-            name = profile.get("name", "")
-            skills = profile.get("skills", [])
-            user = (
-                f"Candidate: {name}\n"
-                f"Skills: {', '.join(skills[:8])}\n"
-                f"Target role: {title} at {company}\n"
-                f"ATS keywords: {', '.join(keywords[:10])}"
-            )
-            return client.complete(_SUMMARY_SYSTEM, user, max_tokens=128, model=model)
+            return _summary(client, payload, model)
 
         if action == "cover_letter":
             return _cover_letter(client, payload, model)
@@ -94,6 +112,89 @@ def resume_callback(
         return ""
 
     return _callback
+
+
+# Commentary a model sometimes appends instead of following the rules — the
+# "(Note: the keyword field was blank, ...)" that once shipped in a résumé.
+_META_RE = re.compile(
+    r"\b(?:note|keyword|ats|placeholder|as an ai|i (?:have|leaned|used|kept))\b|[\[\]{}]",
+    re.I)
+_PRONOUN_RE = re.compile(r"\b(?:he|she|his|her|him|they|their|i|my|me)\b", re.I)
+_TITLE_STOP = {"engineer", "developer", "senior", "junior", "lead", "staff", "data",
+               "software", "i", "ii", "iii", "the", "and", "of", "for"}
+
+
+def _stems(text: str) -> set[str]:
+    return {w.lower()[:6] for w in re.findall(r"[A-Za-z]{4,}", text)}
+
+
+def bullet_ok(draft: str, text: str, title: str = "") -> bool:
+    """Whether ``text`` is a faithful edit of the résumé bullet ``draft``."""
+    if not text or "\n" in text.strip():
+        return False
+    if not 0.6 <= word_count(text) / max(word_count(draft), 1) <= 1.4:
+        return False
+    if _META_RE.search(text) and not _META_RE.search(draft):
+        return False
+    if _PRONOUN_RE.search(text) and not _PRONOUN_RE.search(draft):
+        return False
+    # Words of the job title the draft did not use are keyword padding.
+    title_stems = {w.lower()[:6] for w in re.findall(r"[A-Za-z]{4,}", title)
+                   if w.lower() not in _TITLE_STOP}
+    if (title_stems & _stems(text)) - _stems(draft):
+        return False
+    return not grounding_violations(text, [draft])
+
+
+def _rewrite_bullets(client: LLMClient, payload: dict, model: str | None) -> str:
+    """One call per résumé entry, so the model sees its bullets side by side
+    and varies them. Returns a JSON array; a bullet that fails ``bullet_ok``
+    comes back as its original text."""
+    drafts = [str(b) for b in payload.get("bullets") or []]
+    if not drafts:
+        return ""
+    title = str(payload.get("title", ""))
+    keywords = [str(k) for k in payload.get("keywords") or []][:12]
+    user = (f"Target role: {title}\n"
+            f"Job keywords (use only where a bullet already describes them): "
+            f"{', '.join(keywords) or 'none'}\n"
+            f"Bullets:\n{json.dumps(drafts, ensure_ascii=False)}")
+    raw = clean_llm_text(client.complete(_BULLETS_SYSTEM, user,
+                                         max_tokens=150 + 80 * len(drafts), model=model))
+    try:
+        edited = json.loads(raw[raw.index("["):raw.rindex("]") + 1])
+    except (ValueError, json.JSONDecodeError):
+        return ""
+    if not isinstance(edited, list) or len(edited) != len(drafts):
+        return ""
+    out = [str(e).strip() if bullet_ok(d, str(e).strip(), title) else d
+           for d, e in zip(drafts, edited)]
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _summary(client: LLMClient, payload: dict, model: str | None) -> str:
+    profile = payload.get("profile") or {}
+    facts = profile_fact_sheet({k: v for k, v in profile.items() if k != "name"})
+    title = str(payload.get("posting_title", ""))
+    company = str(payload.get("posting_company", ""))
+    keywords = [str(k) for k in payload.get("keywords") or []]
+    user = (f"CANDIDATE FACTS:\n{facts}\n\nTarget role: {title}\n"
+            f"Skills the job asks for: {', '.join(keywords[:12]) or 'none listed'}")
+    text = clean_llm_text(client.complete(_SUMMARY_SYSTEM, user, max_tokens=200, model=model))
+    text = re.sub(r"^(?:junior|jr\.?|associate|trainee)\s+", "", text, flags=re.I)
+    text = text[:1].upper() + text[1:]
+    if not 20 <= word_count(text) <= 75 or "\n" in text:
+        return ""
+    low = text.lower()
+    name_parts = [p.lower() for p in str(profile.get("name", "")).split() if len(p) > 2]
+    if (_PRONOUN_RE.search(text) or _META_RE.search(text)
+            or (company and company.lower() in low)
+            or any(re.search(rf"\b{re.escape(p)}\b", low) for p in name_parts)
+            or re.search(r"\b(?:strong|great|ideal|perfect) fit\b", low)):
+        return ""
+    if grounding_violations(text, [facts]):
+        return ""
+    return text
 
 
 # ------------------------------------------------------- grounded generation

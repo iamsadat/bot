@@ -59,17 +59,17 @@ def test_compute_skill_gaps_resource_mapping_known_skill():
 
 
 def test_compute_skill_gaps_generic_fallback_for_unknown_skill():
-    state = _FakeState({"a": {"missing_keywords": ["some-obscure-skill-xyz"]}})
+    state = _FakeState({"a": {"missing_keywords": ["fivetran"]}})
     gaps = compute_skill_gaps(state)
-    assert gaps[0]["skill"] == "some-obscure-skill-xyz"
+    assert gaps[0]["skill"] == "fivetran"
     assert gaps[0]["resources"]
     assert gaps[0]["resources"][0]["url"].startswith("http")
 
 
 def test_compute_skill_gaps_respects_top_limit():
-    documents = {
-        str(i): {"missing_keywords": [f"skill-{i}"]} for i in range(15)
-    }
+    names = ["rust", "scala", "kotlin", "swift", "php", "ruby", "terraform", "helm",
+             "redis", "graphql", "grpc", "rabbitmq", "neo4j", "clickhouse", "duckdb"]
+    documents = {str(i): {"missing_keywords": [n]} for i, n in enumerate(names)}
     state = _FakeState(documents)
     gaps = compute_skill_gaps(state, top=5)
     assert len(gaps) == 5
@@ -129,3 +129,18 @@ def test_skills_gaps_endpoint_empty_state():
     r = client.get("/api/skills/gaps")
     assert r.status_code == 200
     assert r.json() == {"gaps": []}
+
+
+def test_compute_skill_gaps_lists_only_real_gaps():
+    """Prose ("about"), ways of working ("agile") and skills the profile
+    already covers — Databricks for lakehouse, AWS for GCP — are not gaps."""
+    from types import SimpleNamespace
+
+    state = _FakeState({
+        str(i): {"missing_keywords": ["about", "agile", "lakehouse", "data-warehouse",
+                                      "gcp", "azure", "bigquery", "ci-cd"]}
+        for i in range(3)
+    })
+    state.user_profile = SimpleNamespace(
+        skills=["databricks", "delta lake", "snowflake", "aws", "medallion architecture"])
+    assert [g["skill"] for g in compute_skill_gaps(state)] == ["ci-cd"]

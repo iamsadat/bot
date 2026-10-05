@@ -54,7 +54,7 @@ _GROUPS: list[list[str]] = [
     ["golang", "go"],
     ["c++", "cpp"],
     ["c#", "csharp", "dotnet"],
-    ["kafka"],
+    ["kafka", "apache-kafka"],
     ["redis", "memcached"],
     ["terraform", "iac"],
     ["microservices"],
@@ -77,7 +77,9 @@ _GROUPS: list[list[str]] = [
     ["hadoop", "hive", "mapreduce"],
     ["sas"],
     ["data-warehouse", "warehousing", "datawarehouse"],
-    ["data-modeling", "data-modelling", "dimensional-modeling", "star-schema"],
+    ["data-modeling", "data-modelling", "dimensional-modeling", "star-schema",
+     "scd-type-2"],
+    ["medallion-architecture", "medallion"],
     ["prisma"],
     ["planetscale"],
     ["pandas", "numpy"],
@@ -196,7 +198,75 @@ def canonical(term: str) -> str:
     skill, and show the reader "kubernetes" rather than whichever alias
     happened to appear.
     """
-    return _PRIMARY.get(_norm(term), _norm(term))
+    t = _norm(term)
+    if t in _PRIMARY:
+        return _PRIMARY[t]
+    # Profiles store "delta lake" / "apache kafka" / "amazon s3"; the
+    # vocabulary spells them "delta-lake" / "kafka" / "s3".
+    dashed = "-".join(t.split())
+    for form in (dashed, dashed.removeprefix("apache-"), dashed.removeprefix("amazon-"),
+                 dashed.removeprefix("aws-")):
+        if form in _PRIMARY or form in _STANDALONE:
+            return _PRIMARY.get(form, form)
+    return t
+
+
+# A requirement the candidate meets without naming it: Databricks and Delta
+# Lake *are* lakehouse work; Snowflake is a data warehouse. Keys and values
+# are canonical names.
+_IMPLIED_BY: dict[str, frozenset[str]] = {
+    "lakehouse": frozenset({"databricks", "medallion-architecture", "unity-catalog"}),
+    "data-warehouse": frozenset({"snowflake", "redshift", "bigquery", "synapse",
+                                 "lakehouse", "databricks", "data-modeling",
+                                 "medallion-architecture"}),
+    "data-modeling": frozenset({"medallion-architecture", "data-warehouse"}),
+    "etl": frozenset({"spark", "airflow", "databricks", "informatica", "dbt",
+                      "aws-glue", "azure-data-factory", "ssis", "talend"}),
+    "distributed-systems": frozenset({"spark", "kafka", "flink", "hadoop"}),
+    "nosql": frozenset({"mongodb", "cassandra", "redis", "dynamodb"}),
+    "cloud-composer": frozenset({"airflow"}),
+    "emr": frozenset({"spark"}),
+    "dataproc": frozenset({"spark"}),
+    "unity-catalog": frozenset({"databricks"}),
+}
+
+# Same job, different vendor. Knowing one is real but partial evidence for
+# another: an AWS data engineer is not a GCP gap to "learn", and should not
+# lose a GCP role outright.
+_TRANSFERABLE: tuple[frozenset[str], ...] = (
+    frozenset({"aws", "gcp", "azure"}),
+    frozenset({"snowflake", "bigquery", "redshift", "synapse", "databricks"}),
+    frozenset({"aws-glue", "azure-data-factory", "dataflow", "informatica", "fivetran",
+               "airbyte", "ssis", "talend"}),
+    frozenset({"airflow", "dagster", "prefect", "cloud-composer"}),
+    frozenset({"emr", "dataproc", "databricks"}),
+    frozenset({"kafka", "kinesis", "pubsub"}),
+    frozenset({"postgres", "mysql", "sql-server", "oracle"}),
+    frozenset({"github-actions", "jenkins", "circleci", "ci-cd"}),
+)
+
+# Ways of working, not technologies: never reported as a skill gap.
+SOFT_TERMS: frozenset[str] = frozenset({
+    "agile", "scrum", "kanban", "jira", "confluence", "notion", "figma",
+})
+
+
+def coverage(requirement: str, have: Iterable[str]) -> str:
+    """How a candidate with skills ``have`` meets ``requirement``.
+
+    "have" — they list it (or a synonym); "implied" — their skills are that
+    thing (Databricks for "lakehouse"); "transferable" — they know the
+    equivalent from another vendor (AWS for "gcp"); "" — a genuine gap.
+    """
+    req = canonical(requirement)
+    owned = {canonical(h) for h in have if h}
+    if req in owned:
+        return "have"
+    if owned & _IMPLIED_BY.get(req, frozenset()):
+        return "implied"
+    if any(req in g and owned & (g - {req}) for g in _TRANSFERABLE):
+        return "transferable"
+    return ""
 
 
 def skills_in_text(text: str) -> set[str]:

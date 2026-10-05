@@ -45,7 +45,7 @@ def _draft_to_html(draft: ResumeDraft) -> str:
     for sec in draft.sections:
         sec_html = [f"<h2>{sec.title}</h2>"]
         if sec.body:
-            sec_html.append(f"<p>{sec.body}</p>")
+            sec_html.append(f"<p>{sec.body}</p>".replace("\n", "<br>"))
         if sec.bullets:
             sec_html.append("<ul>")
             for b in sec.bullets:
@@ -154,6 +154,19 @@ _TRANSLIT = {
     "→": "->", "←": "<-", "≥": ">=", "≤": "<=",
     " ": " ", " ": " ", "​": "",
 }
+
+
+def _skill_lines(body: str) -> list[tuple[str, str]]:
+    """Split a skills body into (category, items) lines. A line without a
+    short "Category:" prefix comes back with an empty category."""
+    out = []
+    for line in body.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        label, sep, rest = line.partition(": ")
+        out.append((label, rest) if sep and len(label) <= 32 else ("", line))
+    return out
 
 
 def _latin1(s: str) -> str:
@@ -400,8 +413,12 @@ def draft_to_pdf(draft: ResumeDraft) -> bytes:
         section_header(sec.title)
         pdf.set_text_color(40, 40, 48)
         if sec.kind == "skills" and sec.body:
-            pdf.set_font("Helvetica", size=10)
-            pdf.multi_cell(0, 5, _latin1(sec.body), new_x="LMARGIN", new_y="NEXT")
+            for label, items in _skill_lines(sec.body):
+                pdf.set_font("Helvetica", "B" if label else "", size=10)
+                if label:
+                    pdf.write(5, _latin1(f"{label}: "))
+                    pdf.set_font("Helvetica", size=10)
+                pdf.multi_cell(0, 5, _latin1(items), new_x="LMARGIN", new_y="NEXT")
             continue
         if sec.body:
             pdf.set_font("Helvetica", size=10)
@@ -440,7 +457,9 @@ def draft_to_styled_html(draft: ResumeDraft, footer: str | None = None) -> str:
             continue
         blocks.append(f"<h2>{_esc(sec.title)}</h2>")
         if sec.kind == "skills" and sec.body:
-            blocks.append(f'<p class="skills">{_esc(sec.body)}</p>')
+            for label, items in _skill_lines(sec.body):
+                head = f"<strong>{_esc(label)}:</strong> " if label else ""
+                blocks.append(f'<p class="skills">{head}{_esc(items)}</p>')
             continue
         if sec.body:
             blocks.append(f"<p>{_esc(sec.body)}</p>")
@@ -530,7 +549,12 @@ def draft_to_docx(draft: ResumeDraft) -> bytes:
         h = doc.add_heading(sec.title, level=2)
         h.paragraph_format.space_before = Pt(8)
         if sec.kind == "skills" and sec.body:
-            doc.add_paragraph(sec.body)
+            for label, items in _skill_lines(sec.body):
+                p = doc.add_paragraph()
+                p.paragraph_format.space_after = Pt(1)
+                if label:
+                    p.add_run(f"{label}: ").bold = True
+                p.add_run(items)
             continue
         if sec.body:
             doc.add_paragraph(sec.body)

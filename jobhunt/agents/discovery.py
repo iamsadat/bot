@@ -135,14 +135,20 @@ def skill_fit(jd_text: str, skills: list[str]) -> tuple[float, list[str], list[s
     "k8s" is satisfied by a résumé saying "Kubernetes" and neither is counted
     twice.
     """
+    from jobhunt.skills_taxonomy import coverage
+
     required = skills_in_text(jd_text)
     if not required:
         return 0.0, [], []
-    have = {canonical(s) for s in skills if s}
+    have = [s for s in skills if s]
 
-    matched = sorted(required & have)
-    missing = sorted(required - have)
-    return round(len(matched) / len(required), 4), matched, missing
+    # Lakehouse is met by Databricks; GCP is half-met by AWS (same work,
+    # another vendor) — neither is a reason to sink the match.
+    how = {r: coverage(r, have) for r in required}
+    matched = sorted(r for r, c in how.items() if c in ("have", "implied"))
+    missing = sorted(r for r, c in how.items() if not c)
+    credit = len(matched) + 0.5 * (len(required) - len(matched) - len(missing))
+    return round(credit / len(required), 4), matched, missing
 
 
 def location_fit(posting: JobPosting, profile: UserProfile) -> float:

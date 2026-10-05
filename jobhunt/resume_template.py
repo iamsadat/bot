@@ -314,21 +314,48 @@ def _recency_key(start: str, end: str) -> int:
     return int(years[-1]) if years else 0
 
 
-def _polish(text: str, posting: JobPosting, llm: Callable[[str, dict], str] | None,
-            ) -> tuple[str, bool]:
-    """Best-effort LLM tone-polish; falls back to the original verbatim text."""
-    if llm is None or not text.strip():
-        return text, False
+def _polish_entry(texts: list[str], posting: JobPosting, keywords: list[str],
+                  llm: Callable[[str, dict], str] | None) -> list[str]:
+    """LLM-edit one entry's bullets together (so verbs vary and no word gets
+    repeated down the list); any bullet the edit fails keeps its own text."""
+    if llm is None or not texts:
+        return texts
     try:
-        improved = llm("rewrite_bullet", {
-            "keyword": "", "draft": text,
-            "company": posting.company, "title": posting.title,
-        })
-        if improved and isinstance(improved, str):
-            return improved.strip(), True
+        raw = llm("rewrite_bullets", {"bullets": texts, "title": posting.title,
+                                      "company": posting.company, "keywords": keywords})
     except Exception:
-        pass
-    return text, False
+        return texts
+    if not raw or not isinstance(raw, str):
+        return texts
+    import json
+    try:
+        edited = json.loads(raw)
+    except ValueError:
+        return texts
+    if not isinstance(edited, list) or len(edited) != len(texts):
+        return texts
+    return [str(e).strip() or t for e, t in zip(edited, texts)]
+
+
+def tailored_summary(profile: UserProfile, keywords: list[str]) -> str:
+    """Deterministic résumé summary: title, years, the job's skills the
+    candidate has. Written in résumé voice — no name, no pronouns, no target
+    company."""
+    from jobhunt import skill_names
+    exps = profile.structured_experiences()
+    role = (profile.current_title or (exps[0].title if exps else "")
+            or (profile.target_roles[0] if profile.target_roles else "Engineer"))
+    role = re.sub(r"^(?:junior|jr\.?|associate|trainee)\s+", "", role.strip(), flags=re.I)
+    have = {skill_names.key(s) for s in profile.skills}
+    wanted = [k for k in (skill_names.key(kw) for kw in keywords) if k and k in have]
+    picks = list(dict.fromkeys(wanted + [k for k in skill_names.clean(profile.skills)
+                                         if k not in wanted]))[:5]
+    names = [skill_names.display(k) for k in picks]
+    skills = (", ".join(names[:-1]) + f" and {names[-1]}") if len(names) > 1 else "".join(names)
+    years = profile.experience_years
+    lead = f"{role} with {years}+ years of experience" if years else f"{role} experienced"
+    text = f"{lead} building data pipelines" if "data" in role.lower() else f"{lead} building production systems"
+    return f"{text} with {skills}." if skills else f"{text}."
 
 
 def build_tailored_resume(
@@ -344,6 +371,7 @@ def build_tailored_resume(
     orders entries by their strongest bullet. Never fabricates: every bullet
     carries an ``evidence_id`` referencing the source line.
     """
+    from jobhunt import skill_names
     from jobhunt.agents.resume import _best_keywords
     from jobhunt.skills_taxonomy import expand_term
 
@@ -364,11 +392,12 @@ def build_tailored_resume(
             if not str(btext).strip():
                 continue
             score = _bullet_relevance(str(btext), expanded, jd)
-            text, _ = _polish(str(btext), posting, llm)
             corpus_tokens |= _text_tokens(str(btext))
-            scored.append((score, {"text": text, "evidence_id": f"exp:{i}:bullet:{k}"}))
+            scored.append((score, {"text": str(btext).strip(), "evidence_id": f"exp:{i}:bullet:{k}"}))
         scored.sort(key=lambda x: -x[0])
         bullets = [b for _, b in scored]
+        for b, t in zip(bullets, _polish_entry([b["text"] for b in bullets], posting, keywords, llm)):
+            b["text"] = t
         entry_score = scored[0][0] if scored else 0.0
         label = ", ".join(p for p in (e.title, e.company) if p)
         left = f"**{label}**" if label else ""
@@ -391,15 +420,16 @@ def build_tailored_resume(
             if not str(btext).strip():
                 continue
             score = _bullet_relevance(str(btext), expanded, jd)
-            text, _ = _polish(str(btext), posting, llm)
             corpus_tokens |= _text_tokens(str(btext))
-            scored.append((score, {"text": text, "evidence_id": f"proj:{i}:bullet:{k}"}))
+            scored.append((score, {"text": str(btext).strip(), "evidence_id": f"proj:{i}:bullet:{k}"}))
         scored.sort(key=lambda x: -x[0])
         bullets = [b for _, b in scored]
+        for b, t in zip(bullets, _polish_entry([b["text"] for b in bullets], posting, keywords, llm)):
+            b["text"] = t
         if not bullets and p.description:
             corpus_tokens |= _text_tokens(p.description)
             bullets = [{"text": p.description, "evidence_id": f"proj:{i}:desc"}]
-        cat = ", ".join(p.skills[:2]) if p.skills else ""
+        cat = ", ".join(skill_names.display(k) for k in skill_names.clean(p.skills)[:3])
         left = f"**{p.name}**" + (f", {cat}" if cat else "")
         proj_rows.append({"left": left, "right": p.link, "link": p.link, "bullets": bullets})
     proj_rows = [r for r in proj_rows if r["left"].strip("* ")]
@@ -407,10 +437,9 @@ def build_tailored_resume(
         sections.append(ResumeSection(title="Projects", kind="projects", rows=proj_rows))
 
     # ----- Skills -------------------------------------------------------------
-    if profile.skills:
-        sections.append(ResumeSection(
-            title="Skills", kind="skills", body=", ".join(profile.skills),
-        ))
+    skills_body = skill_names.skills_block(profile.skills, jd)
+    if skills_body:
+        sections.append(ResumeSection(title="Skills", kind="skills", body=skills_body))
 
     # ----- Education ----------------------------------------------------------
     edu_rows: list[dict] = []
@@ -424,10 +453,8 @@ def build_tailored_resume(
     if edu_rows:
         sections.append(ResumeSection(title="Education", kind="education", rows=edu_rows))
 
-    # ----- Summary (tailored, LLM-polished when available) --------------------
-    skills_str = ", ".join(profile.skills[:6]) or "the role's core stack"
-    summary = (f"{profile.name} — engineer experienced in {skills_str}. "
-               f"Targeting {posting.title} at {posting.company}.")
+    # ----- Summary (tailored, LLM-written when available) --------------------
+    summary = tailored_summary(profile, keywords)
     if llm is not None:
         try:
             improved = llm("summary", {
