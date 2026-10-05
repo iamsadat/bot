@@ -417,6 +417,7 @@ def test_years_in_title_reads_decimals_and_whole_numbers(title, years):
     ("Data Protection Engineer", False),
     ("AI Engineer Data APIs", False),
     ("Experienced Engineer, Data Management", False),
+    ("Learning & Development Partner – Data Engineering Business", False),
 ])
 def test_role_must_read_as_a_phrase_in_the_title(title, expected):
     """Both words appearing somewhere let a security role and an AI role pass

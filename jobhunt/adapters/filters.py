@@ -178,6 +178,14 @@ _OTHER_DISCIPLINE = frozenset({
 })
 
 
+# A title whose job is plainly non-technical, though it names the field it
+# serves: "Learning & Development Partner – Data Engineering Business".
+_NON_TECH_ROLE = frozenset({
+    "partner", "recruiter", "recruiting", "talent", "sales", "marketing",
+    "trainer", "hrbp",
+})
+
+
 def _ordered_words(text: str) -> list[str]:
     return "".join(
         c if c.isalnum() or c in "+#" else " " for c in (text or "").lower()
@@ -199,6 +207,8 @@ def _reads_as_phrase(title: str, role: str) -> bool:
         return True
     first = expand_terms([role_seq[0]]) | {role_seq[0]}
     toks = _ordered_words(title)
+    if family == "eng" and set(toks) & _NON_TECH_ROLE:
+        return False
     for i, tok in enumerate(toks):
         if tok not in first:
             continue
