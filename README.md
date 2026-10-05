@@ -5,6 +5,24 @@ that plan, discover, vet, tailor, submit, track, and continuously improve a
 job hunt. Every decision is recorded as an inspectable
 **ReasoningTrace** and streamed to a mobile-first dashboard via WebSockets.
 
+## Personal mode — run it as your own job hunter
+
+```bash
+pip install -r requirements.txt && pip install -e ".[pdf,docx]"
+pip install playwright && playwright install chromium     # fills applications for you
+(cd frontend && npm ci && npm run build)
+cp me.env.example me.env       # point JOBHUNT_ME_RESUME at your résumé; add keys
+python -m jobhunt me           # opens http://127.0.0.1:8765
+```
+
+`jobhunt me` builds your profile from your résumé, sweeps every 6 hours (and
+shortly after start), tailors up to 25 résumés per sweep, and prints which
+capabilities are on and the one line that turns on each of the rest.
+Approving a job opens its real application form in a browser, filled in from
+your profile and screening answers — you review it and press Submit. Turn on
+autonomous applying from the dashboard's Autonomy panel when you trust it.
+`me.env` is gitignored; nothing personal belongs in this public repo.
+
 ## Live site & deploy
 
 | What | Where |
