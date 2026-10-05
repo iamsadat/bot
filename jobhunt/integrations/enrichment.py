@@ -113,9 +113,14 @@ def draft_outreach(profile, job: dict, doc: dict, contact: Contact,
     )
     if llm is not None:
         try:
+            # The profile + JD let the callback ground the note in real facts
+            # (it returns "" when its hallucination post-check fails).
+            to_dict = getattr(profile, "to_dict", None)
             improved = llm("outreach", {
                 "contact": contact.name, "company": company, "title": title,
-                "strengths": matched, "draft": body})
+                "strengths": matched, "draft": body,
+                "profile": to_dict() if callable(to_dict) else {},
+                "jd_text": job.get("jd_text") or doc.get("jd_text") or ""})
             if improved and isinstance(improved, str):
                 body = improved.strip()
         except Exception:

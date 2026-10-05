@@ -10,6 +10,7 @@ deterministic path so this module never raises on the caller's behalf.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from jobhunt.agents.resume import _best_keywords
@@ -110,6 +111,18 @@ def _parse_llm_questions(raw: str) -> list[str]:
     return out
 
 
+_TAG_RE = re.compile(r"^\[\s*(technical|behaviou?ral|resume|résumé)\s*\]\s*", re.I)
+
+
+def _split_tag(line: str) -> tuple[str, str]:
+    """``"[technical] Q?"`` → ``("technical", "Q?")``; untagged → ``("", line)``."""
+    m = _TAG_RE.match(line)
+    if not m:
+        return "", line
+    tag = m.group(1).lower().replace("behaviour", "behavior").replace("résumé", "resume")
+    return tag, line[m.end():].strip()
+
+
 def generate_questions(
     profile: Any,
     job: dict,
@@ -138,12 +151,19 @@ def generate_questions(
                 questions = []
                 kws = set(_technical_keywords(job, doc, 20))
                 for line in lines:
-                    is_technical = any(kw in line.lower() for kw in kws)
-                    questions.append({
-                        "type": "technical" if is_technical else "behavioral",
-                        "question": line,
-                    })
-                return questions
+                    tag, line = _split_tag(line)
+                    if not line:
+                        continue
+                    if tag in ("technical", "behavioral"):
+                        qtype = tag
+                    else:
+                        # Untagged or résumé-specific: technical when it names
+                        # one of the role's skills, otherwise behavioural.
+                        is_technical = any(kw in line.lower() for kw in kws)
+                        qtype = "technical" if is_technical else "behavioral"
+                    questions.append({"type": qtype, "question": line})
+                if questions:
+                    return questions
         except Exception:
             pass  # LLM is best-effort; fall back to deterministic templates.
 
@@ -216,20 +236,24 @@ def _heuristic_feedback(question: str, answer: str) -> dict:
 
 
 def _coerce_feedback(data: dict) -> dict | None:
+    def _unit(v: Any) -> float:
+        return round(min(1.0, max(0.0, float(v))), 3)
+
     try:
         scores = data["scores"]
         out = {
             "scores": {
-                "structure": float(scores["structure"]),
-                "relevance": float(scores["relevance"]),
-                "specificity": float(scores["specificity"]),
+                "structure": _unit(scores["structure"]),
+                "relevance": _unit(scores["relevance"]),
+                "specificity": _unit(scores["specificity"]),
             },
-            "tips": [str(t) for t in data.get("tips", [])],
-            "overall": float(data["overall"]),
+            "tips": [str(t).strip() for t in data.get("tips", []) if str(t).strip()],
+            "overall": _unit(data["overall"]),
         }
-        return out
     except (KeyError, TypeError, ValueError):
         return None
+    # A rubric with no actionable tips isn't feedback — use the heuristic.
+    return out if out["tips"] else None
 
 
 def answer_feedback(

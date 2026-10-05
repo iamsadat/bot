@@ -46,8 +46,11 @@ def test_resume_bullets_polished_by_llm_keep_evidence_id(profile, store, bus):
     )
 
     def llm(action, payload):
-        # The agent calls both "rewrite_bullet" (per keyword) and "summary".
-        assert action in ("rewrite_bullet", "summary")
+        # The agent calls "rewrite_bullet" (per keyword), "summary" and
+        # "cover_letter" (empty here, so the template letter is kept).
+        assert action in ("rewrite_bullet", "summary", "cover_letter")
+        if action == "cover_letter":
+            return ""
         if action == "summary":
             return "A polished two-sentence summary."
         return f"LLM polished: {payload['keyword']}"

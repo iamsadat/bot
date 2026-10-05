@@ -213,7 +213,7 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
                 )
 
             coverage = len(matched) / max(1, len(matched) + len(missing))
-            cover = self._render_cover(inputs.profile, posting, matched)
+            cover = self._cover_letter(inputs.profile, posting, matched)
 
             docs.append(
                 TailoredDocument(
@@ -384,6 +384,31 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
         else:
             out.append("- Matching evidence will appear here as the profile grows.")
         return "\n".join(out).rstrip() + "\n"
+
+    def _cover_letter(
+        self, profile: UserProfile, posting: JobPosting, matched: list[str],
+    ) -> str:
+        """LLM-written cover letter when available, else the fixed template.
+
+        The ``cover_letter`` callback action (``jobhunt.llm.callbacks``) is
+        grounded in the profile + JD and returns "" when its post-check finds
+        an invented skill or number — so any empty/failed/raising call keeps
+        the deterministic ``_render_cover`` output unchanged.
+        """
+        if self.llm is not None:
+            try:
+                letter = self.llm("cover_letter", {
+                    "profile": profile.to_dict(),
+                    "posting_title": posting.title,
+                    "posting_company": posting.company,
+                    "jd_text": posting.jd_text,
+                    "matched_keywords": matched,
+                })
+                if letter and isinstance(letter, str) and letter.strip():
+                    return letter.strip() + "\n"
+            except Exception:
+                pass  # LLM is best-effort; fall back to the template.
+        return self._render_cover(profile, posting, matched)
 
     @staticmethod
     def _render_cover(
