@@ -263,6 +263,9 @@ class DashboardState:
         self.jobs = snap.get("jobs", [])
         self.applications = snap.get("applications", [])
         self.documents = snap.get("documents", {})
+        for doc in self.documents.values():
+            if doc.get("ai_status") == "pending" and not _POLISH_LOCK.locked():
+                doc.pop("ai_status")  # the process writing it is gone
         self.hunt_status = snap.get("hunt_status", "idle")
         self.hunt_error = snap.get("hunt_error", "")
         self.ats_config = snap.get("ats_config", {})
@@ -1175,6 +1178,87 @@ def _sweep_budget(callback):
     return budgeted
 
 
+_POLISH_LOCK = __import__("threading").Lock()
+
+
+def _start_polish(state: DashboardState, postings) -> int:
+    """Rewrite freshly tailored résumés with the LLM, in the background.
+
+    A sweep tailors every match deterministically, so the résumés are there
+    the moment it returns. Writing them with Claude takes ~30s each; done
+    inside the sweep, "Fetch jobs" sat for five minutes and looked like it
+    produced nothing. Here the best matches are rewritten one at a time,
+    each saved as soon as it is done. A résumé the owner already acted on
+    (approved, submitted) is left exactly as they saw it.
+
+    Returns how many were queued.
+    """
+    if _SERVERLESS or not postings or state.user_profile is None:
+        return 0
+    from jobhunt.llm.callbacks import resume_callback
+    from jobhunt.llm.factory import build_llm_client_from_env
+
+    client = build_llm_client_from_env()
+    if client is None:
+        return 0
+    llm = _sweep_budget(resume_callback(client))
+    todo = sorted((p for p in postings if p.job_id in state.documents),
+                  key=lambda p: -(p.relevance_score or 0.0))
+    cap = int(os.environ.get("JOBHUNT_LLM_CALLS_PER_SWEEP", "40") or 0)
+    if cap > 0:
+        todo = todo[:max(1, cap // 5)]  # ~5 calls a résumé: entries, summary, letter
+    for p in todo:
+        state.documents[p.job_id]["ai_status"] = "pending"
+
+    def untouched(job_id: str) -> bool:
+        return all(r.state == ApprovalState.PENDING
+                   for r in state.approval_queue.by_job(job_id))
+
+    def run() -> None:
+        from jobhunt.agents.resume import ResumeArchitectAgent, ResumeInputs
+        from jobhunt.models import ReasoningTrace
+
+        agent = ResumeArchitectAgent(state.trace_store, state.bus, llm=llm)
+        with _POLISH_LOCK:
+            for p in todo:
+                doc = state.documents.get(p.job_id)
+                if doc is None:
+                    continue
+                if not untouched(p.job_id) or state.user_profile is None:
+                    doc.pop("ai_status", None)
+                    continue
+                try:
+                    trace = ReasoningTrace.new("resume", "polish")
+                    out = agent.act(ResumeInputs(profile=state.user_profile, postings=[p]),
+                                    trace)[0]
+                except Exception as exc:  # noqa: BLE001 - keep the template text
+                    doc.pop("ai_status", None)
+                    state.bus.publish("error", "polish",
+                                      f"AI rewrite failed for {p.company}: {exc}")
+                    continue
+                # Re-read: a restore from the shared database may have
+                # replaced the dict while Claude was writing.
+                doc = state.documents.get(p.job_id)
+                if doc is None or not untouched(p.job_id):
+                    continue
+                doc.update({
+                    "resume_text": out.resume_text,
+                    "cover_letter_text": out.cover_letter_text,
+                    "keyword_coverage": out.keyword_coverage,
+                    "matched_keywords": out.matched_keywords,
+                    "missing_keywords": out.missing_keywords,
+                    "bullets": out.bullets,
+                    "draft": out.draft,
+                    "ai_status": "done",
+                })
+                state.persist()
+                state.bus.publish("resume", "polish",
+                                  f"Résumé written with AI: {p.company} — {p.title}")
+
+    __import__("threading").Thread(target=run, name="resume-polish", daemon=True).start()
+    return len(todo)
+
+
 def _execute_hunt(state: DashboardState, registry=None) -> None:
     """Runs the full orchestrator pipeline synchronously (called in a thread)."""
     from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
@@ -1184,7 +1268,10 @@ def _execute_hunt(state: DashboardState, registry=None) -> None:
     sources = _build_sources(state.ats_config, profile=state.user_profile)
 
     assert state.user_profile is not None
-    llm_client = build_llm_client_from_env()
+    # Résumés are written by the template here and rewritten with the LLM in
+    # the background (``_start_polish``), except where nothing can run in the
+    # background.
+    llm_client = build_llm_client_from_env() if _SERVERLESS else None
     llm_cb = _sweep_budget(resume_callback(llm_client)) if llm_client is not None else None
     orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)
 
@@ -1227,7 +1314,11 @@ def _execute_hunt(state: DashboardState, registry=None) -> None:
 
     # Persist tailored documents for download + approval
     docs = output.results.get("resume", [])
+    known = set(state.documents)
     _persist_tailored_docs(state, docs)
+    if batch:
+        _start_polish(state, [p for p in batch.postings
+                              if p.job_id in state.documents and p.job_id not in known])
 
     # Backfill application titles from documents
     for app in state.applications:
@@ -1394,7 +1485,7 @@ def _discover_once(state: DashboardState, registry) -> dict:
 
     sources = _build_sources(
         state.ats_config, page=state.source_page, profile=state.user_profile)
-    llm_client = build_llm_client_from_env()
+    llm_client = build_llm_client_from_env() if _SERVERLESS else None
     llm_cb = _sweep_budget(resume_callback(llm_client)) if llm_client is not None else None
     orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)
     result = orch.run(
@@ -1414,8 +1505,12 @@ def _discover_once(state: DashboardState, registry) -> dict:
     added = _merge_discovered(state, batch.postings) if batch else 0
     _record_source_status(state, batch)
     _advance_page(state, sources)
+    known = set(state.documents)
     tailored = _persist_tailored_docs(state, output.results.get("resume", []),
                                       task="discover-bg")
+    if batch:
+        _start_polish(state, [p for p in batch.postings
+                              if p.job_id in state.documents and p.job_id not in known])
     if added:
         _notify(state, "discovered", f"{added} new job match(es)",
                 f"{tailored} tailored and ready to review.")
