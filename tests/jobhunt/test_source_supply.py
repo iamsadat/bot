@@ -186,10 +186,11 @@ def test_lever_caches_and_tolerates_a_dead_slug():
 
 
 # --------------------------------------------------------------------------- #
-# Seeded company boards
+# Seeded company boards (paging details: test_company_boards.py)
 # --------------------------------------------------------------------------- #
 
-def test_seeded_boards_are_india_weighted_and_paged():
+def test_seeded_boards_are_india_weighted_and_paged(monkeypatch):
+    monkeypatch.delenv("JOBHUNT_BOARDS_PER_PAGE", raising=False)
     first = company_boards.page(1)
     assert first["greenhouse"], first
     assert len(first["greenhouse"]) == company_boards.BOARDS_PER_PAGE
@@ -198,10 +199,12 @@ def test_seeded_boards_are_india_weighted_and_paged():
     assert company_boards.page(2)["greenhouse"] != first["greenhouse"]
 
 
-def test_seeded_board_paging_wraps_instead_of_going_quiet():
+def test_seeded_board_paging_wraps_instead_of_going_quiet(monkeypatch):
+    monkeypatch.delenv("JOBHUNT_BOARDS_PER_PAGE", raising=False)
     last = company_boards.total_pages()
     assert company_boards.has_next(last) is False
-    assert company_boards.page(last + 1)["greenhouse"] == company_boards.page(1)["greenhouse"]
+    # Every kind wraps together, not just Greenhouse.
+    assert company_boards.page(last + 1) == company_boards.page(1)
 
 
 def test_every_seeded_slug_is_unique():
