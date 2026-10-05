@@ -179,5 +179,8 @@ class Autofiller(Protocol):
         user pre-supplied (e.g. ``{"work_authorization": "yes"}``) used
         to fill anything the mapper can't resolve directly from the
         profile.
+
+        Implementations may accept a keyword-only ``submit: bool = False``;
+        they must never click a Next/Submit-type control unless it is True.
         """
         ...

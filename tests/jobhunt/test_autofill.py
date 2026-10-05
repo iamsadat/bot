@@ -376,13 +376,17 @@ class TestWorkdayAutofiller:
         )
         assert result.url == "https://acme.myworkdayjobs.com/en-US/Careers/job/123"
 
-    def test_clicks_continue_button_last(self):
+    def test_never_clicks_continue_button_without_submit(self):
         page = self._present_page()
         profile = _make_profile()
         WorkdayAutofiller().fill(page, profile, self._answers())
-        last_action = page.actions[-1]
-        assert last_action[0] == "click"
-        assert "bottom-navigation-next-button" in last_action[1]
+        assert not any(a[0] == "click" for a in page.actions)
+
+    def test_submit_still_waits_for_deferred_eeo_questions(self):
+        page = self._present_page()
+        result = WorkdayAutofiller().fill(page, _make_profile(), self._answers(), submit=True)
+        assert result.requires_user  # EEO questions are always the human's
+        assert not any(a[0] == "click" for a in page.actions)
 
     def test_missing_required_selector_skips_field_and_fails(self):
         # Omit the required first-name selector from the "DOM".

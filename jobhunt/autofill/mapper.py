@@ -150,7 +150,8 @@ def map_profile_to_fields(
         )
 
         # Action buttons (e.g. "Save and Continue") aren't data fields —
-        # there's nothing to resolve, just an action to take later.
+        # there's nothing to resolve, just an action to take later. Executing
+        # one is gated on ``submit=True`` in :func:`execute_fields`.
         if kind == "click":
             form_field.value = key or norm_label
             fields.append(form_field)
@@ -202,3 +203,53 @@ def map_profile_to_fields(
         fields.append(form_field)
 
     return fields, requires_user
+
+
+def execute_fields(
+    page: Any,
+    fields: list[FormField],
+    requires_user: list[str],
+    *,
+    submit: bool = False,
+) -> tuple[list[FormField], list[FormField], bool]:
+    """Apply resolved *fields* to *page*; shared by the spec-driven autofillers.
+
+    ``click`` fields are actions (Next / Save and Continue / Submit), so they
+    are only clicked when ``submit=True`` **and** nothing still needs the
+    user — with ``submit=False`` nothing that could submit is ever clicked.
+
+    Returns ``(filled, skipped, success)``; ``success`` means every required
+    data field was filled (action buttons don't count toward it).
+    """
+    filled: list[FormField] = []
+    skipped: list[FormField] = []
+    allow_click = submit and not requires_user
+
+    for f in fields:
+        if f.kind == "click" and not allow_click:
+            continue  # left for the human (co-pilot) - never clicked
+        if f.label in requires_user or not page.query(f.selector):
+            skipped.append(f)
+            continue
+        try:
+            if f.kind == "text":
+                page.fill(f.selector, f.value)
+            elif f.kind == "select":
+                page.select_option(f.selector, f.value)
+            elif f.kind == "checkbox":
+                page.check(f.selector)
+            elif f.kind == "file":
+                page.set_input_files(f.selector, f.value)
+            elif f.kind == "click":
+                page.click(f.selector)
+            else:
+                skipped.append(f)
+                continue
+        except Exception:
+            skipped.append(f)
+            continue
+        f.filled = True
+        filled.append(f)
+
+    success = not any(f.required and f.kind != "click" for f in skipped)
+    return filled, skipped, success

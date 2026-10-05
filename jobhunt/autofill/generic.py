@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from jobhunt.autofill.base import AutofillResult, FormField, Page
-from jobhunt.autofill.mapper import map_profile_to_fields
+from jobhunt.autofill.base import AutofillResult, Page
+from jobhunt.autofill.mapper import execute_fields, map_profile_to_fields
 
 GENERIC_FIELD_SPECS: list[dict[str, Any]] = [
     {
@@ -93,46 +93,16 @@ class GenericAutofiller:
 
     name = "generic"
 
-    def fill(self, page: Page, profile: Any, answers: dict[str, str]) -> AutofillResult:
+    def fill(
+        self, page: Page, profile: Any, answers: dict[str, str], *, submit: bool = False
+    ) -> AutofillResult:
+        """Fill the form; action buttons are clicked only when ``submit=True``."""
         url = getattr(page, "url", "") or ""
         page.goto(url)
 
         fields, requires_user = map_profile_to_fields(profile, answers, GENERIC_FIELD_SPECS)
 
-        filled: list[FormField] = []
-        skipped: list[FormField] = []
-
-        for f in fields:
-            if f.label in requires_user:
-                skipped.append(f)
-                continue
-            if not page.query(f.selector):
-                skipped.append(f)
-                continue
-
-            try:
-                if f.kind == "text":
-                    page.fill(f.selector, f.value)
-                elif f.kind == "select":
-                    page.select_option(f.selector, f.value)
-                elif f.kind == "checkbox":
-                    page.check(f.selector)
-                elif f.kind == "file":
-                    page.set_input_files(f.selector, f.value)
-                elif f.kind == "click":
-                    page.click(f.selector)
-                else:
-                    skipped.append(f)
-                    continue
-            except Exception:
-                skipped.append(f)
-                continue
-
-            f.filled = True
-            filled.append(f)
-
-        required_ok = all(f.filled for f in filled + skipped if f.required)
-        success = required_ok and not any(f.required for f in skipped)
+        filled, skipped, success = execute_fields(page, fields, requires_user, submit=submit)
 
         notes = f"generic: filled={len(filled)} skipped={len(skipped)} requires_user={len(requires_user)}"
 
