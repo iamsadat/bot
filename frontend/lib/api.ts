@@ -342,6 +342,7 @@ export interface Autonomy {
 export interface Doc {
   job_id: string; company: string; title: string; draft?: ResumeDraft | null;
   keyword_coverage?: number; matched_keywords?: string[]; missing_keywords?: string[];
+  ai_status?: 'pending' | 'done';
 }
 export interface ResumeDraft {
   candidate_name: string; candidate_email: string; phone?: string; location?: string;

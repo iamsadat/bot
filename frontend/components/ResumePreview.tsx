@@ -177,6 +177,15 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
     }
   }, [job]);
 
+  // Claude rewrites new résumés in the background; refresh until it's done.
+  useEffect(() => {
+    if (!job || doc?.ai_status !== 'pending') return;
+    const t = setInterval(() => {
+      api.document(job.job_id).then((r) => setDoc(r.document)).catch(() => {});
+    }, 8000);
+    return () => clearInterval(t);
+  }, [job, doc?.ai_status]);
+
   const download = async (jobId: string, fmt: string) => {
     setDlErr('');
     try {
@@ -254,6 +263,11 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               </Card>
             )}
 
+            {doc?.ai_status === 'pending' && (
+              <p className="m-0 text-xs text-muted">
+                ✦ Claude is rewriting this résumé — it updates here in a minute. The version below is ready to use now.
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               {['pdf', 'docx', 'html', 'txt'].map((f) => (
                 <Button key={f} variant="secondary" onClick={() => download(job.job_id, f)}>

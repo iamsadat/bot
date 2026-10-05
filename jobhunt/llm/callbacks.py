@@ -223,6 +223,9 @@ Style:
   market: no slang, no exaggeration, no salary or notice-period talk.
 - Open with "Dear Hiring Team at <company>," and close with "Regards," and
   the candidate's name on the next line.
+- Call the employer only by the Company name given, never by another name
+  the job description uses (a parent company, team or brand).
+- No level words for the candidate's own title ("Junior", "Intern")
 Return only the letter."""
 
 _QUESTIONS_SYSTEM = f"""\
