@@ -234,7 +234,7 @@ export interface InterviewFeedback {
   scores: { structure: number; relevance: number; specificity: number };
   tips: string[]; overall: number;
 }
-export interface SkillGap { skill: string; count: number; resources: { title: string; url: string }[]; }
+export interface SkillGap { skill: string; label?: string; count: number; resources: { title: string; url: string }[]; }
 export interface Contact {
   id: string; name: string; email: string; company: string; title: string;
   last_contact: string; next_followup: string; notes: string; job_id: string;

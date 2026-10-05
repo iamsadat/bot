@@ -424,3 +424,14 @@ def test_role_must_read_as_a_phrase_in_the_title(title, expected):
     as data engineering."""
     from jobhunt.adapters.filters import title_matches_role
     assert title_matches_role(title, "Data Engineer") is expected
+
+
+def test_other_cloud_is_partial_credit_not_a_gap():
+    from jobhunt.agents.discovery import skill_fit
+
+    jd = "Build pipelines on GCP with BigQuery, Python and a lakehouse."
+    fit, matched, missing = skill_fit(jd, ["python", "aws", "snowflake", "delta lake",
+                                           "pyspark"])
+    # "pipelines" is ETL, which Spark work implies.
+    assert matched == ["etl", "lakehouse", "python"] and missing == []
+    assert fit == 0.8  # 3 met + GCP/BigQuery at half credit (via AWS/Snowflake), of 5

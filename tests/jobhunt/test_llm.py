@@ -443,11 +443,29 @@ class TestBuildLlmClientFromEnv:
 
 
 class TestResumeCallbackRewriteBullet:
-    def test_returns_llm_text_for_rewrite_bullet(self):
-        client = FakeLLMClient({("rewrite", "keyword"): "LLM polished bullet"})
-        cb = resume_callback(client)
-        result = cb("rewrite_bullet", {"keyword": "python", "draft": "old bullet"})
-        assert result == "LLM polished bullet"
+    DRAFT = "Built Spark pipelines that processed 150M records daily on AWS."
+
+    def test_returns_faithful_edit(self):
+        edit = "Engineered Spark pipelines processing 150M records daily on AWS."
+        cb = resume_callback(FakeLLMClient({("edit", "draft"): edit}))
+        assert cb("rewrite_bullet", {"keyword": "spark", "draft": self.DRAFT}) == edit
+
+    @pytest.mark.parametrize("edit", [
+        # meta commentary leaking into the résumé
+        "Built Spark pipelines processing 150M records daily on AWS. (Note: the keyword was blank.)",
+        # an invented number
+        "Built Spark pipelines that processed 300M records daily on AWS.",
+        # an invented skill
+        "Built Spark and Kafka pipelines that processed 150M records daily on AWS.",
+        # third person
+        "He built Spark pipelines that processed 150M records daily on AWS.",
+        # padded with the job title
+        "Built reliable Spark pipelines that processed 150M records daily on AWS.",
+    ])
+    def test_rejects_unfaithful_edit(self, edit):
+        cb = resume_callback(FakeLLMClient({("edit", "draft"): edit}))
+        out = cb("rewrite_bullet", {"draft": self.DRAFT, "title": "Data Reliability Engineer"})
+        assert out == ""
 
     def test_unknown_action_returns_empty_string(self):
         client = FakeLLMClient({("", ""): "should not appear"})
@@ -456,30 +474,63 @@ class TestResumeCallbackRewriteBullet:
         assert result == ""
 
 
+class TestResumeCallbackRewriteBullets:
+    def test_keeps_good_edits_and_reverts_bad_ones(self):
+        drafts = ["Built Spark pipelines that processed 150M records daily on AWS.",
+                  "Migrated 150 SAS files to PySpark while preserving business logic."]
+        edited = ["Engineered Spark pipelines processing 150M records daily on AWS.",
+                  "Reliably migrated 150 SAS files to PySpark, ensuring reliable logic."]
+        cb = resume_callback(FakeLLMClient({("", ""): json.dumps(edited)}))
+        out = json.loads(cb("rewrite_bullets", {"bullets": drafts,
+                                                "title": "Data Reliability Engineer"}))
+        assert out == [edited[0], drafts[1]]
+
+    def test_wrong_shape_returns_empty(self):
+        cb = resume_callback(FakeLLMClient({("", ""): '["only one"]'}))
+        assert cb("rewrite_bullets", {"bullets": ["a b c", "d e f"]}) == ""
+
+
 class TestResumeCallbackSummary:
-    def test_returns_llm_text_for_summary(self):
-        # The summary system prompt contains "summaries" and the user message
-        # contains the company name lowercased.
-        client = FakeLLMClient(
-            {("summaries", "acme"): "Ada Lovelace is a Python engineer."}
-        )
-        cb = resume_callback(client)
-        result = cb(
-            "summary",
-            {
-                "profile": {"name": "Ada Lovelace", "skills": ["python"]},
-                "posting_title": "SWE",
-                "posting_company": "Acme",
-                "keywords": ["python"],
-            },
-        )
-        assert result == "Ada Lovelace is a Python engineer."
+    PAYLOAD = {
+        "profile": {"name": "Ada Lovelace", "skills": ["python", "spark", "airflow"],
+                    "experiences": [{"title": "Data Engineer", "company": "Acme"}]},
+        "posting_title": "Data Engineer",
+        "posting_company": "Point72",
+        "keywords": ["python", "spark"],
+    }
+    GOOD = ("Data Engineer building batch and streaming pipelines with Python, Spark "
+            "and Airflow. Focused on dependable, well-tested data workflows that "
+            "downstream teams can trust.")
+
+    def test_returns_resume_voice_summary(self):
+        cb = resume_callback(FakeLLMClient({("summary", ""): self.GOOD}))
+        assert cb("summary", self.PAYLOAD) == self.GOOD
+
+    def test_name_is_not_sent(self):
+        seen = {}
+
+        class Spy:
+            def complete(self, system, user, **_):
+                seen["user"] = user
+                return ""
+
+        resume_callback(Spy())("summary", self.PAYLOAD)
+        assert "Lovelace" not in seen["user"]
+
+    @pytest.mark.parametrize("bad", [
+        "Ada Lovelace is a data engineer with Python, Spark and Airflow. She builds "
+        "dependable pipelines that downstream teams can trust every single day.",
+        "Data Engineer with Python, Spark and Airflow experience across batch and "
+        "streaming work. A strong fit for the Data Engineer role at Point72 today.",
+        "Data Engineer with Python, Spark, Airflow and Kubernetes across batch and "
+        "streaming pipelines, building dependable workflows for analytics teams.",
+    ])
+    def test_rejects_third_person_pitch_or_invention(self, bad):
+        cb = resume_callback(FakeLLMClient({("summary", ""): bad}))
+        assert cb("summary", self.PAYLOAD) == ""
 
     def test_model_override_passed_to_client(self):
         received = {}
-
-        def responder(system, user):
-            return "ok"
 
         class TrackingClient:
             def complete(self, system, user, *, max_tokens=512, model=None):
@@ -489,31 +540,6 @@ class TestResumeCallbackSummary:
         cb = resume_callback(TrackingClient(), model="claude-opus-4-7")
         cb("rewrite_bullet", {"keyword": "k", "draft": "d"})
         assert received["model"] == "claude-opus-4-7"
-
-
-class TestResumeCallbackEndToEnd:
-    def test_llm_bullet_appears_in_draft(self):
-        """Integrate resume_callback with build_resume_draft."""
-        client = FakeLLMClient(
-            lambda system, user: (
-                "Engineered Python services on Kubernetes at scale."
-                if "rewrite" in system.lower()
-                else "Ada Lovelace is a distributed systems expert."
-            )
-        )
-        cb = resume_callback(client)
-        draft = build_resume_draft(
-            _profile(),
-            _posting(),
-            keywords=["python", "kubernetes"],
-            llm=cb,
-        )
-        all_texts = [b.text for b in draft.all_bullets()]
-        # Every bullet was rewritten by the LLM.
-        assert all(b.rewritten_by_llm for b in draft.all_bullets())
-        # The summary was also rewritten.
-        assert "Ada Lovelace" in draft.summary
-        assert "expert" in draft.summary
 
 
 # ================================================================== critique_callback

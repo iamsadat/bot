@@ -92,9 +92,14 @@ _RESOURCES: dict[str, list[dict[str, str]]] = {
 
 
 def _generic_resources(skill: str) -> list[dict[str, str]]:
-    query = skill.replace(" ", "+")
+    from jobhunt.skill_names import display
+
+    name = display(skill)
+    from urllib.parse import quote_plus
+
+    query = quote_plus(name)
     return [{
-        "title": f"Search: {skill}",
+        "title": f"Learn {name}",
         "url": f"https://www.google.com/search?q=learn+{query}",
     }]
 
@@ -123,6 +128,11 @@ def compute_skill_gaps(state, *, top: int = 10) -> list[dict]:
     ``{"skill", "count", "resources"}`` dicts ranked by descending count
     (ties broken alphabetically for stable output), capped at ``top``.
     """
+    from jobhunt.skill_names import display
+    from jobhunt.skills_taxonomy import KNOWN_SKILLS, SOFT_TERMS, coverage
+
+    profile = getattr(state, "user_profile", None)
+    have = list(getattr(profile, "skills", None) or [])
     counts: dict[str, int] = {}
     for doc in state.documents.values():
         for kw in doc.get("missing_keywords", []) or []:
@@ -130,10 +140,17 @@ def compute_skill_gaps(state, *, top: int = 10) -> list[dict]:
             if not kw:
                 continue
             canonical = _canonical_skill(kw)
+            # Only technologies are gaps: not JD prose ("about"), not ways of
+            # working ("agile"), and not what the profile already covers —
+            # Databricks is lakehouse experience, AWS carries over to GCP.
+            if (canonical not in KNOWN_SKILLS or canonical in SOFT_TERMS
+                    or (have and coverage(canonical, have))):
+                continue
             counts[canonical] = counts.get(canonical, 0) + 1
 
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
     return [
-        {"skill": skill, "count": count, "resources": resources_for(skill)}
+        {"skill": skill, "label": display(skill), "count": count,
+         "resources": resources_for(skill)}
         for skill, count in ranked
     ]

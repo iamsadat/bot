@@ -128,8 +128,8 @@ export default function Insights() {
                 <ul className="space-y-2">
                   {skills.gaps.slice(0, 8).map((g) => (
                     <li key={g.skill} className="flex flex-wrap items-center gap-2 text-sm">
-                      <Tag tone="accent">{g.skill}</Tag>
-                      <span className="text-xs text-muted">missed in {g.count} role(s)</span>
+                      <Tag tone="accent">{g.label || g.skill}</Tag>
+                      <span className="text-xs text-muted">asked for in {g.count} {g.count === 1 ? 'role' : 'roles'}</span>
                       {g.resources?.slice(0, 2).map((r) => (
                         <a key={r.url} href={r.url} target="_blank" rel="noreferrer"
                            className="text-xs" style={{ color: 'var(--color-accent-2-700)' }}>{r.title}</a>

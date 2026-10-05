@@ -114,9 +114,13 @@ def parse_resume_text(text: str) -> dict[str, Any]:
     listed = result.pop("section_skills", [])
     seen_skill: set[str] = set()
     merged_skills: list[str] = []
+    from jobhunt.skill_names import key as skill_key
+
     for s in (*skills, *listed):
         key = s.strip().lower()
-        if key and key not in seen_skill:
+        # Fragments of a listed group ("Bronze/Silver/Gold", "MERGE, OPTIMIZE")
+        # are not skills on their own.
+        if key and skill_key(key) and key not in seen_skill:
             seen_skill.add(key)
             merged_skills.append(key)
     result["skills"] = sorted(merged_skills)
@@ -706,6 +710,13 @@ def extract_resume_text(filename: str, data: bytes) -> str:
     raise ResumeFileError(f"unsupported file type: {filename!r} (use .txt/.docx/.pdf)")
 
 
+def _clean_skills(skills: list[str]) -> list[str]:
+    from jobhunt.skill_names import key
+
+    return list(dict.fromkeys(s.strip().lower() for s in skills
+                              if s.strip() and key(s)))
+
+
 def build_user_profile(form: dict[str, Any]) -> UserProfile:
     """Construct a UserProfile dataclass from validated onboarding form data."""
     return UserProfile(
@@ -717,7 +728,7 @@ def build_user_profile(form: dict[str, Any]) -> UserProfile:
         locations=[loc.strip() for loc in form.get("locations", []) if loc.strip()],
         min_salary=form.get("min_salary") or None,
         remote_ok=form.get("remote_ok", True),
-        skills=[s.strip().lower() for s in form.get("skills", []) if s.strip()],
+        skills=_clean_skills(form.get("skills", [])),
         culture_keywords=[c.strip() for c in form.get("culture_keywords", []) if c.strip()],
         experiences=form.get("experiences", []),
         education=form.get("education", []),

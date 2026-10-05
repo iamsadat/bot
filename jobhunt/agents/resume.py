@@ -342,11 +342,9 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
         self, profile: UserProfile, posting: JobPosting, matched: list[str],
     ) -> str:
         """Two-sentence professional summary; LLM-polished when available."""
-        skills = ", ".join(profile.skills[:6]) or "the role's core stack"
-        base = (
-            f"{profile.name} — engineer experienced in {skills}. "
-            f"Targeting {posting.title} at {posting.company}."
-        )
+        from jobhunt.resume_template import tailored_summary
+
+        base = tailored_summary(profile, matched)
         if self.llm is not None:
             try:
                 improved = self.llm("summary", {
@@ -377,7 +375,9 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
             "",
         ]
         if profile.skills:
-            out += ["KEY SKILLS", ", ".join(profile.skills), ""]
+            from jobhunt.skill_names import skills_block
+
+            out += ["KEY SKILLS", skills_block(profile.skills, posting.jd_text or ""), ""]
         out.append("HIGHLIGHTS")
         if bullets:
             out += [f"- {b['text']}" for b in bullets]
