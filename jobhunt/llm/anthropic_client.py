@@ -106,6 +106,11 @@ class AnthropicLLMClient:
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )
+            u = getattr(response, "usage", None)
+            if u is not None:
+                from jobhunt.llm.cache import usage
+                usage.record(input_tokens=getattr(u, "input_tokens", 0) or 0,
+                             output_tokens=getattr(u, "output_tokens", 0) or 0)
             return "".join(block.text for block in response.content)
         except LLMUnavailable:
             raise

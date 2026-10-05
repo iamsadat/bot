@@ -54,6 +54,10 @@ class ClaudeCodeLLMClient:
             "--setting-sources", "",     # ignore project/user settings and hooks
         ]
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        # Claude Code thinks before answering by default. For these short,
+        # checked edits that was ~95% of the output tokens (a 300-token bullet
+        # edit came back as ~6,800) and most of the wait.
+        env["MAX_THINKING_TOKENS"] = os.environ.get("JOBHUNT_LLM_THINKING_TOKENS", "0")
         try:
             with tempfile.TemporaryDirectory() as cwd:  # no repo to read
                 proc = self._run(cmd, input=_redact_pii(user), capture_output=True,
@@ -71,4 +75,10 @@ class ClaudeCodeLLMClient:
         if proc.returncode != 0 or payload.get("is_error"):
             reason = payload.get("result") or proc.stderr or f"exit {proc.returncode}"
             raise LLMError(f"claude failed: {str(reason)[:200]}")
+        u = payload.get("usage") or {}
+        from jobhunt.llm.cache import usage
+        usage.record(
+            input_tokens=sum(int(u.get(k) or 0) for k in (
+                "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
+            output_tokens=int(u.get("output_tokens") or 0))
         return str(payload.get("result") or "")

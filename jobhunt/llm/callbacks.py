@@ -72,12 +72,47 @@ flags: short strings for problems found (e.g. "missing_keyword:python").
 suggestions: actionable fixes the candidate can make."""
 
 
+_LEVEL_WORDS = {"senior", "sr", "junior", "jr", "lead", "staff", "principal", "head",
+                "associate", "intern", "trainee", "i", "ii", "iii", "iv", "mid", "level"}
+
+
+def role_key(title: str) -> str:
+    """A job title reduced to its role ("07.Data Engineer II" → "data engineer"),
+    so cached edits are shared across postings for the same kind of job."""
+    words = re.findall(r"[a-z]+", (title or "").lower())
+    return " ".join(w for w in words if w not in _LEVEL_WORDS)
+
+
 def resume_callback(
     client: LLMClient,
     *,
     model: str | None = None,
+    light_model: str | None = None,
+    cache=None,
 ) -> Callable[[str, dict], str]:
-    """Return a ``(action, payload) -> str`` callback for ``build_resume_draft``."""
+    """Return a ``(action, payload) -> str`` callback for ``build_resume_draft``.
+
+    ``light_model`` (e.g. Haiku) runs the small, heavily guarded edits —
+    bullets and summary; ``model`` the rest. Bullet and summary results are
+    cached by their exact inputs (``jobhunt.llm.cache``), so the same résumé
+    entry is not edited again for every posting of the same role.
+    """
+    from jobhunt.llm.cache import shared_cache, usage
+
+    store = cache if cache is not None else shared_cache()
+    if light_model is None and model is None:
+        from jobhunt.llm.factory import light_model_for
+        light_model = light_model_for(client)
+    light = light_model or model
+
+    def cached(key: str, produce: Callable[[], str]) -> str:
+        hit = store.get(key)
+        if hit is not None:
+            usage.record(cached=True)
+            return hit
+        out = produce()
+        store.put(key, out)
+        return out
 
     def _callback(action: str, payload: dict) -> str:
         if action == "rewrite_bullet":
@@ -90,14 +125,22 @@ def resume_callback(
             if title:
                 lines.append(f"Target role: {title}")
             text = clean_llm_text(client.complete(
-                _BULLET_SYSTEM, "\n".join(lines), max_tokens=120, model=model))
+                _BULLET_SYSTEM, "\n".join(lines), max_tokens=120, model=light))
             return text if bullet_ok(draft, text, title) else ""
 
         if action == "rewrite_bullets":
-            return _rewrite_bullets(client, payload, model)
+            drafts = [str(b) for b in payload.get("bullets") or []]
+            key = store.key("bullets", drafts, role_key(str(payload.get("title", ""))))
+            return cached(key, lambda: _rewrite_bullets(client, payload, light))
 
         if action == "summary":
-            return _summary(client, payload, model)
+            profile = payload.get("profile") or {}
+            key = store.key("summary", profile_fact_sheet(
+                {k: v for k, v in profile.items() if k != "name"}),
+                role_key(str(payload.get("posting_title", ""))),
+                sorted(str(k).lower() for k in (payload.get("keywords") or [])[:8]),
+                str(payload.get("posting_company", "")).lower())
+            return cached(key, lambda: _summary(client, payload, light))
 
         if action == "cover_letter":
             return _cover_letter(client, payload, model)
@@ -263,7 +306,29 @@ Style:
 - Polite, professional and neutral; sign off with the candidate's name.
 Return only the message."""
 
-_JD_CHARS = 6000
+_JD_CHARS = 2500
+
+# Where a job description says what it wants. Everything before it is
+# usually the company pitch, which a letter has no use for.
+_JD_FOCUS_RE = re.compile(
+    r"(?:^|[.:!?]\s+)(?:requirements?|qualifications?|what you(?:'|’)?ll (?:do|bring|need)|"
+    r"responsibilities|about the role|the role|you will|you have|must have)\b",
+    re.I | re.M)
+
+
+def focused_jd(jd_text: str, limit: int = _JD_CHARS) -> str:
+    """The part of a job description that says what the job is and needs,
+    capped at ``limit`` characters."""
+    jd = " ".join((jd_text or "").split()) if "\n" not in (jd_text or "") else jd_text.strip()
+    if len(jd) <= limit:
+        return jd
+    m = _JD_FOCUS_RE.search(jd)
+    if m is None:
+        return jd[:limit]
+    start = m.start() + len(m.group(0)) - len(m.group(0).lstrip(".:!? \t\n"))
+    # Near the end, step back so the cut still carries ``limit`` characters.
+    start = min(start, max(0, len(jd) - limit))
+    return jd[start:start + limit]
 
 
 def _job_block(title: str, company: str, jd_text: str = "",
@@ -272,7 +337,7 @@ def _job_block(title: str, company: str, jd_text: str = "",
     if keywords:
         lines.append("Key skills from the job: " + ", ".join(map(str, keywords)))
     if jd_text:
-        lines.append("Job description:\n" + jd_text[:_JD_CHARS])
+        lines.append("Job description:\n" + focused_jd(jd_text))
     return "\n".join(lines)
 
 

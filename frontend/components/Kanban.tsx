@@ -35,10 +35,13 @@ export default function Kanban({
                     onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onSelect(j)}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`lift w-full cursor-pointer rounded-[22px] p-3.5 text-left ${awaiting ? 'border-[1.5px]' : ''}`}
+                    // Every card gets its own surface: on --color-surface it
+                    // matched the column behind it and only the highlighted
+                    // (awaiting) card was visible as a card at all.
+                    className="lift elev-sm w-full cursor-pointer rounded-[22px] border-[1.5px] p-3.5 text-left"
                     style={{
-                      background: awaiting ? 'var(--color-bg)' : 'var(--color-surface)',
-                      borderColor: awaiting ? 'var(--color-accent)' : undefined,
+                      background: 'var(--color-bg)',
+                      borderColor: awaiting ? 'var(--color-accent)' : 'transparent',
                     }}
                   >
                     <p className="truncate text-[13px] font-bold">{j.company}</p>
@@ -51,6 +54,9 @@ export default function Kanban({
                       )}
                       {j.remote && <Tag tone="neutral">remote</Tag>}
                       {j.submitted && <Tag tone="accent-2">submitted</Tag>}
+                      {j.needs_you && !j.submitted && (
+                        <Tag tone="outline" title={j.needs_you}>needs you</Tag>
+                      )}
                     </div>
                     {awaiting && (
                       <div className="mt-2.5 flex gap-1.5" onClick={(e) => e.stopPropagation()}>

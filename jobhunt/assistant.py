@@ -27,7 +27,7 @@ from jobhunt.llm.anthropic_client import _EMAIL_RE, _PHONE_RE
 
 MAX_MESSAGES = 20
 MAX_CHARS = 8000
-TOP_JOBS = 15
+TOP_JOBS = 10
 BULK_LIMIT = 5  # a change touching more jobs than this needs confirmation
 
 VALID_STATUSES = ("Saved", "Applied", "Assessment", "Interview", "Offer", "Closed")

@@ -62,6 +62,10 @@ class GeminiLLMClient:
                 contents=user,
                 config={"system_instruction": system, "max_output_tokens": max_tokens},
             )
+            meta = getattr(response, "usage_metadata", None)
+            from jobhunt.llm.cache import usage
+            usage.record(input_tokens=getattr(meta, "prompt_token_count", 0) or 0,
+                         output_tokens=getattr(meta, "candidates_token_count", 0) or 0)
             return response.text or ""
         except LLMUnavailable:
             raise

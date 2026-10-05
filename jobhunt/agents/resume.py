@@ -38,6 +38,9 @@ class TailoredDocument:
     # asdict(ResumeDraft) for the layout-aware renderer + UI preview. None when
     # the profile has no structured history (legacy templated-text fallback).
     draft: dict[str, Any] | None = None
+    # Kept so the LLM can rewrite the résumé or write the cover letter later,
+    # on demand, without the posting.
+    jd_text: str = ""
 
 
 @dataclass
@@ -155,8 +158,12 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
         tools=None,
         *,
         llm: Callable[[str, dict], str] | None = None,
+        ai_cover_letter: bool = True,
     ) -> None:
         super().__init__(trace_store, bus, tools)
+        # Off for bulk rewrites: a cover letter is only used when applying,
+        # so it is written then (``/api/approve``), once, not for every match.
+        self.ai_cover_letter = ai_cover_letter
         # Optional tone-polish callback, e.g. resume_callback(GeminiLLMClient(...)).
         # Bullets keep their deterministic evidence_id regardless — the LLM only
         # ever rewrites cosmetic text, never invents or removes evidence.
@@ -182,18 +189,20 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
             kws = _best_keywords(posting.jd_text, inputs.max_keywords)
             draft_dict: dict[str, Any] | None = None
 
-            # Preferred path: render the user's REAL structured history, tailored.
-            draft = build_tailored_resume(
-                inputs.profile, posting,
-                max_keywords=inputs.max_keywords, llm=self.llm,
-            )
             # Only prefer the structured path when there are real bullets to
             # tailor; a profile with metadata-only experiences (no bullet lines)
             # falls back to the legacy templated path so coverage stays useful.
+            # Decided up front: building the structured draft with the LLM and
+            # then discarding it paid for a summary twice.
+            p = inputs.profile
             has_structure = any(
-                r.get("bullets")
-                for s in draft.sections if s.kind in ("experience", "projects")
-                for r in s.rows
+                str(b).strip()
+                for e in (*p.structured_experiences(), *p.structured_projects())
+                for b in e.bullets
+            ) or any(pr.description for pr in p.structured_projects())
+            draft = build_tailored_resume(
+                p, posting, max_keywords=inputs.max_keywords,
+                llm=self.llm if has_structure else None, keywords=kws,
             )
             if has_structure:
                 matched = draft.matched_keywords
@@ -228,6 +237,7 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
                     missing_keywords=missing,
                     bullets=bullets,
                     draft=draft_dict,
+                    jd_text=(posting.jd_text or "")[:12000],
                 )
             )
             self.emit(
@@ -395,7 +405,7 @@ class ResumeArchitectAgent(BaseAgent[ResumeInputs, list[TailoredDocument]]):
         an invented skill or number — so any empty/failed/raising call keeps
         the deterministic ``_render_cover`` output unchanged.
         """
-        if self.llm is not None:
+        if self.llm is not None and self.ai_cover_letter:
             try:
                 letter = self.llm("cover_letter", {
                     "profile": profile.to_dict(),

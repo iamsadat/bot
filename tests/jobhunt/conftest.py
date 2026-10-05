@@ -62,3 +62,13 @@ def all_sources() -> list[FixtureSource]:
         FixtureSource(name="indeed", only_sources=["indeed"]),
         FixtureSource(name="company-rss", only_sources=["company-rss"]),
     ]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_llm_cache(monkeypatch):
+    """Each test gets an empty, in-memory LLM cache and usage counter —
+    never the owner's ~/.jobhunt cache, never another test's answers."""
+    from jobhunt.llm import cache
+
+    monkeypatch.setattr(cache, "_cache", cache.TextCache(None))
+    cache.usage.reset()

@@ -162,6 +162,24 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
   const [approving, setApproving] = useState(false);
   const [approved, setApproved] = useState(false);
   const [approveMsg, setApproveMsg] = useState<{ text: string; warn?: boolean } | null>(null);
+  const [aiBusy, setAiBusy] = useState<'' | 'resume' | 'cover_letter'>('');
+  const [aiErr, setAiErr] = useState('');
+
+  // Only good matches are rewritten automatically; any other one on request.
+  const writeWithAi = async (part: 'resume' | 'cover_letter') => {
+    if (!job) return;
+    setAiBusy(part);
+    setAiErr('');
+    try {
+      const r = await api.writeWithAi(job.job_id, part);
+      setDoc(r.document);
+      if (part === 'cover_letter' && !r.ok) setAiErr('Claude could not write a letter that passed the checks — the template letter is kept.');
+    } catch (e) {
+      setAiErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAiBusy('');
+    }
+  };
   useEffect(() => {
     setDoc(null);
     setSalary(null);
@@ -247,6 +265,10 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               <Button variant="secondary" icon onClick={onClose} aria-label="Close">✕</Button>
             </div>
 
+            {job.needs_you && !job.submitted && (
+              <p className="m-0 text-xs text-warn">{job.needs_you}</p>
+            )}
+
             <MatchBreakdown job={job} />
 
             {salary && (
@@ -268,6 +290,15 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
                 ✦ Claude is rewriting this résumé — it updates here in a minute. The version below is ready to use now.
               </p>
             )}
+            {doc && !doc.ai_status && (
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={() => writeWithAi('resume')} disabled={!!aiBusy}>
+                  {aiBusy === 'resume' ? 'Starting…' : '✦ Write résumé with AI'}
+                </Button>
+                <span className="text-xs text-muted">Matches under 70% keep the template version unless you ask.</span>
+              </div>
+            )}
+            {aiErr && <p className="m-0 text-xs text-warn">{aiErr}</p>}
             <div className="flex flex-wrap items-center gap-2">
               {['pdf', 'docx', 'html', 'txt'].map((f) => (
                 <Button key={f} variant="secondary" onClick={() => download(job.job_id, f)}>
@@ -307,6 +338,23 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
             </div>
             {approveMsg && (
               <p className={`m-0 text-xs ${approveMsg.warn ? 'text-warn' : 'text-muted'}`}>{approveMsg.text}</p>
+            )}
+
+            {doc?.cover_letter_text && (
+              <details className="rounded-[18px] p-4 text-sm" style={{ background: 'var(--color-surface)' }}>
+                <summary className="cursor-pointer font-semibold">
+                  Cover letter {doc.cover_ai ? '· written with AI' : '· template'}
+                </summary>
+                <p className="mt-3 whitespace-pre-line text-[13px] leading-[1.6]">{doc.cover_letter_text}</p>
+                {!doc.cover_ai && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button variant="secondary" onClick={() => writeWithAi('cover_letter')} disabled={!!aiBusy}>
+                      {aiBusy === 'cover_letter' ? 'Writing… (~30s)' : '✦ Write with AI'}
+                    </Button>
+                    <span className="text-xs text-muted">Written automatically when you approve.</span>
+                  </div>
+                )}
+              </details>
             )}
 
             {doc?.draft ? (

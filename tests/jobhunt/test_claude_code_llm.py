@@ -38,6 +38,7 @@ def test_returns_the_reply_and_runs_text_only():
     assert "a@b.com" not in seen["input"] and "98765" not in seen["input"]
     # A stray API key must not divert usage away from the subscription.
     assert "ANTHROPIC_API_KEY" not in seen["env"]
+    assert seen["env"]["MAX_THINKING_TOKENS"] == "0"  # no hidden thinking tokens
 
 
 def test_errors_surface_as_llm_errors():

@@ -81,3 +81,29 @@ def test_relevance_floor_skips_low_matches():
     _seed(st, "1", score=0.2)  # below floor
     assert _maybe_auto_apply_batch(st, _registry(poster)) == 0
     assert not st.jobs[0].get("submitted")
+
+
+def test_failed_auto_apply_goes_back_to_the_owner():
+    """A failed attempt used to leave the job approved, unsent and in Saved
+    with no Approve button. It returns to the queue with the reason."""
+    from jobhunt.approval import ApprovalState
+    from jobhunt.dashboard.server import _reopen_stranded
+
+    poster = FakePoster()
+    poster.add("https://boards-api.greenhouse.io/v1/boards/acme/jobs/1", 500, {"error": "x"})
+    st = _state()
+    _seed(st, "1")
+    assert _maybe_auto_apply_batch(st, _registry(poster)) == 0
+    req = st.approval_queue.by_job("1")[0]
+    assert req.state == ApprovalState.PENDING
+    assert "Auto-apply couldn't finish" in st.jobs[0]["needs_you"]
+    # Not retried on every sweep: it now waits for the owner.
+    assert _maybe_auto_apply_batch(st, _registry(poster)) == 0
+    assert len(poster.calls) == 1
+
+    # One stranded by an older version is rescued at startup.
+    _seed(st, "2")
+    req2 = st.approval_queue.by_job("2")[0]
+    st.approval_queue.transition(req2.request_id, ApprovalState.APPROVED)
+    assert _reopen_stranded(st) == 1
+    assert st.approval_queue.by_job("2")[0].state == ApprovalState.PENDING

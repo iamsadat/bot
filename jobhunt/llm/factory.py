@@ -100,3 +100,26 @@ def build_llm_client_from_env() -> LLMClient | None:
             print(f"ANTHROPIC_API_KEY is set but unusable: {exc}", file=sys.stderr)
 
     return None
+
+
+def light_model_for(client) -> str | None:
+    """The cheaper model for small, guarded edits (résumé bullets, summary).
+
+    ``JOBHUNT_LLM_MODEL_LIGHT`` overrides; ``same`` uses the client's default.
+    Haiku on Claude: these edits are checked line by line and reverted when
+    they drift, so they do not need the larger model, and on a Claude plan a
+    Haiku call uses far less of the usage limit.
+    """
+    choice = os.environ.get("JOBHUNT_LLM_MODEL_LIGHT", "").strip()
+    if choice.lower() == "same":
+        return None
+    if choice:
+        return choice
+    from jobhunt.llm.anthropic_client import AnthropicLLMClient
+    from jobhunt.llm.claude_code_client import ClaudeCodeLLMClient
+
+    if isinstance(client, ClaudeCodeLLMClient):
+        return "haiku"
+    if isinstance(client, AnthropicLLMClient):
+        return "claude-haiku-4-5"
+    return None
