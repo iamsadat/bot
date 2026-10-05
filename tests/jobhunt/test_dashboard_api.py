@@ -781,7 +781,8 @@ def test_approve_does_not_submit_for_fixtures_without_ats():
     _seed_greenhouse_job(state)  # greenhouse-looking URL but no ATS connected
 
     r = client.post("/api/approve/123?decision=approve")
-    assert r.json()["submission"] == {"submitted": False, "manual": True}
+    submission = r.json()["submission"]
+    assert submission["submitted"] is False and submission["manual"] is True
     assert len(poster.calls) == 0  # never hit the network for fixtures
     assert state.jobs[0]["status"] == "Applied"
     assert not state.jobs[0].get("submitted")
@@ -800,6 +801,8 @@ def test_approve_surfaces_submission_failure():
     sub = r.json()["submission"]
     assert sub["submitted"] is False and "422" in sub["detail"]
     assert not state.jobs[0].get("submitted")
+    # A failed attempt sent nothing, so the job must not read as Applied.
+    assert state.jobs[0]["status"] == "Saved"
 
 
 def test_approve_no_duplicate_submit():

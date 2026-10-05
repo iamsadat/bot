@@ -22,3 +22,6 @@ jobhunt/tracker/_preview_*.png
 
 # serena mcp local project config
 .serena/
+
+# personal settings (python -m jobhunt me) — never commit
+me.env

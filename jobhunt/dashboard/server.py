@@ -117,7 +117,7 @@ try:
         Depends, FastAPI, Header, HTTPException, Request,
         Response as FastAPIResponse, WebSocket, WebSocketDisconnect,
     )
-    from fastapi.responses import HTMLResponse, JSONResponse, Response
+    from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
     from fastapi.staticfiles import StaticFiles
     _FASTAPI_IMPORT_ERROR: ImportError | None = None
 except ImportError as _exc:  # pragma: no cover
@@ -646,39 +646,12 @@ def _apply_parsed_resume(profile, result: dict) -> None:
         profile.target_roles = list(result["inferred_titles"])
 
 
-def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
-    """Attempt real submission for a just-approved job. Returns a status dict.
-
-    Real submission fires only when the user has connected ATS boards
-    (``_ats_connected``) AND a submitter supports the job URL AND the job
-    hasn't already been submitted — so offline fixtures never POST. Otherwise
-    the job is left Applied for the user to finish on the company site.
-    """
-    if job is None:
-        return None
-    job_id = job["job_id"]
-    company, title, url = job.get("company", ""), job.get("title", ""), job.get("url", "")
-
-    has_route = (
-        doc is not None
-        and not job.get("submitted")
-        and _ats_connected(state)
-        and registry.for_url(url) is not None
-    )
-    if not has_route:
-        _add_event(state, job_id, "Applied", "Marked Applied — finish on the company site")
-        state.bus.publish(
-            "submission", job_id,
-            f"{company} → {title}: marked Applied "
-            f"(open the posting to finish on the company site).",
-        )
-        _record_activity(state)
-        return {"submitted": False, "manual": True}
-
+def _application_plan(state: DashboardState, job: dict, doc: dict) -> dict:
+    """Everything a submitter or the browser filler needs for one application."""
     profile = state.user_profile
     resume_text = doc.get("resume_text", "")
     plan = {
-        "url": url, "job_id": job_id,
+        "url": job.get("url", ""), "job_id": job["job_id"],
         "applicant": {
             "name": profile.name if profile else "",
             "email": profile.email if profile else "",
@@ -689,6 +662,7 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         "cover_letter_text": doc.get("cover_letter_text", ""),
         # Standard answers to the board's custom screening questions.
         "answers": getattr(profile, "application_answers", {}) if profile else {},
+        "links": dict(profile.links) if profile else {},
     }
     # Render a real PDF so the upload is a valid file, not text mislabeled as PDF.
     # Prefer the structured single-column layout when a draft is available.
@@ -701,10 +675,148 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         else:
             from jobhunt.resume_renderer import text_to_pdf
             lines = resume_text.split("\n")
-            heading = lines[0].strip() if lines and lines[0].strip() else company
+            heading = lines[0].strip() if lines and lines[0].strip() else job.get("company", "")
             plan["resume_pdf"] = text_to_pdf(heading, "\n".join(lines[1:]))
     except Exception:
         pass  # fpdf2 missing → submitters fall back to encoding the plain text
+    return plan
+
+
+def _browser_route(url: str, *, autonomous: bool) -> bool:
+    """Whether this application should go through the real hosted form.
+
+    Greenhouse and Lever only accept API applications with the *employer's*
+    key, so for a candidate the hosted form is the only route that can work.
+    The co-pilot needs a screen to show the filled form on; autonomy does not.
+    """
+    import importlib.util
+
+    from jobhunt.personal import display_available
+
+    if os.environ.get("JOBHUNT_OFFLINE") == "1":
+        return False  # fixtures carry real-looking Greenhouse URLs
+    if os.environ.get("JOBHUNT_AUTOFILL_ENABLED", "").strip().lower() not in (
+            "1", "true", "yes", "on"):
+        return False
+    if importlib.util.find_spec("playwright") is None:
+        return False
+    if not autonomous and not display_available():
+        return False
+    try:
+        from jobhunt.autofill import supports_browser_apply
+    except ImportError:
+        return False
+    return supports_browser_apply(url)
+
+
+def _mark_submitted(state: DashboardState, req, job: dict, how: str,
+                    sub_id: str = "") -> None:
+    job["submitted"] = True
+    job["submission_id"] = sub_id
+    if job.get("status") == "Saved":
+        job["status"] = "Applied"
+    try:
+        state.approval_queue.transition(req.request_id, ApprovalState.SUBMITTED)
+    except InvalidTransition:
+        pass
+    company, title = job.get("company", ""), job.get("title", "")
+    suffix = f" (id {sub_id})" if sub_id else ""
+    _add_event(state, job["job_id"], "Submitted", f"Submitted to {company} {how}{suffix}")
+    state.bus.publish("submission", job["job_id"],
+                      f"{company} → {title}: submitted {how}{suffix}.")
+    _record_activity(state)
+
+
+def _apply_in_browser(state: DashboardState, req, job: dict, plan: dict,
+                      *, autonomous: bool) -> dict:
+    """Fill the hosted application form. Co-pilot leaves it open for the owner
+    to review and submit; autonomy submits headless."""
+    from jobhunt.autofill import browser_apply
+
+    job_id, company = job["job_id"], job.get("company", "")
+
+    def _finished(outcome: dict) -> None:
+        # Runs on the browser thread once the owner closes the window.
+        if outcome.get("submitted"):
+            _mark_submitted(state, req, job, "from the browser")
+        else:
+            _add_event(state, job_id, "Not submitted",
+                       f"Browser closed without submitting to {company}. "
+                       "Approve again to reopen it.", status="failed")
+        state.persist()
+
+    headless = autonomous or os.environ.get(
+        "JOBHUNT_AUTOFILL_HEADLESS", "0").strip().lower() in ("1", "true", "yes", "on")
+    try:
+        result = browser_apply(plan, submit=autonomous, headless=headless,
+                               keep_open=not autonomous,
+                               on_finish=None if autonomous else _finished)
+    except Exception as exc:  # the filler must never 500 an approve
+        result = {"ok": False, "detail": f"error: {exc}"}
+
+    if autonomous and result.get("submitted"):
+        _mark_submitted(state, req, job, "automatically")
+        return {"submitted": True, "detail": result.get("detail", "")}
+    if not result.get("ok"):
+        detail = result.get("detail") or "could not fill the form"
+        _add_event(state, job_id, "Fill failed",
+                   f"Could not fill {company}'s form: {detail}", status="failed")
+        state.bus.publish("submission", job_id, f"{company}: form fill failed ({detail}).")
+        return {"submitted": False, "detail": detail}
+
+    missing = result.get("unfilled_required") or []
+    detail = (f"{company}'s application is open in your browser, filled in"
+              + (f" — {len(missing)} question(s) need you: {', '.join(missing[:5])}"
+                 if missing else "")
+              + ". Review it and press Submit there.")
+    _add_event(state, job_id, "Filled in browser", detail, status="running")
+    state.bus.publish("submission", job_id, detail)
+    return {"submitted": False, "copilot": True, "detail": detail,
+            "unfilled_required": missing}
+
+
+def _auto_apply(state: DashboardState, registry, req, job, doc,
+                *, autonomous: bool = False) -> dict | None:
+    """Apply for a just-approved job. Returns a status dict.
+
+    In order: the hosted form in a browser (the only route Greenhouse and Lever
+    open to candidates), then an API submitter for boards the owner holds
+    credentials for, then "finish on the company site". The job is marked
+    Applied only when an application was actually sent or handed to the owner
+    to send — never on a failed attempt.
+    """
+    if job is None:
+        return None
+    job_id = job["job_id"]
+    company, title, url = job.get("company", ""), job.get("title", ""), job.get("url", "")
+
+    if doc is not None and not job.get("submitted") and _browser_route(
+            url, autonomous=autonomous):
+        return _apply_in_browser(state, req, job, _application_plan(state, job, doc),
+                                 autonomous=autonomous)
+
+    has_route = (
+        doc is not None
+        and not job.get("submitted")
+        and _ats_connected(state)
+        and registry.for_url(url) is not None
+    )
+    if not has_route:
+        if autonomous:
+            return {"submitted": False, "detail": "no automatic route for this posting"}
+        if job.get("status") == "Saved":
+            job["status"] = "Applied"
+        _add_event(state, job_id, "Applied", "Marked Applied — finish on the company site")
+        state.bus.publish(
+            "submission", job_id,
+            f"{company} → {title}: marked Applied "
+            f"(open the posting to finish on the company site).",
+        )
+        _record_activity(state)
+        return {"submitted": False, "manual": True,
+                "detail": "Open the posting and finish the application on the company site."}
+
+    plan = _application_plan(state, job, doc)
     try:
         result = registry.submit(plan)
         ok = bool(result and result.ok)
@@ -714,18 +826,7 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         ok, sub_id, detail = False, "", f"error: {exc}"
 
     if ok:
-        job["submitted"] = True
-        job["submission_id"] = sub_id
-        try:
-            state.approval_queue.transition(req.request_id, ApprovalState.SUBMITTED)
-        except InvalidTransition:
-            pass
-        suffix = f" (id {sub_id})" if sub_id else ""
-        _add_event(state, job_id, "Submitted", f"Auto-submitted to {company}{suffix}")
-        state.bus.publish(
-            "submission", job_id, f"{company} → {title}: auto-submitted{suffix}.",
-        )
-        _record_activity(state)
+        _mark_submitted(state, req, job, "automatically", sub_id)
         return {"submitted": True, "submission_id": sub_id}
 
     _add_event(
@@ -736,6 +837,38 @@ def _auto_apply(state: DashboardState, registry, req, job, doc) -> dict | None:
         "submission", job_id, f"{company} → {title}: submission failed ({detail}).",
     )
     return {"submitted": False, "detail": detail}
+
+
+def _capabilities(notifier, inbox_source) -> list[dict]:
+    """What is switched on, and the one line that switches on the rest."""
+    import importlib.util
+
+    from jobhunt.llm.factory import describe_llm_from_env
+
+    env = os.environ.get
+    on = lambda k: env(k, "").strip().lower() in ("1", "true", "yes", "on")  # noqa: E731
+    llm = describe_llm_from_env()
+    playwright = importlib.util.find_spec("playwright") is not None
+    rows = [
+        ("adzuna", "Adzuna India jobs", bool(env("ADZUNA_APP_ID") and env("ADZUNA_APP_KEY")),
+         "Add ADZUNA_APP_ID and ADZUNA_APP_KEY to me.env"),
+        ("continuous", "Automatic job sweeps",
+         int(env("JOBHUNT_DISCOVERY_POLL_SECONDS", "0") or 0) > 0,
+         "Set JOBHUNT_DISCOVERY_POLL_SECONDS (personal mode: 6h)"),
+        ("browser_apply", "Fill applications in a browser",
+         playwright and on("JOBHUNT_AUTOFILL_ENABLED"),
+         "pip install playwright && playwright install chromium"
+         if not playwright else "Set JOBHUNT_AUTOFILL_ENABLED=1"),
+        ("llm", "AI résumé polish", bool(llm.get("active")),
+         llm.get("reason") if llm.get("provider") else
+         "Add GEMINI_API_KEY (free at aistudio.google.com) to me.env"),
+        ("notifications", "Notifications", bool(notifier and notifier.sinks),
+         "Add JOBHUNT_TELEGRAM_BOT_TOKEN + JOBHUNT_TELEGRAM_CHAT_ID to me.env"),
+        ("inbox", "Recruiter email tracking", inbox_source is not None,
+         "Add JOBHUNT_IMAP_HOST/USER/PASSWORD (a Gmail app password) to me.env"),
+    ]
+    return [{"key": k, "label": label, "on": bool(v), "hint": "" if v else hint}
+            for k, label, v, hint in rows]
 
 
 def _job_dict_from_posting(p) -> dict:
@@ -1097,7 +1230,8 @@ def _maybe_auto_apply_batch(state: DashboardState, registry) -> int:
         doc = state.documents.get(req.job_id)
         if job is None or doc is None or job.get("submitted"):
             continue
-        if registry.for_url(job.get("url", "")) is None:
+        url = job.get("url", "")
+        if registry.for_url(url) is None and not _browser_route(url, autonomous=True):
             continue  # not a real-submittable board → leave for manual review
         if float(job.get("relevance_score") or 0.0) < floor:
             continue
@@ -1106,10 +1240,8 @@ def _maybe_auto_apply_batch(state: DashboardState, registry) -> int:
                 req.request_id, ApprovalState.APPROVED, reviewer="auto")
         except InvalidTransition:
             continue
-        if job.get("status") == "Saved":
-            job["status"] = "Applied"
         _add_event(state, req.job_id, "Approved", "Auto-approved (autonomous mode)")
-        res = _auto_apply(state, registry, req, job, doc)
+        res = _auto_apply(state, registry, req, job, doc, autonomous=True)
         if res and res.get("submitted"):
             applied += 1
 
@@ -1278,7 +1410,11 @@ def create_app(
     access_code: str | None = None,
     dev_nav: bool = False,
     submitter_registry=None,
+    personal: bool | None = None,
 ):
+    if personal is None:
+        from jobhunt.personal import is_personal
+        personal = is_personal() and state is not None
     if _FASTAPI_IMPORT_ERROR is not None:  # pragma: no cover
         raise RuntimeError(
             "fastapi is not installed. Run `pip install fastapi uvicorn`."
@@ -1398,9 +1534,16 @@ def create_app(
         if state is not None:
             disc_interval = int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0"))
             if disc_interval > 0:
+                first_delay = int(os.environ.get(
+                    "JOBHUNT_DISCOVERY_FIRST_DELAY_SECONDS", disc_interval))
+
                 async def _disc_loop():
+                    delay = first_delay
                     while True:
-                        await asyncio.sleep(disc_interval)
+                        await asyncio.sleep(delay)
+                        delay = disc_interval
+                        if state.user_profile is None:
+                            continue
                         try:
                             res = await asyncio.to_thread(_discover_once, state, registry)
                             if res.get("added") or res.get("applied"):
@@ -1532,8 +1675,11 @@ def create_app(
     _frontend_built = _frontend_dir.is_dir() and (_frontend_dir / "index.html").exists()
 
     @app.get("/", response_class=HTMLResponse)
-    def index(_state: DashboardState = Depends(get_state)) -> str:
+    def index(_state: DashboardState = Depends(get_state)):
         # Keep Depends(get_state) so the workspace cookie is still minted here.
+        if personal and _frontend_built:
+            # One owner has no use for the marketing landing page.
+            return RedirectResponse("/dashboard/")
         if _frontend_built:
             return (_frontend_dir / "index.html").read_text(encoding="utf-8")
         return (Path(__file__).parent / "client.html").read_text(encoding="utf-8")
@@ -1607,6 +1753,8 @@ def create_app(
             "applied_today": _applied_today(state),
             "continuous": int(os.environ.get("JOBHUNT_DISCOVERY_POLL_SECONDS", "0")) > 0,
             "notify_channels": [s.name for s in notifier.sinks] if notifier else [],
+            "personal": personal,
+            "capabilities": _capabilities(notifier, inbox_source),
         }
 
     # ---------------------------------------------------------------------- auth
@@ -2791,9 +2939,6 @@ def create_app(
         if decision == "approve":
             job = next((j for j in state.jobs if j["job_id"] == req.job_id), None)
             doc = state.documents.get(req.job_id)
-            if job is not None and job.get("status") == "Saved":
-                job["status"] = "Applied"
-                _record_activity(state)
             _add_event(state, req.job_id, "Approved",
                        f"Resume approved by {reviewer or 'you'}")
             submission = _auto_apply(state, registry, req, job, doc)

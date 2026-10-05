@@ -25,6 +25,15 @@ services:
     #      writes there instead of the ephemeral disk. Leave it unset to keep
     #      using the default ephemeral SQLite file.
     envVars:
+      # Personal mode: one owner's tool rather than a multi-user product — a
+      # single persisted state with automatic sweeps, digests and notifications.
+      # Set to "0" to go back to per-browser workspaces. See jobhunt/personal.py.
+      - key: JOBHUNT_PERSONAL
+        value: "1"
+      - key: JOBHUNT_ME_ROLES
+        value: Data Engineer
+      - key: JOBHUNT_ME_LOCATIONS
+        value: Hyderabad,Bangalore,Remote
       - key: JOBHUNT_DB_PATH
         value: /tmp/jobhunt.db
       # Multi-tenant mode: where per-browser workspace SQLite files live, and
@@ -33,14 +42,13 @@ services:
         value: /tmp/jobhunt-workspaces
       - key: JOBHUNT_WORKSPACE_CAP
         value: "200"
-      # Optional: point the public résumé/ATS-tool store at a free external
-      # Postgres (e.g. Neon, Supabase) for durability across redeploys, at
-      # no extra hosting cost. Unset = ephemeral SQLite file (default).
-      # - key: DATABASE_URL
-      #   sync: false
-      # Set this in the Render dashboard after the first deploy (or here) to
-      # require testers to enter a passcode before using the live app —
-      # recommended when sharing the URL outside your immediate team.
+      # Strongly recommended in personal mode: the free disk is wiped on every
+      # redeploy and idle spin-down, taking your profile and applications with
+      # it. A free Postgres URL (Neon or Supabase) keeps everything.
+      - key: DATABASE_URL
+        sync: false
+      # Required in personal mode: the dashboard holds your résumé and can
+      # apply to jobs in your name. The app asks for this code once per browser.
       - key: JOBHUNT_ACCESS_CODE
         sync: false
       # Adzuna (free key at developer.adzuna.com) — the only source with real

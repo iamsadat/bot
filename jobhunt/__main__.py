@@ -155,6 +155,7 @@ def cmd_serve(args) -> int:
     import os
 
     from jobhunt.dashboard.persistence import DashboardStore
+    from jobhunt.personal import is_personal, seed_profile
 
     trace = TraceStore()
     bus = ThoughtBus()
@@ -164,6 +165,10 @@ def cmd_serve(args) -> int:
     if state.user_profile:
         print(f"  Restored profile: {state.user_profile.name} "
               f"({len(state.jobs)} jobs, hunt_status={state.hunt_status})")
+    if is_personal():
+        seeded = seed_profile(state, force=getattr(args, "reseed", False))
+        if seeded:
+            print(f"  {seeded}")
     # Local `serve` is a dev context, so show the Tracker/Demo nav by default;
     # production (jobhunt.dashboard.app) keeps them off unless JOBHUNT_DEV_NAV
     # is set. Either way the env var wins when explicitly provided.
@@ -171,10 +176,50 @@ def cmd_serve(args) -> int:
     dev_nav = _dev_nav_env in ("1", "true", "yes", "on") if _dev_nav_env else True
     app = __import__(
         "jobhunt.dashboard.server", fromlist=["create_app"]
-    ).create_app(state, dev_nav=dev_nav)
-    print(f"\n  JobHunt dashboard running at http://{args.host}:{args.port}\n")
+    ).create_app(state, dev_nav=dev_nav,
+                 access_code=os.environ.get("JOBHUNT_ACCESS_CODE") or None)
+    url = f"http://{args.host}:{args.port}"
+    if is_personal():
+        _print_checklist(state)
+        if getattr(args, "open", False):
+            import threading
+            import webbrowser
+            threading.Timer(1.5, webbrowser.open, (url,)).start()
+    print(f"\n  JobHunt dashboard running at {url}\n")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
+
+
+def _print_checklist(state) -> None:
+    """What personal mode switched on, and what one line turns on the rest."""
+    from jobhunt.dashboard.server import _capabilities
+    from jobhunt.dashboard.inbox_sync import build_inbox_from_env
+    from jobhunt.notify import build_notifier_from_env
+
+    p = state.user_profile
+    print("\n  Personal mode")
+    if p is None:
+        print("    ! no profile yet — set JOBHUNT_ME_RESUME in me.env, "
+              "or upload your résumé at /onboarding")
+    else:
+        mode = "autonomous" if p.auto_apply else "co-pilot (you press Submit)"
+        print(f"    {p.name} · {', '.join(p.target_roles)} · {', '.join(p.locations)}")
+        print(f"    applying: {mode} · auto-apply floor {p.relevance_floor:.0%}, "
+              f"cap {p.daily_apply_cap}/day")
+    for row in _capabilities(build_notifier_from_env(), build_inbox_from_env()):
+        mark = "on " if row["on"] else "off"
+        print(f"    [{mark}] {row['label']}" + (f"  — {row['hint']}" if row["hint"] else ""))
+
+
+def cmd_me(args) -> int:
+    """Run JobHunt as the owner's personal tool. See jobhunt/personal.py."""
+    from jobhunt.personal import enable
+
+    loaded = enable(args.env)
+    if not loaded:
+        print(f"  (no settings loaded from {args.env} — copy me.env.example to "
+              f"{args.env} to configure)")
+    return cmd_serve(args)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -195,12 +240,25 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--port", default=8765, type=int)
     p_serve.add_argument("--db-path", default="jobhunt.db",
                          help="SQLite path for dashboard persistence")
+    p_me = sub.add_parser("me", help="run as your personal job-hunting tool (reads me.env)")
+    p_me.add_argument("--host", default="127.0.0.1")
+    p_me.add_argument("--port", default=8765, type=int)
+    p_me.add_argument("--db-path", default="jobhunt.db",
+                      help="SQLite path; your profile, jobs and applications live here")
+    p_me.add_argument("--env", default="me.env", help="settings file (default me.env)")
+    p_me.add_argument("--reseed", action="store_true",
+                      help="rebuild the profile from JOBHUNT_ME_RESUME, keeping "
+                           "screening answers")
+    p_me.add_argument("--no-open", dest="open", action="store_false",
+                      help="don't open the browser")
     sub.add_parser("mcp", help="run the MCP server (agent-callable tools) over stdio")
     args = parser.parse_args(argv)
     if args.cmd == "demo":
         return cmd_demo(args)
     if args.cmd == "serve":
         return cmd_serve(args)
+    if args.cmd == "me":
+        return cmd_me(args)
     if args.cmd == "mcp":
         from jobhunt.mcp_server import serve_stdio
         serve_stdio()
