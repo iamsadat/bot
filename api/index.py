@@ -13,11 +13,23 @@ os.environ.setdefault("JOBHUNT_PERSONAL", "1")
 if not os.environ.get("DATABASE_URL"):
     os.environ.setdefault("JOBHUNT_DB_PATH", "/tmp/jobhunt.db")  # only /tmp is writable
 
-try:
-    from jobhunt.dashboard.app import app  # noqa: E402,F401
-except Exception as exc:
+
+def _report_unreachable_database() -> None:
     # Vercel's log view truncates long tracebacks from the bottom, which is
-    # exactly where a database error's cause is. Lead with it instead.
-    print(f"jobhunt failed to start: {getattr(exc, 'orig', None) or exc!r}"[:600],
-          flush=True)
-    raise
+    # exactly where a database error's cause is. Lead with it instead. (The
+    # import below must stay at top level: Vercel finds `app` statically.)
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return
+    try:
+        import sqlalchemy
+
+        sqlalchemy.create_engine(url).connect().close()
+    except Exception as exc:
+        print(f"jobhunt database unreachable: {getattr(exc, 'orig', None) or exc!r}"[:600],
+              flush=True)
+
+
+_report_unreachable_database()
+
+from jobhunt.dashboard.app import app  # noqa: E402,F401
