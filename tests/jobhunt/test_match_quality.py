@@ -360,3 +360,40 @@ def test_a_snippet_that_does_name_skills_still_gets_credit():
     without = _posting(jd_text="Engineer wanted. Great team, great benefits.")
     assert (score(with_skills, _profile())["total"]
             > score(without, _profile())["total"])
+
+
+# --------------------------------------------------------------------------- #
+# Native-search sources (Adzuna) — found live with a real key
+# --------------------------------------------------------------------------- #
+
+def test_out_of_band_seniority_cannot_score_as_a_strong_match():
+    """A Staff role with a perfect title, place and skills scored 86% for a
+    junior, because seniority is only 15% of the weight."""
+    staff = _posting(title="Staff Data Engineer", jd_text="Databricks." * 3)
+    assert score(staff, _profile())["total"] <= 0.35
+
+
+def test_discovery_filters_sources_that_do_not_filter_themselves(store, bus):
+    """Adzuna's keyword search returns Staff roles and sales jobs for "data
+    engineer", and unlike the board adapters it applies no local filter."""
+    from jobhunt.agents.discovery import DiscoveryAgent, DiscoveryInputs
+
+    class KeywordSearch:
+        name = "adzuna"
+
+        def search(self, query):
+            return [
+                _posting(job_id="a", source_id="a", title="Data Engineer"),
+                _posting(job_id="b", source_id="b", title="Staff Software Engineer (Data Platform)"),
+                _posting(job_id="c", source_id="c", title="Inside Sales Executive"),
+            ]
+
+    profile = _profile()
+    query = {"role": "Data Engineer", "location": "Hyderabad", "remote_ok": True,
+             "candidate_level": 1, "all_locations": profile.locations}
+    result = DiscoveryAgent(store, bus).run(
+        DiscoveryInputs(profile=profile, queries=[query],
+                        sources=[KeywordSearch()], plan_id="p"),
+        task_id="t",
+    )
+    assert [p.title for p in result.output.postings] == ["Data Engineer"]

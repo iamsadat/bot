@@ -18,7 +18,7 @@ from typing import Any
 
 from jobhunt.adapters.base import JobSource
 from jobhunt.adapters.filters import ANYWHERE as _ANYWHERE_PLACES
-from jobhunt.adapters.filters import place_matches, remote_scope, words
+from jobhunt.adapters.filters import passes_local_filters, place_matches, remote_scope, words
 from jobhunt.agents.base import BaseAgent
 from jobhunt.models import (
     DiscoveryBatch,
@@ -28,7 +28,7 @@ from jobhunt.models import (
 )
 from jobhunt.seniority import LEVEL_NAMES
 from jobhunt.seniority import fit as seniority_fit
-from jobhunt.seniority import level_from_posting, level_from_profile
+from jobhunt.seniority import level_from_posting, level_from_profile, within_band
 from jobhunt.skills_taxonomy import canonical, expand_terms, skills_in_text
 
 
@@ -81,6 +81,10 @@ _UNKNOWN_SKILL_FIT = 0.5
 # for. Skills and location can only ever make a wrong role look like a near
 # miss, never a match, so the total is capped rather than averaged.
 _WRONG_ROLE_CEILING = 0.25
+# A role outside the candidate's level band (see seniority.within_band) is not a
+# match however well the title and skills line up: seniority is only 15% of the
+# weight, so without a cap a Staff role scored 86% for a junior.
+_WRONG_LEVEL_CEILING = 0.35
 
 
 def _title_forms(text: str) -> set[str]:
@@ -216,6 +220,8 @@ def score(posting: JobPosting, profile: UserProfile) -> dict[str, Any]:
     total = sum(w * v for w, v in parts) / sum(w for w, _ in parts)
     if t <= 0.0:
         total = min(total, _WRONG_ROLE_CEILING)
+    if not within_band(cand_level, post_level):
+        total = min(total, _WRONG_LEVEL_CEILING)
 
     return {
         "total": round(min(1.0, max(0.0, total)), 4),
@@ -318,7 +324,12 @@ class DiscoveryAgent(BaseAgent[DiscoveryInputs, DiscoveryBatch]):
             sources_used.append(src.name)
             for q in inputs.queries:
                 def _do_search(source=src, query=q):
-                    return source.search(query)
+                    # Board adapters filter inside search(); native-search
+                    # sources (Adzuna) return whatever their keyword match
+                    # found — Staff roles and sales jobs for "data engineer".
+                    # Filtering here covers every source; it is idempotent.
+                    return [p for p in source.search(query)
+                            if passes_local_filters(p, query)]
 
                 def _empty() -> list[JobPosting]:
                     return []
