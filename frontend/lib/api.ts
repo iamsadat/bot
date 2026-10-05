@@ -1,14 +1,73 @@
 // Typed client for the JobHunt FastAPI backend. Same-origin in production
-// (served under /app); set NEXT_PUBLIC_API_BASE for local dev against :8000.
+// (the static export is served at the site root; /app is a demo); set
+// NEXT_PUBLIC_API_BASE for local dev against :8000.
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '';
 
+// ---- access code ---------------------------------------------------------
+// When the server sets JOBHUNT_ACCESS_CODE, every /api/* call needs it in an
+// X-Access-Code header (the websocket takes ?code=). It is remembered in
+// localStorage so it is typed once per browser. Storage can throw (private
+// mode, blocked site data), so every touch is guarded and the page still
+// works — it just asks again.
+const ACCESS_CODE_KEY = 'jh_access_code';
+
+export function getAccessCode(): string {
+  try {
+    return (typeof window !== 'undefined' && window.localStorage.getItem(ACCESS_CODE_KEY)) || '';
+  } catch {
+    return '';
+  }
+}
+
+function storeAccessCode(code: string): void {
+  try { window.localStorage.setItem(ACCESS_CODE_KEY, code); } catch { /* storage blocked */ }
+}
+
+// Set once the user cancels the prompt, so a page full of pollers does not
+// re-ask every few seconds. A reload asks again.
+let accessPromptDeclined = false;
+
+// Called after a 401. Returns the code to retry with, or null to give up.
+// window.prompt blocks, so concurrent 401s are handled one after another: the
+// first asks, the rest see the freshly stored code and just retry with it.
+function codeAfterUnauthorized(sent: string): string | null {
+  const current = getAccessCode();
+  if (current && current !== sent) return current;
+  if (accessPromptDeclined || typeof window === 'undefined') return null;
+  const entered = window.prompt(
+    sent
+      ? 'That access code was not accepted. Enter the JobHunt access code:'
+      : 'This JobHunt is protected. Enter the access code:',
+  );
+  const code = (entered || '').trim();
+  if (!code) {
+    accessPromptDeclined = true;
+    return null;
+  }
+  storeAccessCode(code);
+  return code;
+}
+
+/** fetch() for API URLs: sends the access code; on a 401 asks for it once and retries once. */
+export async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const send = (code: string) => {
+    const headers = new Headers(init.headers);
+    if (code) headers.set('X-Access-Code', code);
+    return fetch(url, { credentials: 'include', ...init, headers });
+  };
+  const code = getAccessCode();
+  const res = await send(code);
+  if (res.status !== 401) return res;
+  const retry = codeAfterUnauthorized(code);
+  return retry ? send(retry) : res;
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(`${API_BASE}${path}`, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
-    credentials: 'include',
   });
   if (!res.ok) {
     // Surface the API's own explanation when it sent one. Without this the
@@ -39,7 +98,12 @@ export const api = {
     req<ParsedResume>('POST', '/api/profile/parse-resume-file', { filename, content_base64 }),
   importGithub: (username: string) =>
     req<{ added: number; projects: any[] }>('POST', '/api/profile/import-github', { username }),
+  // First-time creation only: the POST rebuilds the profile from scratch, which
+  // resets autonomy, radar and screening answers. Edits go through updateProfile.
   saveProfile: (p: any) => req<any>('POST', '/api/onboarding/profile', p),
+  // Merge-update an existing profile; fields left out are kept as they are.
+  updateProfile: (p: ProfileUpdate) =>
+    req<{ ok: boolean; profile: Profile }>('PUT', '/api/profile', p),
   saveAts: (a: AtsConfig) => req<{ ok: boolean; ats_config: AtsConfig }>(
     'POST', '/api/onboarding/ats', a),
   setJobStatus: (jobId: string, status: string) =>
@@ -47,9 +111,10 @@ export const api = {
   saveStructured: (p: any) => req<any>('PUT', '/api/profile/structured', p),
   startHunt: () => req<any>('POST', '/api/hunt/start'),
   discover: () => req<DiscoverResult>('POST', '/api/discover'),
+  syncInbox: () => req<InboxSyncResult>('POST', '/api/inbox/sync'),
   sources: () => req<SourcesInfo>('GET', '/api/sources'),
   approve: (id: string, decision = 'approve') =>
-    req<any>('POST', `/api/approve/${id}?decision=${decision}`),
+    req<ApproveResult>('POST', `/api/approve/${id}?decision=${decision}`),
   downloadUrl: (jobId: string, fmt: string, kind = 'resume') =>
     `${API_BASE}/api/documents/${jobId}/download?format=${fmt}&kind=${kind}`,
   salary: (role: string, location = '') =>
@@ -87,9 +152,10 @@ export const api = {
 // (landing page, ATS tool). Never throws — a failed beacon must never break
 // the page it's called from.
 export function recordPageview(surface: 'landing' | 'ats_tool', ref?: string): void {
+  const code = getAccessCode();
   fetch(`${API_BASE}/api/pageview`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(code ? { 'X-Access-Code': code } : {}) },
     body: JSON.stringify({ surface, ref: ref ?? null }),
   }).catch(() => {});
 }
@@ -116,9 +182,8 @@ export interface SurfaceStats {
 export type PageviewStats = Record<'landing' | 'ats_tool' | 'public_resume', SurfaceStats>;
 
 async function adminReq<T>(path: string, token: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(`${API_BASE}${path}`, {
     headers: { 'X-Admin-Token': token },
-    credentials: 'include',
   });
   if (res.status === 403) throw new Error('forbidden');
   if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
@@ -163,7 +228,9 @@ export interface Contact {
 
 export function wsUrl(): string {
   const base = API_BASE || (typeof window !== 'undefined' ? window.location.origin : '');
-  return base.replace(/^http/, 'ws') + '/ws/stream';
+  // A browser WebSocket cannot set headers, so the access code rides as ?code=.
+  const code = getAccessCode();
+  return base.replace(/^http/, 'ws') + '/ws/stream' + (code ? `?code=${encodeURIComponent(code)}` : '');
 }
 
 // ---- types ---------------------------------------------------------------
@@ -173,11 +240,50 @@ export interface Status {
   auto_apply: boolean; applied_today: number; continuous: boolean;
   inbox_connected: boolean; llm?: { provider?: string };
   hunt_error?: string | null;
+  notify_channels?: string[];
+  // Single-user install: no workspaces, so there is no progress to "save".
+  personal?: boolean;
+  // What this install has switched on (LLM polish, inbox sync, …). Absent on
+  // older servers.
+  capabilities?: Capability[];
 }
-// Only the three boards with real submitters are exposed in the UI; the
-// endpoint accepts recruitee/workable/personio too (discovery-only).
+export interface Capability { key: string; label: string; on: boolean; hint: string; }
+export interface InboxSyncResult {
+  ok: boolean; checked?: number; updates?: number; error?: string;
+}
+// What an approve actually did. `copilot` means a browser window opened with
+// the application filled in, waiting for the user to press Submit there.
+export interface Submission {
+  submitted: boolean; manual?: boolean; copilot?: boolean; detail?: string;
+  submission_id?: string;
+}
+export interface ApproveResult {
+  ok: boolean; request?: Approval; submission?: Submission | null;
+}
+
+/** One line telling the user what an approve did; null when there is nothing to say. */
+export function describeSubmission(s?: Submission | null): { text: string; warn?: boolean } | null {
+  if (!s) return null;
+  if (s.copilot) {
+    return {
+      text: 'A browser window opened with the application filled in — review it and press Submit there.'
+        + (s.detail ? ` ${s.detail}` : ''),
+    };
+  }
+  if (s.submitted) {
+    return { text: s.detail || `Submitted${s.submission_id ? ` (id ${s.submission_id})` : ''}.` };
+  }
+  if (s.manual) {
+    return { text: s.detail || 'Marked Applied — open the posting to finish on the company site.' };
+  }
+  return { text: `Submission failed${s.detail ? `: ${s.detail}` : '.'}`, warn: true };
+}
+// Only three boards are edited in the UI, but the endpoint replaces the whole
+// config, so the discovery-only recruitee/workable/personio slugs have to be
+// sent back as loaded or a save wipes them.
 export interface AtsConfig {
   greenhouse_tokens?: string[]; lever_slugs?: string[]; ashby_slugs?: string[];
+  recruitee_slugs?: string[]; workable_slugs?: string[]; personio_slugs?: string[];
 }
 export interface SourceStatus {
   name: string; status: 'ok' | 'degraded'; jobs: number; checked_at: number;
@@ -235,6 +341,17 @@ export interface ResumeSection {
 export interface Profile {
   name: string; email: string; phone?: string; skills: string[];
   experiences: any[]; education: any[]; projects: any[]; links: Record<string, string>;
+  target_roles?: string[]; locations?: string[];
+  // Standard answers to ATS screening questions, used to auto-fill forms.
+  application_answers?: Record<string, unknown>;
+}
+// Fields PUT /api/profile merges; anything left out is kept as it is.
+export interface ProfileUpdate {
+  name?: string; email?: string; phone?: string;
+  target_roles?: string[]; locations?: string[]; skills?: string[];
+  links?: Record<string, string>; application_answers?: Record<string, unknown>;
+  auto_apply?: boolean; daily_apply_cap?: number; relevance_floor?: number;
+  remote_ok?: boolean; min_salary?: number | null; veto_companies?: string[];
 }
 export interface ParsedResume {
   skills: string[]; experiences: any[]; education: any[]; projects: any[];

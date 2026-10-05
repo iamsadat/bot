@@ -13,6 +13,7 @@ Usage::
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from jobhunt.autofill.base import Autofiller, AutofillResult, Page
@@ -25,6 +26,15 @@ _DEFAULT_ROUTES: tuple[tuple[str, type], ...] = (
     ("myworkdayjobs.com", WorkdayAutofiller),
     ("icims.com", IcimsAutofiller),
 )
+
+
+def _accepts_submit(fn: Any) -> bool:
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "submit" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 class AutofillRegistry:
@@ -73,7 +83,16 @@ class AutofillRegistry:
         url: str,
         profile: Any,
         answers: dict[str, str],
+        *,
+        submit: bool = False,
     ) -> AutofillResult:
-        """Find the right autofiller for *url* and run it against *page*."""
+        """Find the right autofiller for *url* and run it against *page*.
+
+        Action buttons are only clicked when ``submit=True``. An autofiller
+        that doesn't take ``submit`` is called without it (and so never
+        receives permission to click).
+        """
         autofiller = self.for_url(url)
+        if submit and _accepts_submit(autofiller.fill):
+            return autofiller.fill(page, profile, answers, submit=True)  # type: ignore[call-arg]
         return autofiller.fill(page, profile, answers)

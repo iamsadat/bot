@@ -48,7 +48,7 @@ export default function Rail() {
       className="fixed inset-y-0 left-0 z-20 hidden w-[220px] flex-col gap-6 p-[26px_18px] lg:flex"
       style={{ background: 'var(--color-surface)' }}
     >
-      <Link href="/" className="flex items-center gap-2.5 no-underline" style={{ color: 'inherit' }}>
+      <Link href="/dashboard" className="flex items-center gap-2.5 no-underline" style={{ color: 'inherit' }}>
         <Mark />
         <Wordmark />
       </Link>

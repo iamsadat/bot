@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import Nav from '@/components/Nav';
 import Rail from '@/components/Rail';
@@ -11,8 +12,8 @@ import Kanban from '@/components/Kanban';
 import ReasoningFeed from '@/components/ReasoningFeed';
 import AutonomyPanel from '@/components/AutonomyPanel';
 import ResumePreview from '@/components/ResumePreview';
-import { Button, Card, PageHead, SectionHead, Stat } from '@/components/ui';
-import { api, Approval, Job } from '@/lib/api';
+import { Button, Card, CardKicker, PageHead, SectionHead, Stat } from '@/components/ui';
+import { api, Approval, Capability, describeSubmission, Job } from '@/lib/api';
 import { usePoll } from '@/lib/useLive';
 
 function ago(epochSeconds: number): string {
@@ -43,7 +44,7 @@ function SourcesPanel() {
         {sourcesData && <span className="text-xs text-muted">page {sourcesData.page}</span>}
       </div>
       {sources.length === 0 ? (
-        <p className="text-xs text-muted">No sweep yet — hit Run a hunt or Check email.</p>
+        <p className="text-xs text-muted">No sweep yet — hit Run a hunt or Fetch jobs.</p>
       ) : (
         <div className="space-y-2">
           {sources.map((s) => (
@@ -80,12 +81,20 @@ function SourcesPanel() {
 function ApprovalsPanel() {
   const approvalsData = usePoll(() => api.approvals(), 2500);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // The approved row leaves the list on the next poll, so what the approve
+  // actually did is reported at panel level, not on the row.
+  const [note, setNote] = useState<{ text: string; warn?: boolean } | null>(null);
   const approvals = approvalsData?.approvals || [];
 
   const decide = async (a: Approval, decision: 'approve' | 'reject') => {
     setBusyId(a.request_id);
+    setNote(null);
     try {
-      await api.approve(a.request_id, decision);
+      const r = await api.approve(a.request_id, decision);
+      const s = decision === 'approve' ? describeSubmission(r.submission) : null;
+      if (s) setNote({ ...s, text: `${a.company}: ${s.text}` });
+    } catch (e) {
+      setNote({ text: e instanceof Error ? e.message : String(e), warn: true });
     } finally {
       setBusyId(null);
     }
@@ -121,12 +130,48 @@ function ApprovalsPanel() {
             ))}
           </div>
         )}
+        {note && <p className={`text-xs ${note.warn ? 'text-warn' : 'text-muted'}`}>{note.text}</p>}
       </Card>
     </motion.div>
   );
 }
 
+// What this install has switched on. Hidden when the server doesn't report it.
+function SetupPanel({ capabilities }: { capabilities?: Capability[] }) {
+  if (!Array.isArray(capabilities) || capabilities.length === 0) return null;
+  const onCount = capabilities.filter((c) => c.on).length;
+  return (
+    <Card elevation="sm">
+      <div className="flex items-center justify-between">
+        <CardKicker>Your setup</CardKicker>
+        <span className="text-[10px] text-muted">{onCount} of {capabilities.length} on</span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {capabilities.map((c) => (
+          <div key={c.key} className="flex items-start gap-2 text-[12.5px]">
+            <span
+              className="rail-dot mt-[6px]"
+              style={{ background: c.on ? 'var(--color-accent-2)' : 'var(--color-neutral-400)' }}
+              aria-hidden
+            />
+            <div className="min-w-0">
+              <div className={c.on ? undefined : 'text-muted'}>
+                {c.label}
+                <span className="sr-only">{c.on ? ' (on)' : ' (off)'}</span>
+              </div>
+              {!c.on && c.hint && (
+                <div className="text-[11px] leading-snug text-muted">{c.hint}</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
+  const router = useRouter();
   const status = usePoll(() => api.status(), 2500);
   const jobsData = usePoll(() => api.jobs(), 2500);
   const [selected, setSelected] = useState<Job | null>(null);
@@ -134,6 +179,13 @@ export default function Dashboard() {
   const [showApprovals, setShowApprovals] = useState(false);
   const [fetchMsg, setFetchMsg] = useState<{ text: string; warn?: boolean } | null>(null);
   const jobs = jobsData?.jobs || [];
+
+  // Nothing on this page works without a profile, so send a first run straight
+  // to building one. Only an explicit `false` counts — a failed poll is not "no profile".
+  const hasProfile = status?.has_profile;
+  useEffect(() => {
+    if (hasProfile === false) router.replace('/onboarding');
+  }, [hasProfile, router]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -164,6 +216,28 @@ export default function Dashboard() {
     }
   };
 
+  const syncInbox = async () => {
+    setFetchMsg(null);
+    setBusy(true);
+    try {
+      const r = await api.syncInbox();
+      if (r.ok === false) {
+        setFetchMsg({ text: `Inbox sync failed${r.error ? `: ${r.error}` : '.'}`, warn: true });
+      } else {
+        const checked = r.checked ?? 0;
+        const updates = r.updates ?? 0;
+        setFetchMsg({
+          text: `Inbox synced · ${checked} new message${checked === 1 ? '' : 's'} checked · `
+            + `${updates} application${updates === 1 ? '' : 's'} updated`,
+        });
+      }
+    } catch (e) {
+      setFetchMsg({ text: e instanceof Error ? e.message : String(e), warn: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Neither figure has its own API field — both are derived client-side from
   // the already-polled `jobs` list, so no new network calls are introduced.
   const vettedCount = jobs.filter((j) => typeof j.relevance_score === 'number' && j.relevance_score > 0).length;
@@ -171,8 +245,13 @@ export default function Dashboard() {
 
   const actions = (
     <>
+      {status?.inbox_connected && (
+        <Button variant="secondary" onClick={syncInbox} disabled={busy}>
+          Sync inbox
+        </Button>
+      )}
       <Button variant="secondary" onClick={fetchMore} disabled={busy || !status?.has_profile}>
-        Check email
+        Fetch jobs
       </Button>
       <Button
         variant="primary"
@@ -194,7 +273,9 @@ export default function Dashboard() {
         </div>
 
         <main className="relative z-10 mx-auto min-h-screen max-w-7xl">
-          <SaveProgressBanner />
+          {/* Ties an anonymous workspace to an email — meaningless on a
+              single-user install, where it could never be satisfied. */}
+          {status && !status.personal && <SaveProgressBanner />}
 
           <div className="space-y-5 px-6 pb-10 pt-6">
             <PageHead
@@ -258,6 +339,7 @@ export default function Dashboard() {
 
               <div className="space-y-4">
                 <AutonomyPanel />
+                <SetupPanel capabilities={status?.capabilities} />
                 <div className="h-[460px]">
                   <ReasoningFeed />
                 </div>

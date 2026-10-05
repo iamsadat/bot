@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { api, Doc, Job, ResumeDraft } from '@/lib/api';
+import { api, apiFetch, describeSubmission, Doc, Job, ResumeDraft } from '@/lib/api';
 import { Button, Card, CardTitle, Meter, Select, Tag } from './ui';
 
 function Rich({ s }: { s: string }) {
@@ -148,10 +148,15 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
   const [doc, setDoc] = useState<Doc | null>(null);
   const [salary, setSalary] = useState<any>(null);
   const [dlErr, setDlErr] = useState('');
+  const [approving, setApproving] = useState(false);
+  const [approved, setApproved] = useState(false);
+  const [approveMsg, setApproveMsg] = useState<{ text: string; warn?: boolean } | null>(null);
   useEffect(() => {
     setDoc(null);
     setSalary(null);
     setDlErr('');
+    setApproved(false);
+    setApproveMsg(null);
     if (job) {
       api.document(job.job_id).then((r) => setDoc(r.document)).catch(() => setDoc(null));
       // Salary intel is optional (needs Adzuna keys) — silently skip if off.
@@ -164,9 +169,9 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
   const download = async (jobId: string, fmt: string) => {
     setDlErr('');
     try {
-      // credentials: the old <a href> sent the workspace cookie implicitly;
-      // a cross-origin fetch (NEXT_PUBLIC_API_BASE in dev) would not.
-      const res = await fetch(api.downloadUrl(jobId, fmt), { credentials: 'include' });
+      // apiFetch sends the workspace cookie (an <a href> did so implicitly; a
+      // cross-origin fetch in dev would not) and the access code, if any.
+      const res = await apiFetch(api.downloadUrl(jobId, fmt));
       if (!res.ok) throw new Error();
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -179,6 +184,23 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
       URL.revokeObjectURL(url);
     } catch {
       setDlErr(`${fmt.toUpperCase()} isn't available right now — try again later.`);
+    }
+  };
+
+  // The drawer stays open after approving so the user can read what actually
+  // happened — submitted, left for them to finish, or waiting in a co-pilot
+  // browser window for their Submit.
+  const approve = async (jobId: string) => {
+    setApproving(true);
+    setApproveMsg(null);
+    try {
+      const r = await api.approve(jobId);
+      setApproved(true);
+      setApproveMsg(describeSubmission(r.submission) ?? { text: 'Approved.' });
+    } catch (e) {
+      setApproveMsg({ text: e instanceof Error ? e.message : String(e), warn: true });
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -250,10 +272,17 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               >
                 ↗ Publish
               </Button>
-              <Button variant="primary" onClick={() => api.approve(job.job_id).then(onClose)}>
-                Approve & apply
+              <Button
+                variant="primary"
+                onClick={() => approve(job.job_id)}
+                disabled={approving || approved}
+              >
+                {approved ? 'Approved' : approving ? 'Approving…' : 'Approve & apply'}
               </Button>
             </div>
+            {approveMsg && (
+              <p className={`m-0 text-xs ${approveMsg.warn ? 'text-warn' : 'text-muted'}`}>{approveMsg.text}</p>
+            )}
 
             {doc?.draft ? (
               <ResumeDoc d={doc.draft} />

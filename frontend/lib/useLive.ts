@@ -36,6 +36,9 @@ export function useReasoningStream(max = 120): ActivityEvent[] {
     let closed = false;
     const connect = () => {
       try {
+        // Rebuilt on every (re)connect so an access code entered after a REST
+        // 401 is picked up: a gated server closes a code-less socket (1008)
+        // and the next attempt carries ?code=.
         ws = new WebSocket(wsUrl());
       } catch {
         return;

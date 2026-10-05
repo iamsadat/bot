@@ -14,6 +14,7 @@ wrapper can translate them into degraded results.
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -64,6 +65,10 @@ class UrllibHTTPClient:
             raise HTTPClientError(f"{url} failed: {exc}", status=exc.code) from exc
         except urllib.error.URLError as exc:
             raise HTTPClientError(f"{url} failed: {exc}") from exc
+        except (OSError, http.client.HTTPException) as exc:
+            # A read timeout or reset mid-body is not a URLError, so it used to
+            # escape and take a whole source down with one slow board.
+            raise HTTPClientError(f"{url} failed: {exc!r}") from exc
         try:
             return json.loads(body)
         except json.JSONDecodeError as exc:
@@ -89,6 +94,10 @@ class UrllibHTTPClient:
             raise HTTPClientError(f"{url} failed: {exc}", status=exc.code) from exc
         except urllib.error.URLError as exc:
             raise HTTPClientError(f"{url} failed: {exc}") from exc
+        except (OSError, http.client.HTTPException) as exc:
+            # A read timeout or reset mid-body is not a URLError, so it used to
+            # escape and take a whole source down with one slow board.
+            raise HTTPClientError(f"{url} failed: {exc!r}") from exc
         try:
             return body.decode("utf-8")
         except UnicodeDecodeError:

@@ -12,9 +12,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from jobhunt.adapters.base import JobSource, SourceUnavailable
+from jobhunt.adapters.base import JobSource, SourceUnavailable, fetch_boards
 from jobhunt.adapters.filters import passes_local_filters
-from jobhunt.http import HTTPClient, HTTPClientError, UrllibHTTPClient
+from jobhunt.http import HTTPClient, UrllibHTTPClient
 from jobhunt.models import JobPosting
 
 _API = "https://api.lever.co/v0/postings/{company}?mode=json"
@@ -43,11 +43,13 @@ class LeverSource(JobSource):
         """
         postings: list[JobPosting] = []
         failures: list[str] = []
-        for slug in self._companies:
-            try:
-                payload = self._http.get_json(_API.format(company=slug))
-            except HTTPClientError as exc:
-                failures.append(f"{slug}: {exc}")
+        # Lever resets connections under heavier concurrency.
+        urls = {slug: _API.format(company=slug) for slug in self._companies}
+        for slug, payload, error in fetch_boards(self._http, urls, workers=4):
+            if error:
+                # One retired board must not take out the rest. Only a total
+                # failure counts as the source being unavailable.
+                failures.append(error)
                 continue
             if not isinstance(payload, list):
                 continue

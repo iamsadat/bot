@@ -1,0 +1,11 @@
+# Keep the deployment to JobHunt: the static frontend and the Python function.
+jargon/
+tests/
+docs/
+*.db
+.claude/
+frontend/node_modules/
+frontend/out/
+.venv/
+venv/
+me.env
