@@ -20,9 +20,12 @@ export function usePoll<T>(fetcher: () => Promise<T>, interval = 2500): T | null
     };
     tick();
     const id = setInterval(tick, interval);
+    // The assistant changed something: fetch now rather than at the next tick.
+    window.addEventListener('jobhunt:refresh', tick);
     return () => {
       alive = false;
       clearInterval(id);
+      window.removeEventListener('jobhunt:refresh', tick);
     };
   }, [interval]);
   return data;

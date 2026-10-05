@@ -151,7 +151,12 @@ export default function Insights() {
 function CareerRadar({ radar }: { radar: any }) {
   const [s, setS] = useState<RadarSettings | null>(null);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { api.radarSettings().then(setS).catch(() => {}); }, []);
+  useEffect(() => {
+    const load = () => { api.radarSettings().then(setS).catch(() => {}); };
+    load();
+    window.addEventListener('jobhunt:refresh', load); // the assistant changed something
+    return () => window.removeEventListener('jobhunt:refresh', load);
+  }, []);
   const save = async (patch: Partial<RadarSettings>) => {
     if (!s) return;
     setSaving(true); setS({ ...s, ...patch });
@@ -209,6 +214,10 @@ function Contacts() {
   const [form, setForm] = useState<Partial<Contact>>({});
   const load = () => api.contacts(due).then((r) => setList(r.contacts || [])).catch(() => {});
   useEffect(() => { load(); }, [due]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    window.addEventListener('jobhunt:refresh', load);
+    return () => window.removeEventListener('jobhunt:refresh', load);
+  }, [due]); // eslint-disable-line react-hooks/exhaustive-deps
   const add = async () => {
     if (!form.email) return;
     await api.saveContact(form); setForm({}); load();

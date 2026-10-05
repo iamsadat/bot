@@ -72,6 +72,7 @@ Endpoints:
   GET  /api/analytics             funnel + résumé-strategy A/B experiment results
   GET  /api/approvals             approval queue
   POST /api/approve/{id}          human one-click decision
+  POST /api/assistant/chat        in-app assistant: chat + validated actions
   WS   /ws/stream                 live thought stream
 
 Endpoints marked "(admin token)" require an ``X-Admin-Token`` header matching
@@ -99,6 +100,7 @@ from jobhunt import company_boards
 from jobhunt.ab import Experiment, ExperimentRegistry, Variant
 from jobhunt.adapters.adzuna import country_for as _adzuna_country_for
 from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
+from jobhunt.assistant import handle_chat as _assistant_chat
 from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue
 from jobhunt.digest import build_digest
 from jobhunt.metrics import compute_funnel
@@ -3060,6 +3062,16 @@ def create_app(
                           f"{req.company} → {decision} by {reviewer or 'anon'}")
         state.persist()
         return {"ok": True, "request": req.to_dict(), "submission": submission}
+
+    # ----------------------------------------------------------------- assistant
+
+    @app.post("/api/assistant/chat")
+    async def assistant_chat(body: dict, state: DashboardState = Depends(get_state)) -> dict:
+        """Chat with the in-app assistant; it may change state via validated
+        actions (see jobhunt/assistant.py). Risky ones come back ``pending``
+        and run only when resent in ``confirm``."""
+        state.bus.set_loop(asyncio.get_event_loop())
+        return await asyncio.to_thread(_assistant_chat, state, body, registry=registry)
 
     # ----------------------------------------------------------------- WebSocket
 

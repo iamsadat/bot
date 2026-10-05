@@ -81,6 +81,15 @@ export default function Onboarding() {
   // tailored job draft that doesn't exist yet at onboarding time.
   const metrics = usePoll(() => api.metrics(), 8000);
 
+  // Assistant hook: re-run the profile load below when the in-app assistant
+  // changes something (it dispatches `jobhunt:refresh`).
+  const [refreshTick, setRefreshTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setRefreshTick((n) => n + 1);
+    window.addEventListener('jobhunt:refresh', bump);
+    return () => window.removeEventListener('jobhunt:refresh', bump);
+  }, []);
+
   useEffect(() => {
     api.profile().then((r) => {
       const a = r.ats_config;
@@ -108,7 +117,7 @@ export default function Onboarding() {
       setProjs((p.projects || []) as Proj[]);
       setLinks(p.links || {});
     }).catch(() => {});
-  }, []);
+  }, [refreshTick]);
 
   const applyParsed = (r: any) => {
     // Contact details and a first target role fill only empty fields, so a

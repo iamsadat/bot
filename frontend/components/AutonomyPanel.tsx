@@ -10,7 +10,11 @@ export default function AutonomyPanel() {
   const [saving, setSaving] = useState(false);
 
   const load = () => api.autonomy().then(setA).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    window.addEventListener('jobhunt:refresh', load); // the assistant changed something
+    return () => window.removeEventListener('jobhunt:refresh', load);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const update = async (patch: Partial<Autonomy>) => {
     if (!a) return;
