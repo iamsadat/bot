@@ -31,7 +31,7 @@ or you're testing the wrong thing.
    - **Enter your locations, including your country.** A board that posts
      "Bengaluru" is matched to "India", but only if India is on your list.
    - **Connect job boards is optional.** Leave it empty and the hunt searches
-     25 curated public company boards. Add handles to search a specific
+     177 curated public company boards. Add handles to search a specific
      employer as well.
    - Hit **Save profile**.
 
@@ -71,9 +71,10 @@ or you're testing the wrong thing.
 
 ## Known limits, so they don't read as bugs
 
-- **A new workspace searches curated public company boards.** 25 verified
+- **A new workspace searches curated public company boards.** 177 verified
   Greenhouse / Lever / Ashby boards, weighted towards India, plus the keyless
-  feeds below. No credentials of any kind. Boards are read six at a time, so
+  feeds below. No credentials of any kind. Boards are read six at a time
+  (`JOBHUNT_BOARDS_PER_PAGE`; personal mode reads all of them, ~45s), so
   repeat "Fetch more" clicks reach new companies; the source panel says which
   page you are on. Connect your own handles on `/onboarding#boards` to search
   specific employers as well.

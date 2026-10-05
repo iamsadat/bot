@@ -20,9 +20,9 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
 
-from jobhunt.adapters.base import JobSource, SourceUnavailable
+from jobhunt.adapters.base import JobSource, SourceUnavailable, fetch_boards
 from jobhunt.adapters.filters import passes_local_filters
-from jobhunt.http import HTTPClient, HTTPClientError, UrllibHTTPClient
+from jobhunt.http import HTTPClient, UrllibHTTPClient
 from jobhunt.models import JobPosting
 
 _API = "https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
@@ -84,13 +84,12 @@ class GreenhouseSource(JobSource):
         """
         postings: list[JobPosting] = []
         failures: list[str] = []
-        for token in self._tokens:
-            try:
-                payload = self._http.get_json(_API.format(board=token))
-            except HTTPClientError as exc:
+        urls = {token: _API.format(board=token) for token in self._tokens}
+        for token, payload, error in fetch_boards(self._http, urls):
+            if error:
                 # One retired board must not take out the rest. Only a total
                 # failure counts as the source being unavailable.
-                failures.append(f"{token}: {exc}")
+                failures.append(error)
                 continue
             company = token.replace("-", " ").title()
             postings.extend(

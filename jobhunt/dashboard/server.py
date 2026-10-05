@@ -2156,7 +2156,7 @@ def create_app(
             # The UI uses this to explain a legitimate "0 new".
             "ats_connected": _ats_connected(state),
             # Whether those boards are ours or the user's. The UI says so, and
-            # offers to connect their own — otherwise "25 public company boards"
+            # offers to connect their own — otherwise "177 public company boards"
             # looks like magic and a user with a specific employer in mind has
             # nowhere on the dashboard to add it.
             "seeded_boards": not any(
