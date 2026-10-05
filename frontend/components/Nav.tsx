@@ -20,7 +20,7 @@ export default function Nav({ right }: { right?: React.ReactNode }) {
       className="relative z-20 flex items-center justify-between gap-3 px-4 py-3 lg:hidden"
       style={{ background: 'var(--color-surface)' }}
     >
-      <Link href="/" className="flex items-center gap-2 no-underline" style={{ color: 'inherit' }}>
+      <Link href="/dashboard" className="flex items-center gap-2 no-underline" style={{ color: 'inherit' }}>
         <Mark size={24} />
         <Wordmark size={18} />
       </Link>

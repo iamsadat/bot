@@ -3,13 +3,51 @@
 import { useEffect, useState } from 'react';
 import Nav from '@/components/Nav';
 import Rail from '@/components/Rail';
-import { Button, Card, Field, Input, Meter, PageHead, SectionHead, Tag, Textarea } from '@/components/ui';
-import { api } from '@/lib/api';
+import { Button, Card, Field, Input, Meter, PageHead, SectionHead, Select, Tag, Textarea } from '@/components/ui';
+import { api, AtsConfig } from '@/lib/api';
 import { usePoll } from '@/lib/useLive';
 
 type Exp = { title: string; company: string; location: string; start: string; end: string; bullets: string[] };
 type Edu = { school: string; degree: string; end: string };
 type Proj = { name: string; link: string; bullets: string[] };
+
+// Standard answers to the screening questions application forms ask. The keys
+// are the ones the submitters and autofill look up; any other key already
+// stored in application_answers is carried through a save untouched.
+type AnswerField = { key: string; label: string; placeholder?: string; yesNo?: boolean };
+const SCREENING_FIELDS: AnswerField[] = [
+  { key: 'work_authorization', label: 'Work authorization', placeholder: 'Indian citizen — no sponsorship needed' },
+  { key: 'requires_sponsorship', label: 'Need visa sponsorship?', yesNo: true },
+  { key: 'years_experience', label: 'Years of experience', placeholder: 'e.g. 3' },
+  { key: 'notice_period', label: 'Notice period', placeholder: 'e.g. 30 days, or Immediate joiner' },
+  { key: 'current_ctc', label: 'Current CTC', placeholder: 'e.g. ₹12 LPA' },
+  { key: 'expected_ctc', label: 'Expected CTC', placeholder: 'e.g. ₹18 LPA' },
+  { key: 'willing_to_relocate', label: 'Willing to relocate?', yesNo: true },
+  { key: 'how_did_you_hear', label: 'How did you hear about the role?', placeholder: 'e.g. LinkedIn, company careers page' },
+  { key: 'linkedin', label: 'LinkedIn URL', placeholder: 'https://linkedin.com/in/…' },
+  { key: 'github', label: 'GitHub URL', placeholder: 'https://github.com/…' },
+  { key: 'website', label: 'Portfolio / website', placeholder: 'https://…' },
+];
+const SELF_ID_FIELDS: AnswerField[] = [
+  { key: 'gender', label: 'Gender' },
+  { key: 'race', label: 'Race / ethnicity' },
+  { key: 'veteran_status', label: 'Veteran status' },
+  { key: 'disability_status', label: 'Disability status' },
+];
+
+// Older profiles may hold true/false or "yes"/"no"; show them in the Yes/No picker.
+function normalizeAnswers(raw?: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(raw || {}) };
+  for (const f of SCREENING_FIELDS) {
+    if (!f.yesNo) continue;
+    const v = out[f.key];
+    if (v === true || (typeof v === 'string' && /^(y|yes|true)$/i.test(v.trim()))) out[f.key] = 'Yes';
+    else if (v === false || (typeof v === 'string' && /^(n|no|false)$/i.test(v.trim()))) out[f.key] = 'No';
+  }
+  return out;
+}
+
+const splitList = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
 
 export default function Onboarding() {
   const [name, setName] = useState('');
@@ -27,6 +65,12 @@ export default function Onboarding() {
   const [ghTokens, setGhTokens] = useState('');
   const [leverSlugs, setLeverSlugs] = useState('');
   const [ashbySlugs, setAshbySlugs] = useState('');
+  // The discovery-only boards (recruitee/workable/personio) aren't edited
+  // here, but the ATS endpoint replaces the whole config — keep them to send back.
+  const [atsRest, setAtsRest] = useState<AtsConfig>({});
+  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  // Decides create (POST, first run only) vs merge-update (PUT) on save.
+  const [hasProfile, setHasProfile] = useState(false);
 
   // Real "evidence coverage" figure — same endpoint the Tracker screen uses —
   // stands in for the mockup's per-job ATS coverage meter, which needs a
@@ -37,13 +81,19 @@ export default function Onboarding() {
     api.profile().then((r) => {
       const a = r.ats_config;
       if (a) {
-        setGhTokens((a.greenhouse_tokens || []).join(', '));
-        setLeverSlugs((a.lever_slugs || []).join(', '));
-        setAshbySlugs((a.ashby_slugs || []).join(', '));
+        const { greenhouse_tokens = [], lever_slugs = [], ashby_slugs = [], ...rest } = a;
+        setGhTokens(greenhouse_tokens.join(', '));
+        setLeverSlugs(lever_slugs.join(', '));
+        setAshbySlugs(ashby_slugs.join(', '));
+        setAtsRest(rest);
       }
       const p = r.profile;
       if (!p) return;
+      setHasProfile(true);
       setName(p.name || ''); setEmail(p.email || ''); setPhone(p.phone || '');
+      setRoles((p.target_roles || []).join(', '));
+      setLocations((p.locations || []).join(', '));
+      setAnswers(normalizeAnswers(p.application_answers));
       setSkills((p.skills || []).join(', '));
       setExps((p.experiences || []) as Exp[]);
       setEdu((p.education || []) as Edu[]);
@@ -107,25 +157,52 @@ export default function Onboarding() {
     }
   };
 
+  const answerValue = (key: string) => {
+    const v = answers[key];
+    return v == null ? '' : String(v);
+  };
+  const setAnswer = (key: string, value: string) => setAnswers((a) => ({ ...a, [key]: value }));
+
   const save = async () => {
+    const target_roles = splitList(roles);
+    if (!target_roles.length) {
+      setMsg('Add at least one target role before saving.');
+      return;
+    }
     setMsg('Saving…');
+    // Every stored key goes back (unknown ones included); the server drops
+    // blank values, so clearing a field removes that answer.
+    const application_answers = Object.fromEntries(
+      Object.entries(answers).map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]),
+    );
+    const basics = {
+      name, email, phone, target_roles,
+      locations: splitList(locations),
+      skills: splitList(skills),
+      links,
+    };
     try {
-      await api.saveProfile({
-        name, email, phone,
-        target_roles: roles.split(',').map((x) => x.trim()).filter(Boolean),
-        locations: locations.split(',').map((x) => x.trim()).filter(Boolean),
-        skills: skills.split(',').map((x) => x.trim()).filter(Boolean),
-        links,
-      });
+      if (hasProfile) {
+        // Merge-update: auto-apply, radar settings and anything else this
+        // form doesn't show are left as they are.
+        await api.updateProfile({ ...basics, application_answers });
+      } else {
+        // First run only — the POST builds a fresh profile and doesn't take
+        // screening answers, so they follow in a merge-update.
+        await api.saveProfile(basics);
+        setHasProfile(true);
+        if (Object.keys(application_answers).length) await api.updateProfile({ application_answers });
+      }
       await api.saveStructured({ experiences: exps, education: edu, projects: projs, links });
       await api.saveAts({
-        greenhouse_tokens: ghTokens.split(',').map((x) => x.trim()).filter(Boolean),
-        lever_slugs: leverSlugs.split(',').map((x) => x.trim()).filter(Boolean),
-        ashby_slugs: ashbySlugs.split(',').map((x) => x.trim()).filter(Boolean),
+        ...atsRest,
+        greenhouse_tokens: splitList(ghTokens),
+        lever_slugs: splitList(leverSlugs),
+        ashby_slugs: splitList(ashbySlugs),
       });
       setMsg('Saved ✓');
-    } catch {
-      setMsg('Save failed — check name/email/role.');
+    } catch (e) {
+      setMsg(`Save failed — ${(e as Error).message || 'check name/email/role.'}`);
     }
   };
 
@@ -380,6 +457,46 @@ export default function Onboarding() {
                 <Field label="Lever company slugs (comma-sep)"><Input value={leverSlugs} onChange={(e) => setLeverSlugs(e.target.value)} /></Field>
                 <Field label="Ashby company slugs — discovery only"><Input value={ashbySlugs} onChange={(e) => setAshbySlugs(e.target.value)} /></Field>
               </div>
+            </Card>
+
+            <Card elevation="sm" id="screening">
+              <SectionHead title="Screening answers" />
+              <p className="text-[11px] text-muted">
+                Optional. Used to auto-fill the screening questions on application forms — leave anything blank to skip it.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {SCREENING_FIELDS.map((f) => {
+                  const v = answerValue(f.key);
+                  return (
+                    <Field key={f.key} label={f.label}>
+                      {f.yesNo ? (
+                        <Select value={v} onChange={(e) => setAnswer(f.key, e.target.value)}>
+                          <option value="">Not set</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                          {v && v !== 'Yes' && v !== 'No' && <option value={v}>{v}</option>}
+                        </Select>
+                      ) : (
+                        <Input value={v} placeholder={f.placeholder} onChange={(e) => setAnswer(f.key, e.target.value)} />
+                      )}
+                    </Field>
+                  );
+                })}
+              </div>
+              <details>
+                <summary className="cursor-pointer text-[12.5px] font-semibold">Voluntary self-identification</summary>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {SELF_ID_FIELDS.map((f) => (
+                    <Field key={f.key} label={f.label}>
+                      <Input
+                        value={answerValue(f.key)}
+                        placeholder="Decline to self-identify"
+                        onChange={(e) => setAnswer(f.key, e.target.value)}
+                      />
+                    </Field>
+                  ))}
+                </div>
+              </details>
             </Card>
 
             <div className="flex items-center gap-3">
