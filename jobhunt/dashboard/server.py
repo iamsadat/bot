@@ -905,6 +905,11 @@ def _capabilities(notifier, inbox_source) -> list[dict]:
             for k, label, v, hint in rows]
 
 
+def _is_tracked(job: dict) -> bool:
+    """Whether the owner has acted on a job, so a new hunt must keep it."""
+    return job.get("status", "Saved") != "Saved" or bool(job.get("submitted"))
+
+
 def _job_dict_from_posting(p) -> dict:
     """Build a dashboard job dict (with fingerprint) from a JobPosting."""
     return {
@@ -1086,7 +1091,7 @@ def _update_market_value(state: DashboardState, salary_client) -> bool:
     role = profile.target_roles[0]
     location = profile.locations[0] if profile.locations else ""
     try:
-        est = salary_client.estimate(role, location)
+        est = salary_client.estimate(role, location, adzuna_country(profile))
     except Exception:
         return False
 
@@ -1174,12 +1179,17 @@ def _execute_hunt(state: DashboardState, registry=None) -> None:
     # Populate jobs from discovery batch (one-shot hunt replaces wholesale).
     batch = output.results.get("discovery")
     if batch:
-        state.jobs = [_job_dict_from_posting(p) for p in batch.postings]
+        fresh = [_job_dict_from_posting(p) for p in batch.postings]
+        tracked = [j for j in state.jobs if _is_tracked(j)]
+        seen = {j["job_id"] for j in tracked} | {j.get("fingerprint") for j in tracked}
+        state.jobs = tracked + [
+            j for j in fresh if j["job_id"] not in seen and j["fingerprint"] not in seen]
     _record_source_status(state, batch)
 
     # Populate submission packages
     subs = output.results.get("submission", [])
-    state.applications = [
+    kept_ids = {j["job_id"] for j in state.jobs if _is_tracked(j)}
+    state.applications = [a for a in state.applications if a.get("job_id") in kept_ids] + [
         {
             "job_id": s.job_id,
             "company": s.company,
@@ -2165,9 +2175,13 @@ def create_app(
             raise HTTPException(status_code=400, detail="complete onboarding first")
         if state.hunt_status == "running":
             raise HTTPException(status_code=409, detail="hunt already running")
-        state.jobs = []
-        state.applications = []
-        state.documents = {}
+        # A new hunt replaces untouched leads, never what the owner has acted
+        # on: it used to wipe Applied/Interview/Offer jobs and their résumés.
+        kept = [j for j in state.jobs if _is_tracked(j)]
+        kept_ids = {j["job_id"] for j in kept}
+        state.jobs = kept
+        state.applications = [a for a in state.applications if a.get("job_id") in kept_ids]
+        state.documents = {k: v for k, v in state.documents.items() if k in kept_ids}
         state.hunt_error = ""
         state.hunt_progress = {}
         # We're on the main event loop here (this is an async route handler,
@@ -2652,14 +2666,18 @@ def create_app(
         return {"salary": salary_client is not None, "news": news_client is not None}
 
     @app.get("/api/salary")
-    def salary(role: str, location: str = "") -> dict:
+    def salary(role: str, location: str = "",
+               state: DashboardState = Depends(get_state)) -> dict:
         if salary_client is None:
             raise HTTPException(status_code=400,
                                 detail="salary intel needs Adzuna keys (ADZUNA_APP_ID/KEY)")
         if not role.strip():
             raise HTTPException(status_code=422, detail="role is required")
         try:
-            est = salary_client.estimate(role, location)
+            # The profile's country, as job search uses: ADZUNA_COUNTRY
+            # defaults to "us", so a Bangalore lookup was a 400 from Adzuna US.
+            est = salary_client.estimate(role, location,
+                                         adzuna_country(state.user_profile))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"ok": True, **asdict(est)}

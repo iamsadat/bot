@@ -17,6 +17,7 @@ from typing import Any
 
 from jobhunt.adapters.base import JobSource, SourceUnavailable, fetch_boards
 from jobhunt.adapters.filters import passes_local_filters
+from jobhunt.company_boards import display_name
 from jobhunt.http import HTTPClient, UrllibHTTPClient
 from jobhunt.models import JobPosting
 
@@ -83,7 +84,7 @@ class AshbySource(JobSource):
                 # failure counts as the source being unavailable.
                 failures.append(error)
                 continue
-            display = slug.replace("-", " ").title()
+            display = display_name(slug)
             postings.extend(
                 self._row_to_posting(row, display)
                 for row in payload.get("jobs", [])

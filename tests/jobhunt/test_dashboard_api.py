@@ -877,3 +877,24 @@ def test_job_notes_set_and_persist():
 def test_job_notes_404_for_unknown_job():
     _, client = _client()
     assert client.post("/api/jobs/nope/notes", json={"notes": "x"}).status_code == 404
+
+
+def test_a_new_hunt_keeps_jobs_the_owner_acted_on(monkeypatch):
+    """Run a hunt used to replace every job wholesale, deleting applications
+    already Applied/Interviewing and their tailored résumés."""
+    from jobhunt.dashboard import server
+
+    state, client = _client()
+    client.post("/api/onboarding/profile", json=_profile_payload())
+    applied = {"job_id": "keep", "title": "Data Engineer", "company": "Acme",
+               "status": "Interview", "fingerprint": "fp-keep"}
+    lead = {"job_id": "drop", "title": "Old lead", "company": "Beta",
+            "status": "Saved", "fingerprint": "fp-drop"}
+    state.jobs = [applied, lead]
+    state.documents = {"keep": {"job_id": "keep"}, "drop": {"job_id": "drop"}}
+    monkeypatch.setattr(server, "_SERVERLESS", True)  # run the hunt inline
+    monkeypatch.setattr(server, "_execute_hunt", lambda state, registry=None: None)
+
+    assert client.post("/api/hunt/start", json={}).status_code == 200
+    assert [j["job_id"] for j in state.jobs] == ["keep"]
+    assert list(state.documents) == ["keep"]

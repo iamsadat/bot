@@ -16,12 +16,22 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from jobhunt.rate_limit import RateLimiter
+
+
+_SECRET_PARAM = re.compile(r"((?:app_)?key|api_key|apikey|token|secret|password)=[^&\s]+", re.I)
+
+
+def _safe(url: str) -> str:
+    """The URL with credential parameters masked. Error messages travel to the
+    browser and to logs, so a failing Adzuna call used to show its app_key."""
+    return _SECRET_PARAM.sub(r"\1=***", url)
 
 
 class HTTPClientError(Exception):
@@ -59,20 +69,20 @@ class UrllibHTTPClient:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status != 200:
-                    raise HTTPClientError(f"{url} returned {resp.status}")
+                    raise HTTPClientError(f"{_safe(url)} returned {resp.status}")
                 body = resp.read()
         except urllib.error.HTTPError as exc:
-            raise HTTPClientError(f"{url} failed: {exc}", status=exc.code) from exc
+            raise HTTPClientError(f"{_safe(url)} failed: {exc}", status=exc.code) from exc
         except urllib.error.URLError as exc:
-            raise HTTPClientError(f"{url} failed: {exc}") from exc
+            raise HTTPClientError(f"{_safe(url)} failed: {exc}") from exc
         except (OSError, http.client.HTTPException) as exc:
             # A read timeout or reset mid-body is not a URLError, so it used to
             # escape and take a whole source down with one slow board.
-            raise HTTPClientError(f"{url} failed: {exc!r}") from exc
+            raise HTTPClientError(f"{_safe(url)} failed: {exc!r}") from exc
         try:
             return json.loads(body)
         except json.JSONDecodeError as exc:
-            raise HTTPClientError(f"{url} returned non-JSON: {exc}") from exc
+            raise HTTPClientError(f"{_safe(url)} returned non-JSON: {exc}") from exc
 
     def get_text(
         self, url: str, *, timeout: float = 10.0,
@@ -88,16 +98,16 @@ class UrllibHTTPClient:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status != 200:
-                    raise HTTPClientError(f"{url} returned {resp.status}")
+                    raise HTTPClientError(f"{_safe(url)} returned {resp.status}")
                 body = resp.read()
         except urllib.error.HTTPError as exc:
-            raise HTTPClientError(f"{url} failed: {exc}", status=exc.code) from exc
+            raise HTTPClientError(f"{_safe(url)} failed: {exc}", status=exc.code) from exc
         except urllib.error.URLError as exc:
-            raise HTTPClientError(f"{url} failed: {exc}") from exc
+            raise HTTPClientError(f"{_safe(url)} failed: {exc}") from exc
         except (OSError, http.client.HTTPException) as exc:
             # A read timeout or reset mid-body is not a URLError, so it used to
             # escape and take a whole source down with one slow board.
-            raise HTTPClientError(f"{url} failed: {exc!r}") from exc
+            raise HTTPClientError(f"{_safe(url)} failed: {exc!r}") from exc
         try:
             return body.decode("utf-8")
         except UnicodeDecodeError:

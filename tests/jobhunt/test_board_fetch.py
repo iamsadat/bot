@@ -40,3 +40,15 @@ def test_transport_errors_mid_read_become_http_client_errors(monkeypatch, exc):
     monkeypatch.setattr(urllib.request, "urlopen", boom)
     with pytest.raises(HTTPClientError):
         UrllibHTTPClient().get_json("https://example.com/x")
+
+
+def test_error_messages_never_carry_credentials(monkeypatch):
+    """A failing Adzuna call put its app_key in an error the browser saw."""
+    def boom(*a, **k):
+        raise urllib.error.URLError("refused")
+    import urllib.error
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(HTTPClientError) as info:
+        UrllibHTTPClient().get_json(
+            "https://api.adzuna.com/x?app_id=abc&app_key=SECRET123&what=data")
+    assert "SECRET123" not in str(info.value) and "app_key=***" in str(info.value)

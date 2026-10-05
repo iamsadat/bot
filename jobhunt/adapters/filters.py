@@ -170,6 +170,55 @@ def place_matches(wanted: str, text: str) -> bool:
     return False
 
 
+# A word between a role's words that names another discipline: "Data
+# Protection Engineer" is security work, not data engineering.
+_OTHER_DISCIPLINE = frozenset({
+    "protection", "security", "privacy", "center", "centre", "entry",
+    "annotation", "annotator", "labeling", "labelling", "loss",
+})
+
+
+# A title whose job is plainly non-technical, though it names the field it
+# serves: "Learning & Development Partner – Data Engineering Business".
+_NON_TECH_ROLE = frozenset({
+    "partner", "recruiter", "recruiting", "talent", "sales", "marketing",
+    "trainer", "hrbp",
+})
+
+
+def _ordered_words(text: str) -> list[str]:
+    return "".join(
+        c if c.isalnum() or c in "+#" else " " for c in (text or "").lower()
+    ).split()
+
+
+def _reads_as_phrase(title: str, role: str) -> bool:
+    """Whether a multi-word role reads as a phrase in the title.
+
+    The role's first word must come before a word of its job family, at most
+    one word apart, with nothing between them naming another discipline. So
+    "Data Platform Engineer" fits "data engineer", but "Data Protection
+    Engineer" and "AI Engineer — Data APIs" do not, though all contain both
+    words.
+    """
+    role_seq = [w for w in _ordered_words(role) if w not in _LEVELS]
+    family = _FAMILY.get(role_seq[-1]) if len(role_seq) >= 2 else None
+    if family is None:
+        return True
+    first = expand_terms([role_seq[0]]) | {role_seq[0]}
+    toks = _ordered_words(title)
+    if family == "eng" and set(toks) & _NON_TECH_ROLE:
+        return False
+    for i, tok in enumerate(toks):
+        if tok not in first:
+            continue
+        for j in range(i + 1, min(i + 3, len(toks))):
+            if _FAMILY.get(toks[j]) == family and not (
+                    set(toks[i + 1:j]) & _OTHER_DISCIPLINE):
+                return True
+    return False
+
+
 def title_matches_role(title: str, role: str) -> bool:
     """Whether ``title`` plausibly names the job described by ``role``.
 
@@ -199,9 +248,9 @@ def title_matches_role(title: str, role: str) -> bool:
         return False
 
     role_families, title_families = _families(role_words), _families(title_words)
-    if role_families and title_families:
-        return bool(role_families & title_families)
-    return True
+    if role_families and title_families and not role_families & title_families:
+        return False
+    return _reads_as_phrase(title, role)
 
 
 def passes_local_filters(posting: JobPosting, query: dict) -> bool:

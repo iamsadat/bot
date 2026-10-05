@@ -44,7 +44,7 @@ function SourcesPanel() {
         {sourcesData && <span className="text-xs text-muted">page {sourcesData.page}</span>}
       </div>
       {sources.length === 0 ? (
-        <p className="text-xs text-muted">No sweep yet — hit Run a hunt or Fetch jobs.</p>
+        <p className="text-xs text-muted">Per-source results show after the next sweep (Fetch jobs runs one now).</p>
       ) : (
         <div className="space-y-2">
           {sources.map((s) => (

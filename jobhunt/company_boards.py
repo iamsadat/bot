@@ -363,3 +363,26 @@ def total_pages(per_page: int | None = None) -> int:
 def has_next(number: int, per_page: int | None = None) -> bool:
     """Whether another page of boards remains before wrapping."""
     return max(1, number) < total_pages(per_page)
+
+
+# How companies write their own names, where title-casing the board slug reads
+# wrong ("Brillio 2", "Dnb", "Liveramp Inc"). Greenhouse sends the real name
+# with every job, so only Lever and Ashby boards need an entry.
+_DISPLAY_NAMES: dict[str, str] = {
+    "brillio-2": "Brillio", "beghouconsulting": "Beghou Consulting",
+    "ttecdigital": "TTEC Digital", "acceldata": "Acceldata",
+    "valgenesis": "ValGenesis", "shyftlabs": "ShyftLabs", "hevodata": "Hevo Data",
+    "dnb": "Dun & Bradstreet", "moonpay": "MoonPay", "mindtickle": "Mindtickle",
+    "shieldai": "Shield AI", "epifi": "Fi", "pocketfm": "Pocket FM",
+    "GoToGroup": "GoTo Group", "modeln": "Model N", "cred": "CRED",
+    "sarvam": "Sarvam AI", "junipersquare": "Juniper Square",
+    "liveramp-inc": "LiveRamp", "netgear": "NETGEAR", "meraki-labs": "Meraki Labs",
+    "plotlineso": "Plotline", "spotdraft": "SpotDraft", "certifyos": "CertifyOS",
+    "aiprise": "AiPrise", "collinear-ai": "Collinear AI", "clickhouse": "ClickHouse",
+    "elevenlabs": "ElevenLabs", "100ms": "100ms",
+}
+
+
+def display_name(slug: str) -> str:
+    """A board's company name as the company writes it."""
+    return _DISPLAY_NAMES.get(slug) or slug.replace("-", " ").title()
