@@ -92,6 +92,8 @@ export const api = {
   autonomy: () => req<Autonomy>('GET', '/api/autonomy'),
   setAutonomy: (b: Partial<Autonomy>) => req<any>('POST', '/api/autonomy', b),
   document: (jobId: string) => req<{ document: Doc }>('GET', `/api/documents/${jobId}`),
+  writeWithAi: (jobId: string, part: 'resume' | 'cover_letter') =>
+    req<{ ok: boolean; document: Doc }>('POST', `/api/documents/${encodeURIComponent(jobId)}/ai`, { part }),
   profile: () => req<{ profile: Profile | null; ats_config?: AtsConfig; pending_parse?: any }>('GET', '/api/profile'),
   parseResume: (text: string) => req<ParsedResume>('POST', '/api/onboarding/resume', { text }),
   parseResumeFile: (filename: string, content_base64: string) =>
@@ -323,7 +325,7 @@ export interface DiscoverResult {
 export interface Job {
   job_id: string; title: string; company: string; location: string; url: string;
   status: string; relevance_score?: number; remote?: boolean; submitted?: boolean;
-  awaiting_approval?: boolean;
+  awaiting_approval?: boolean; needs_you?: string;
   score_breakdown?: ScoreBreakdown;
   events?: { ts: number; stage: string; detail: string; status: string }[];
 }
@@ -343,6 +345,7 @@ export interface Doc {
   job_id: string; company: string; title: string; draft?: ResumeDraft | null;
   keyword_coverage?: number; matched_keywords?: string[]; missing_keywords?: string[];
   ai_status?: 'pending' | 'done';
+  cover_letter_text?: string; cover_ai?: boolean;
 }
 export interface ResumeDraft {
   candidate_name: string; candidate_email: string; phone?: string; location?: string;

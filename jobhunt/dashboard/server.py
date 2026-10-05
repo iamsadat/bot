@@ -88,6 +88,7 @@ import hmac
 import os
 import re
 import secrets
+import threading
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
@@ -103,6 +104,7 @@ from jobhunt.approval import ApprovalQueue, ApprovalState, InvalidTransition
 from jobhunt.assistant import handle_chat as _assistant_chat
 from jobhunt.dashboard.persistence import DashboardStore, restore_approval_queue
 from jobhunt.digest import build_digest
+from jobhunt.llm.cache import usage as _llm_usage
 from jobhunt.metrics import compute_funnel
 from jobhunt.models import JobHuntPlan, UserProfile
 from jobhunt.onboarding import build_user_profile, parse_resume_text
@@ -750,6 +752,7 @@ def _mark_submitted(state: DashboardState, req, job: dict, how: str,
                     sub_id: str = "") -> None:
     job["submitted"] = True
     job["submission_id"] = sub_id
+    job.pop("needs_you", None)
     if job.get("status") == "Saved":
         job["status"] = "Applied"
     try:
@@ -777,9 +780,8 @@ def _apply_in_browser(state: DashboardState, req, job: dict, plan: dict,
         if outcome.get("submitted"):
             _mark_submitted(state, req, job, "from the browser")
         else:
-            _add_event(state, job_id, "Not submitted",
-                       f"Browser closed without submitting to {company}. "
-                       "Approve again to reopen it.", status="failed")
+            _reopen(state, req, job, f"Browser closed without submitting to {company}. "
+                    "Approve again to reopen it.")
         state.persist()
 
     headless = autonomous or os.environ.get(
@@ -810,6 +812,47 @@ def _apply_in_browser(state: DashboardState, req, job: dict, plan: dict,
     state.bus.publish("submission", job_id, detail)
     return {"submitted": False, "copilot": True, "detail": detail,
             "unfilled_required": missing}
+
+
+def _why(detail: str) -> str:
+    """A submission failure in words the owner can act on."""
+    d = str(detail or "").strip()
+    if re.match(r"^(?:http\s*)?40[13]\b", d, re.I):
+        return ("the job board refused the API submission (it needs the employer's "
+                "key). Install the browser filler — pip install playwright && "
+                "playwright install chromium — or apply on the company site")
+    return d or "unknown error"
+
+
+def _reopen(state: DashboardState, req, job: dict | None, reason: str) -> None:
+    """Return an approved-but-unsent application to the approval queue.
+
+    Without this a failed attempt left the job approved, unsubmitted and in
+    Saved, with no Approve button to try again.
+    """
+    try:
+        state.approval_queue.transition(req.request_id, ApprovalState.PENDING,
+                                        notes=reason)
+    except (InvalidTransition, KeyError):
+        return
+    if job is not None:
+        job["needs_you"] = reason
+        _add_event(state, job["job_id"], "Needs you", reason, status="failed")
+
+
+def _reopen_stranded(state: DashboardState) -> int:
+    """At startup: approved applications that never went out (the process
+    stopped, or an older version left them) go back to the approval queue."""
+    n = 0
+    for req in list(state.approval_queue.all()):
+        if req.state != ApprovalState.APPROVED:
+            continue
+        job = next((j for j in state.jobs if j["job_id"] == req.job_id), None)
+        if job is None or job.get("submitted") or job.get("status") != "Saved":
+            continue
+        _reopen(state, req, job, "Approved but never sent — approve again to apply.")
+        n += 1
+    return n
 
 
 def _auto_apply(state: DashboardState, registry, req, job, doc,
@@ -1135,6 +1178,7 @@ def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg"
             "missing_keywords": doc.missing_keywords,
             "bullets": doc.bullets,
             "draft": doc.draft,
+            "jd_text": getattr(doc, "jd_text", ""),
         }
         _assign_variant(state, state.documents[doc.job_id])
         state.approval_queue.submit(
@@ -1159,37 +1203,77 @@ def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg"
 
 def _sweep_budget(callback):
     """Cap the LLM calls one sweep may make; past the cap, callers get "" and
-    use their deterministic text. A sweep tailors up to 25 résumés, each a
-    handful of calls — on a Claude subscription that is minutes of wall time
-    and real plan usage, so only the top matches (tailored first) get AI text.
-    ``JOBHUNT_LLM_CALLS_PER_SWEEP``: default 40, 0 for no cap.
+    use their deterministic text. ``JOBHUNT_LLM_CALLS_PER_SWEEP``: default 40,
+    0 for no cap.
+
+    Also a circuit breaker: after two failures in a row (Claude Code signed
+    out, a hung CLI) the rest of the run uses templates instead of spending
+    the budget on 120-second timeouts. ``budgeted.produced`` counts calls
+    that returned text, so a caller can tell whether the LLM wrote anything.
     """
     cap = int(os.environ.get("JOBHUNT_LLM_CALLS_PER_SWEEP", "40") or 0)
-    if cap <= 0:
-        return callback
-    used = [0]
+    used, fails = [0], [0]
 
     def budgeted(action: str, payload: dict) -> str:
-        if used[0] >= cap:
+        if (cap > 0 and used[0] >= cap) or fails[0] >= 2:
             return ""
         used[0] += 1
-        return callback(action, payload)
+        try:
+            out = callback(action, payload)
+        except Exception:
+            fails[0] += 1
+            raise
+        fails[0] = 0
+        if out:
+            budgeted.produced += 1
+        return out
 
+    budgeted.produced = 0
     return budgeted
 
 
-_POLISH_LOCK = __import__("threading").Lock()
+_POLISH_LOCK = threading.Lock()
 
 
-def _start_polish(state: DashboardState, postings) -> int:
+def _ai_min_match() -> float:
+    try:
+        return float(os.environ.get("JOBHUNT_AI_MIN_MATCH", "0.7"))
+    except ValueError:
+        return 0.7
+
+
+def _ai_per_sweep() -> int:
+    try:
+        return int(os.environ.get("JOBHUNT_AI_PER_SWEEP", "5"))
+    except ValueError:
+        return 5
+
+
+def _posting_for(state: DashboardState, job_id: str):
+    """Rebuild the JobPosting behind a stored job + document, for writing its
+    résumé or cover letter later. None when the job description is gone."""
+    from jobhunt.models import JobPosting
+
+    job = next((j for j in state.jobs if j["job_id"] == job_id), None)
+    doc = state.documents.get(job_id) or {}
+    if job is None or not doc.get("jd_text"):
+        return None
+    return JobPosting(
+        job_id=job_id, source=job.get("source", ""), source_id=job_id,
+        url=job.get("url", ""), title=job.get("title", ""), company=job.get("company", ""),
+        location=job.get("location", ""), jd_text=doc["jd_text"],
+        remote=bool(job.get("remote")), relevance_score=float(job.get("relevance_score") or 0),
+    )
+
+
+def _start_polish(state: DashboardState, postings, *, force: bool = False) -> int:
     """Rewrite freshly tailored résumés with the LLM, in the background.
 
-    A sweep tailors every match deterministically, so the résumés are there
-    the moment it returns. Writing them with Claude takes ~30s each; done
-    inside the sweep, "Fetch jobs" sat for five minutes and looked like it
-    produced nothing. Here the best matches are rewritten one at a time,
-    each saved as soon as it is done. A résumé the owner already acted on
-    (approved, submitted) is left exactly as they saw it.
+    A sweep tailors every match from the template at once; this rewrites the
+    good ones (match ≥ ``JOBHUNT_AI_MIN_MATCH``, default 70%; at most
+    ``JOBHUNT_AI_PER_SWEEP``, default 5) one at a time, saving each. Any other
+    résumé can be rewritten on demand (``force``). A résumé the owner already
+    approved or submitted is left exactly as they saw it.
 
     Returns how many were queued.
     """
@@ -1202,11 +1286,11 @@ def _start_polish(state: DashboardState, postings) -> int:
     if client is None:
         return 0
     llm = _sweep_budget(resume_callback(client))
-    todo = sorted((p for p in postings if p.job_id in state.documents),
-                  key=lambda p: -(p.relevance_score or 0.0))
-    cap = int(os.environ.get("JOBHUNT_LLM_CALLS_PER_SWEEP", "40") or 0)
-    if cap > 0:
-        todo = todo[:max(1, cap // 5)]  # ~5 calls a résumé: entries, summary, letter
+    todo = [p for p in postings if p.job_id in state.documents
+            and state.documents[p.job_id].get("ai_status") != "done"]
+    if not force:
+        todo = sorted((p for p in todo if (p.relevance_score or 0) >= _ai_min_match()),
+                      key=lambda p: -(p.relevance_score or 0.0))[:max(0, _ai_per_sweep())]
     for p in todo:
         state.documents[p.job_id]["ai_status"] = "pending"
 
@@ -1214,36 +1298,47 @@ def _start_polish(state: DashboardState, postings) -> int:
         return all(r.state == ApprovalState.PENDING
                    for r in state.approval_queue.by_job(job_id))
 
+    def settle(job_id: str) -> None:
+        doc = state.documents.get(job_id)
+        if doc is not None and doc.get("ai_status") == "pending":
+            doc.pop("ai_status")
+
     def run() -> None:
         from jobhunt.agents.resume import ResumeArchitectAgent, ResumeInputs
         from jobhunt.models import ReasoningTrace
 
-        agent = ResumeArchitectAgent(state.trace_store, state.bus, llm=llm)
+        agent = ResumeArchitectAgent(state.trace_store, state.bus, llm=llm,
+                                     ai_cover_letter=False)
         with _POLISH_LOCK:
             for p in todo:
-                doc = state.documents.get(p.job_id)
-                if doc is None:
+                if state.documents.get(p.job_id) is None:
                     continue
                 if not untouched(p.job_id) or state.user_profile is None:
-                    doc.pop("ai_status", None)
+                    settle(p.job_id)
                     continue
+                before = llm.produced
                 try:
                     trace = ReasoningTrace.new("resume", "polish")
                     out = agent.act(ResumeInputs(profile=state.user_profile, postings=[p]),
                                     trace)[0]
                 except Exception as exc:  # noqa: BLE001 - keep the template text
-                    doc.pop("ai_status", None)
+                    settle(p.job_id)
                     state.bus.publish("error", "polish",
                                       f"AI rewrite failed for {p.company}: {exc}")
                     continue
                 # Re-read: a restore from the shared database may have
                 # replaced the dict while Claude was writing.
                 doc = state.documents.get(p.job_id)
-                if doc is None or not untouched(p.job_id):
+                if doc is None:
+                    continue
+                if not untouched(p.job_id) or llm.produced == before:
+                    # Approved meanwhile, or the LLM wrote nothing (budget
+                    # spent, breaker open): keep what the owner saw.
+                    settle(p.job_id)
+                    state.persist()
                     continue
                 doc.update({
                     "resume_text": out.resume_text,
-                    "cover_letter_text": out.cover_letter_text,
                     "keyword_coverage": out.keyword_coverage,
                     "matched_keywords": out.matched_keywords,
                     "missing_keywords": out.missing_keywords,
@@ -1255,8 +1350,38 @@ def _start_polish(state: DashboardState, postings) -> int:
                 state.bus.publish("resume", "polish",
                                   f"Résumé written with AI: {p.company} — {p.title}")
 
-    __import__("threading").Thread(target=run, name="resume-polish", daemon=True).start()
+    threading.Thread(target=run, name="resume-polish", daemon=True).start()
     return len(todo)
+
+
+def _write_cover_letter(state: DashboardState, job_id: str) -> bool:
+    """Write the AI cover letter for one job, now. Returns True when it did.
+
+    Called when the owner approves (the letter is only used to apply) or asks
+    for it, instead of for every match a sweep finds.
+    """
+    doc = state.documents.get(job_id)
+    if doc is None or doc.get("cover_ai") or state.user_profile is None:
+        return False
+    posting = _posting_for(state, job_id)
+    if posting is None:
+        return False
+    from jobhunt.agents.resume import ResumeArchitectAgent
+    from jobhunt.llm.callbacks import resume_callback
+    from jobhunt.llm.factory import build_llm_client_from_env
+
+    client = build_llm_client_from_env()
+    if client is None:
+        return False
+    agent = ResumeArchitectAgent(state.trace_store, state.bus, llm=resume_callback(client))
+    letter = agent._cover_letter(state.user_profile, posting, doc.get("matched_keywords") or [])
+    template = agent._render_cover(state.user_profile, posting,
+                                   doc.get("matched_keywords") or [])
+    if not letter or letter == template:
+        return False
+    doc["cover_letter_text"] = letter
+    doc["cover_ai"] = True
+    return True
 
 
 def _execute_hunt(state: DashboardState, registry=None) -> None:
@@ -1386,8 +1511,8 @@ def _maybe_auto_apply_batch(state: DashboardState, registry) -> int:
             break
         job = next((j for j in state.jobs if j["job_id"] == req.job_id), None)
         doc = state.documents.get(req.job_id)
-        if job is None or doc is None or job.get("submitted"):
-            continue
+        if job is None or doc is None or job.get("submitted") or job.get("needs_you"):
+            continue  # a job auto-apply already failed on waits for the owner
         url = job.get("url", "")
         if registry.for_url(url) is None and not _browser_route(url, autonomous=True):
             continue  # not a real-submittable board → leave for manual review
@@ -1399,9 +1524,17 @@ def _maybe_auto_apply_batch(state: DashboardState, registry) -> int:
         except InvalidTransition:
             continue
         _add_event(state, req.job_id, "Approved", "Auto-approved (autonomous mode)")
+        try:
+            _write_cover_letter(state, req.job_id)
+        except Exception:  # noqa: BLE001 - the template letter still works
+            pass
         res = _auto_apply(state, registry, req, job, doc, autonomous=True)
         if res and res.get("submitted"):
             applied += 1
+        else:
+            detail = _why((res or {}).get("detail") or "could not submit")
+            _reopen(state, req, job, f"Auto-apply couldn't finish: {detail}. "
+                    "Review and approve it yourself.")
 
     if applied:
         state.applies_today[today] = used + applied
@@ -1667,6 +1800,8 @@ def create_app(
     async def lifespan(app):
         if state is not None:
             state.bus.set_loop(asyncio.get_event_loop())
+            if _reopen_stranded(state):
+                state.persist()
         poll_task = None
         disc_task = None
         digest_task = None
@@ -1928,6 +2063,8 @@ def create_app(
             "notify_channels": [s.name for s in notifier.sinks] if notifier else [],
             "personal": personal,
             "capabilities": _capabilities(notifier, inbox_source),
+            # Calls, cache hits and tokens, so AI spend is visible.
+            "llm_usage": _llm_usage.snapshot(),
         }
 
     # ---------------------------------------------------------------------- auth
@@ -2499,6 +2636,31 @@ def create_app(
         if doc is None:
             raise HTTPException(status_code=404, detail="document not found")
         return {"document": doc}
+
+    @app.post("/api/documents/{job_id}/ai")
+    def write_with_ai(job_id: str, body: dict | None = None,
+                      state: DashboardState = Depends(get_state)) -> dict:
+        """Write one document with the LLM on demand: ``part`` "resume" (in the
+        background; the preview refreshes) or "cover_letter" (now)."""
+        part = str((body or {}).get("part") or "resume")
+        if job_id not in state.documents:
+            raise HTTPException(status_code=404, detail="no document for this job")
+        posting = _posting_for(state, job_id)
+        if posting is None:
+            raise HTTPException(status_code=409,
+                                detail="This job was tailored before AI rewrites were "
+                                       "stored — fetch jobs again to rewrite it.")
+        if part == "cover_letter":
+            ok = _write_cover_letter(state, job_id)
+            state.persist()
+            return {"ok": ok, "document": state.documents[job_id]}
+        if part != "resume":
+            raise HTTPException(status_code=400, detail="part must be resume or cover_letter")
+        queued = _start_polish(state, [posting], force=True)
+        if not queued:
+            raise HTTPException(status_code=409,
+                                detail="AI writing is off — install Claude Code and sign in.")
+        return {"ok": True, "document": state.documents[job_id]}
 
     @app.get("/api/documents/{job_id}/download")
     def download_document(
@@ -3149,7 +3311,18 @@ def create_app(
             doc = state.documents.get(req.job_id)
             _add_event(state, req.job_id, "Approved",
                        f"Resume approved by {reviewer or 'you'}")
+            if job is not None:
+                job.pop("needs_you", None)
+            try:
+                _write_cover_letter(state, req.job_id)  # the one place it is used
+            except Exception:  # noqa: BLE001 - the template letter still works
+                pass
             submission = _auto_apply(state, registry, req, job, doc)
+            if (submission and not submission.get("submitted")
+                    and not submission.get("manual") and not submission.get("copilot")):
+                _reopen(state, req, job,
+                        f"Couldn't apply: {_why(submission.get('detail', ''))}. "
+                        "Then approve again.")
         elif decision == "reject":
             _add_event(state, req.job_id, "Rejected", "Resume rejected — won't be used",
                        status="failed")

@@ -364,8 +364,11 @@ def build_tailored_resume(
     *,
     max_keywords: int = 15,
     llm: Callable[[str, dict], str] | None = None,
+    keywords: list[str] | None = None,
 ) -> ResumeDraft:
     """Build a layout-ready, JD-tailored ResumeDraft from a structured profile.
+
+    ``keywords`` are the JD's ATS keywords when the caller already has them.
 
     Reorders each experience/project's real bullets by relevance to the JD and
     orders entries by their strongest bullet. Never fabricates: every bullet
@@ -376,7 +379,8 @@ def build_tailored_resume(
     from jobhunt.skills_taxonomy import expand_term
 
     jd = posting.jd_text or ""
-    keywords = _best_keywords(jd, max_keywords)
+    if keywords is None:
+        keywords = _best_keywords(jd, max_keywords)
     expanded = _expanded_keywords(keywords)
 
     sections: list[ResumeSection] = []

@@ -60,7 +60,9 @@ _VALID_TRANSITIONS: dict[ApprovalState, set[ApprovalState]] = {
         ApprovalState.EDIT_REQUESTED,
     },
     ApprovalState.EDIT_REQUESTED: {ApprovalState.PENDING, ApprovalState.REJECTED},
-    ApprovalState.APPROVED: {ApprovalState.SUBMITTED},
+    # Back to PENDING when the application could not be sent (a failed
+    # auto-apply, a co-pilot window closed unsubmitted), so it can be retried.
+    ApprovalState.APPROVED: {ApprovalState.SUBMITTED, ApprovalState.PENDING},
     ApprovalState.REJECTED: set(),
     ApprovalState.SUBMITTED: set(),
 }

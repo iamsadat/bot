@@ -24,9 +24,12 @@ autonomous applying from the dashboard's Autonomy panel when you trust it.
 AI writing — tailored bullets, cover letters, interview questions, answer
 feedback, outreach — runs on your Claude Pro/Max plan, with no API key: install
 Claude Code (`npm install -g @anthropic-ai/claude-code`) and run `claude` once to
-sign in. Each sweep spends at most `JOBHUNT_LLM_CALLS_PER_SWEEP` calls (default
-40) on its top matches. `me.env` is gitignored; nothing personal belongs in this
-public repo.
+sign in. A sweep gives every match a résumé at once, then Claude rewrites the
+good ones (≥70% match, at most 5) in the background; small edits run on Haiku and
+are cached, so your unchanged bullets are not re-edited for every posting. Cover
+letters are written when you approve. `/api/status` reports `llm_usage`; the
+knobs are in `me.env.example`. `me.env` is gitignored; nothing personal belongs
+in this public repo.
 
 ## Live site & deploy
 
