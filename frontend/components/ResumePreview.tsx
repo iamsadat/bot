@@ -97,12 +97,14 @@ function MatchBreakdown({ job }: { job: Job }) {
   const b = job.score_breakdown;
   if (!b || typeof b.total !== 'number') return null;
   const pct = (n: number) => `${Math.round(n * 100)}%`;
-  const rows: { label: string; value: number; note?: string }[] = [
+  const rows: { label: string; value: number; note?: string; uncounted?: boolean }[] = [
     { label: 'Role match', value: b.title },
     {
       label: 'Skills they asked for',
       value: b.skills,
       note: b.skills_scored === false ? 'short description — not counted' : undefined,
+      // An uncounted component must not read as a 0% the candidate scored.
+      uncounted: b.skills_scored === false,
     },
     {
       label: 'Level',
@@ -122,8 +124,8 @@ function MatchBreakdown({ job }: { job: Job }) {
         {rows.map((r) => (
           <div key={r.label} className="flex items-center gap-2 text-xs">
             <span className="w-40 shrink-0 text-muted">{r.label}</span>
-            <Meter value={r.value} className="flex-1" />
-            <span className="w-9 shrink-0 text-right tabular-nums">{pct(r.value)}</span>
+            <Meter value={r.uncounted ? 0 : r.value} className={`flex-1 ${r.uncounted ? 'opacity-40' : ''}`} />
+            <span className="w-9 shrink-0 text-right tabular-nums">{r.uncounted ? 'n/a' : pct(r.value)}</span>
           </div>
         ))}
       </div>

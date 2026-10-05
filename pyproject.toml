@@ -23,7 +23,7 @@ classifiers = [
 # optional extra so the agent core stays import-light.
 dependencies = [
     "fastapi>=0.110",
-    "uvicorn>=0.27",
+    "uvicorn[standard]>=0.27",  # WebSockets: the live reasoning feed
     "sqlalchemy>=2.0",
     "alembic>=1.13",
 ]

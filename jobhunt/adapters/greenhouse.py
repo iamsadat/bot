@@ -119,7 +119,8 @@ class GreenhouseSource(JobSource):
             source_id=str(row.get("id", "")),
             url=url,
             title=title,
-            company=company,
+            # The board's own name ("Particle41"), not its slug ("Particle41Llc").
+            company=(row.get("company_name") or "").strip() or company,
             location=loc,
             jd_text=jd,
             posted_at=posted_at,

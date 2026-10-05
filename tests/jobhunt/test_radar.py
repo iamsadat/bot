@@ -95,7 +95,7 @@ class _FakeSalaryClient:
     def __init__(self):
         self.calls = []
 
-    def estimate(self, role, location=""):
+    def estimate(self, role, location="", country=None):
         self.calls.append((role, location))
         return _FakeEstimate(role, location)
 

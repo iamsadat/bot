@@ -100,15 +100,10 @@ def _generic_resources(skill: str) -> list[dict[str, str]]:
 
 
 def _canonical_skill(term: str) -> str:
-    """Pick a stable canonical name for a synonym group: the shortest member
-    that is also a key in ``_RESOURCES``, else the shortest member overall."""
-    group = sorted(expand_term(term))
-    if not group:
-        return term
-    for candidate in group:
-        if candidate in _RESOURCES:
-            return candidate
-    return min(group, key=len)
+    """The synonym group's display name ("lakehouse", not its shortest member
+    "hudi"); ``resources_for`` already searches the whole group."""
+    from jobhunt.skills_taxonomy import canonical
+    return canonical(term) or term
 
 
 def resources_for(skill: str) -> list[dict[str, str]]:

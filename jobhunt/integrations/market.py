@@ -38,15 +38,18 @@ class AdzunaSalaryClient:
         self._id, self._key, self._country = app_id, app_key, country
         self._http = http or UrllibHTTPClient()
 
-    def _url(self, role: str, location: str) -> str:
+    def _url(self, role: str, location: str, country: str | None = None) -> str:
         params = [("app_id", self._id), ("app_key", self._key), ("what", role)]
         if location:
-            params.append(("location0", location))
-        return self._BASE.format(country=self._country, qs=urlencode(params))
+            # "where" takes a free-text place. "location0" is the top of
+            # Adzuna's area tree (the country), so a city there was a 400.
+            params.append(("where", location))
+        return self._BASE.format(country=country or self._country, qs=urlencode(params))
 
-    def estimate(self, role: str, location: str = "") -> SalaryEstimate:
+    def estimate(self, role: str, location: str = "",
+                 country: str | None = None) -> SalaryEstimate:
         try:
-            payload = self._http.get_json(self._url(role, location))
+            payload = self._http.get_json(self._url(role, location, country))
         except HTTPClientError as exc:
             raise RuntimeError(str(exc)) from exc
         hist = (payload.get("histogram") or {}) if isinstance(payload, dict) else {}
@@ -64,7 +67,8 @@ class AdzunaSalaryClient:
             return bands[-1][0]
 
         return SalaryEstimate(
-            role=role, location=location, currency=_CCY.get(self._country, ""),
+            role=role, location=location,
+            currency=_CCY.get(country or self._country, ""),
             p10=pct(0.1), median=pct(0.5), p90=pct(0.9), sample=total)
 
 

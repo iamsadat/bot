@@ -14,6 +14,7 @@ from typing import Any
 
 from jobhunt.adapters.base import JobSource, SourceUnavailable, fetch_boards
 from jobhunt.adapters.filters import passes_local_filters
+from jobhunt.company_boards import display_name
 from jobhunt.http import HTTPClient, UrllibHTTPClient
 from jobhunt.models import JobPosting
 
@@ -53,7 +54,7 @@ class LeverSource(JobSource):
                 continue
             if not isinstance(payload, list):
                 continue
-            display_company = slug.replace("-", " ").title()
+            display_company = display_name(slug)
             postings.extend(
                 self._row_to_posting(row, display_company) for row in payload
             )

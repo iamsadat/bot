@@ -1086,7 +1086,7 @@ def _update_market_value(state: DashboardState, salary_client) -> bool:
     role = profile.target_roles[0]
     location = profile.locations[0] if profile.locations else ""
     try:
-        est = salary_client.estimate(role, location)
+        est = salary_client.estimate(role, location, adzuna_country(profile))
     except Exception:
         return False
 
@@ -2652,14 +2652,18 @@ def create_app(
         return {"salary": salary_client is not None, "news": news_client is not None}
 
     @app.get("/api/salary")
-    def salary(role: str, location: str = "") -> dict:
+    def salary(role: str, location: str = "",
+               state: DashboardState = Depends(get_state)) -> dict:
         if salary_client is None:
             raise HTTPException(status_code=400,
                                 detail="salary intel needs Adzuna keys (ADZUNA_APP_ID/KEY)")
         if not role.strip():
             raise HTTPException(status_code=422, detail="role is required")
         try:
-            est = salary_client.estimate(role, location)
+            # The profile's country, as job search uses: ADZUNA_COUNTRY
+            # defaults to "us", so a Bangalore lookup was a 400 from Adzuna US.
+            est = salary_client.estimate(role, location,
+                                         adzuna_country(state.user_profile))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"ok": True, **asdict(est)}

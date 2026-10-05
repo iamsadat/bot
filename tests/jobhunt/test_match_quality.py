@@ -397,3 +397,29 @@ def test_discovery_filters_sources_that_do_not_filter_themselves(store, bus):
         task_id="t",
     )
     assert [p.title for p in result.output.postings] == ["Data Engineer"]
+
+
+@pytest.mark.parametrize("title,years", [
+    ("Data Engineer  (7.1-9 years)", 7),
+    ("Data Engineer (2.5 - 4 years)", 2),
+    ("Data Engineer 3-5 Yrs", 3),
+])
+def test_years_in_title_reads_decimals_and_whole_numbers(title, years):
+    """A decimal range used to be read from its middle: "7.1-9" as 1 year."""
+    from jobhunt.seniority import years_in_title
+    assert years_in_title(title) == years
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("Data Platform Engineer", True),
+    ("Software Engineer, Data Engineer II", True),
+    ("Data & Analytics Engineer", True),
+    ("Data Protection Engineer", False),
+    ("AI Engineer Data APIs", False),
+    ("Experienced Engineer, Data Management", False),
+])
+def test_role_must_read_as_a_phrase_in_the_title(title, expected):
+    """Both words appearing somewhere let a security role and an AI role pass
+    as data engineering."""
+    from jobhunt.adapters.filters import title_matches_role
+    assert title_matches_role(title, "Data Engineer") is expected

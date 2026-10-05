@@ -85,7 +85,10 @@ def level_from_title(title: str | None) -> int | None:
 # "Big Data (7 to 11 years)". Extremely common on Indian job boards, and often
 # the only level signal a title carries.
 _YEARS_RE = re.compile(
-    r"(\d{1,2})\s*(?:\+|\s*(?:to|-|–|—)\s*\d{1,2}\+?)?\s*(?:years?|yrs?|yoe)\b",
+    # Decimals and a no-mid-number start: "7.1-9 years" used to read as 1, and
+    # "2.5 - 4 years" as 5, turning a senior role junior.
+    r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*(?:\+|\s*(?:to|-|–|—)\s*\d{1,2}(?:\.\d+)?\+?)?"
+    r"\s*(?:years?|yrs?|yoe)\b",
     re.I,
 )
 
@@ -130,7 +133,7 @@ def years_in_title(title: str | None) -> int | None:
     """
     if not title:
         return None
-    values = [int(m.group(1)) for m in _YEARS_RE.finditer(title)]
+    values = [int(float(m.group(1))) for m in _YEARS_RE.finditer(title)]
     return min(values) if values else None
 
 

@@ -98,7 +98,30 @@ def _best_keywords(jd: str, limit: int) -> list[str]:
     Prefers the ``jd_parser``'s categorised *skills* (true tech terms from its
     taxonomy), tops up with its distinctive TF-IDF/frequency union ranking, and
     drops generic JD filler. Falls back to plain frequency extraction.
+
+    The skills vocabulary comes first. Ranked by frequency, a JD's top terms
+    are its prose — a GCP Data Engineer posting yielded "clients, diversity,
+    career, delivery" as "missing" and a 13% coverage for a candidate who
+    fits it — the same defect discovery's match score had.
     """
+    from jobhunt.skills_taxonomy import skills_in_text
+
+    named = skills_in_text(jd)
+    if named:
+        from jobhunt.skills_taxonomy import expand_term
+
+        low = jd.lower()
+
+        def as_written(skill: str) -> tuple[int, str]:
+            # An ATS scans for the employer's own spelling ("k8s", not
+            # "kubernetes"), so echo whichever alias the JD actually used.
+            hits = [(m.start(), alias) for alias in expand_term(skill)
+                    for m in [re.search(rf"(?<![\w]){re.escape(alias)}(?![\w])", low)]
+                    if m]
+            return min(hits) if hits else (len(low), skill)
+
+        # In the order the JD names them: requirements tend to come first.
+        return [alias for _, alias in sorted(as_written(s) for s in named)][:limit]
     try:
         from jobhunt.jd_parser import parse_jd
         parsed = parse_jd(jd, limit=limit * 3)
