@@ -203,6 +203,7 @@ export interface DiscoverResult {
 export interface Job {
   job_id: string; title: string; company: string; location: string; url: string;
   status: string; relevance_score?: number; remote?: boolean; submitted?: boolean;
+  awaiting_approval?: boolean;
   score_breakdown?: ScoreBreakdown;
   events?: { ts: number; stage: string; detail: string; status: string }[];
 }
@@ -229,7 +230,7 @@ export interface ResumeDraft {
 }
 export interface ResumeSection {
   title: string; kind: string; body?: string;
-  rows?: { left: string; right?: string; link?: string; bullets?: { text: string }[] }[];
+  rows?: { left: string; right?: string; link?: string; bullets?: { text: string; evidence_id?: string }[] }[];
 }
 export interface Profile {
   name: string; email: string; phone?: string; skills: string[];
