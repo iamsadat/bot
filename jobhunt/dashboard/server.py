@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import hmac
 import os
 import re
 import secrets
@@ -168,6 +169,11 @@ def _default_experiment_registry() -> ExperimentRegistry:
 # Shared state container
 # ---------------------------------------------------------------------------
 
+# Vercel sets VERCEL=1. Serverless functions freeze once they respond, so
+# nothing may run in the background there; see start_hunt and /api/cron/sweep.
+_SERVERLESS = bool(os.environ.get("VERCEL"))
+
+
 @dataclass
 class DashboardState:
     trace_store: TraceStore
@@ -192,6 +198,8 @@ class DashboardState:
     billing_plan: str = "free"  # "free" | "pro" — set only by the Stripe webhook handler
     store: DashboardStore | None = None
     notifier: Any = None  # optional jobhunt.notify.Notifier (not persisted)
+    # The store's stamp() as of our last load or save; see refresh().
+    _seen_stamp: Any = field(default=None, repr=False)
     # Last sweep's per-source outcome, for the dashboard's source panel:
     # name → {"status": ok|degraded, "jobs": int, "checked_at": epoch}.
     # Discovery already tracked this (DiscoveryBatch.sources_used /
@@ -218,7 +226,7 @@ class DashboardState:
             return
         try:
             plan_dict = _plan_to_dict(self.plan) if self.plan else None
-            self.store.save(
+            self._seen_stamp = self.store.save(
                 profile=self.user_profile,
                 jobs=self.jobs,
                 applications=self.applications,
@@ -245,6 +253,10 @@ class DashboardState:
         snap = self.store.load()
         if snap is None:
             return
+        try:
+            self._seen_stamp = self.store.stamp()
+        except Exception:
+            self._seen_stamp = None
         self.user_profile = snap.get("profile")
         self.jobs = snap.get("jobs", [])
         self.applications = snap.get("applications", [])
@@ -268,6 +280,26 @@ class DashboardState:
             self.hunt_status = "idle"
         restore_approval_queue(self.approval_queue, snap.get("approvals", []))
         self._prune_orphans()
+
+    def refresh(self) -> bool:
+        """Reload if another process saved since we last loaded or saved.
+
+        A personal deployment is two processes on one database — the laptop
+        running ``jobhunt me`` and serverless instances behind the phone — and
+        each holds the state in memory. Without this, whichever wrote last
+        silently discarded the other's changes.
+        """
+        if self.store is None:
+            return False
+        try:
+            stamp = self.store.stamp()
+        except Exception:
+            return False
+        if stamp is None or stamp == self._seen_stamp:
+            return False
+        self.approval_queue._items.clear()  # restore only upserts; drop stale
+        self.restore()
+        return True
 
     def _prune_orphans(self) -> None:
         """Drop approvals/documents whose job no longer exists.
@@ -853,8 +885,10 @@ def _capabilities(notifier, inbox_source) -> list[dict]:
         ("adzuna", "Adzuna India jobs", bool(env("ADZUNA_APP_ID") and env("ADZUNA_APP_KEY")),
          "Add ADZUNA_APP_ID and ADZUNA_APP_KEY to me.env"),
         ("continuous", "Automatic job sweeps",
-         int(env("JOBHUNT_DISCOVERY_POLL_SECONDS", "0") or 0) > 0,
-         "Set JOBHUNT_DISCOVERY_POLL_SECONDS (personal mode: 6h)"),
+         int(env("JOBHUNT_DISCOVERY_POLL_SECONDS", "0") or 0) > 0
+         or bool(_SERVERLESS and env("CRON_SECRET")),
+         "Set CRON_SECRET (daily Vercel Cron)" if _SERVERLESS
+         else "Set JOBHUNT_DISCOVERY_POLL_SECONDS (personal mode: 6h)"),
         ("browser_apply", "Fill applications in a browser",
          playwright and on("JOBHUNT_AUTOFILL_ENABLED"),
          "pip install playwright && playwright install chromium"
@@ -1542,6 +1576,7 @@ def create_app(
                     while True:
                         await asyncio.sleep(delay)
                         delay = disc_interval
+                        await asyncio.to_thread(state.refresh)
                         if state.user_profile is None:
                             continue
                         try:
@@ -1643,6 +1678,14 @@ def create_app(
 
     # --------------------------------------------------------------- access gate
 
+    if personal and state is not None and state.store is not None:
+        @app.middleware("http")
+        async def _pick_up_other_writes(request: Request, call_next):
+            # Registered before the access gate, so it runs inside it.
+            if request.url.path.startswith("/api/"):
+                await asyncio.to_thread(state.refresh)
+            return await call_next(request)
+
     if access_code:
         @app.middleware("http")
         async def _access_code_gate(request: Request, call_next):
@@ -1650,12 +1693,14 @@ def create_app(
             # companions (/demo, /tracker, /app, /site, /walkthrough, /) must
             # always load so the gate is a soft door, not a wall around the
             # whole site.
-            if request.url.path.startswith("/api/"):
+            if request.url.path.startswith("/api/") and not (
+                    request.url.path == "/api/cron/sweep"):  # checks CRON_SECRET
                 supplied = (
                     request.headers.get("X-Access-Code")
                     or request.query_params.get("code")
+                    or ""
                 )
-                if supplied != access_code:
+                if not hmac.compare_digest(supplied, access_code):
                     return JSONResponse(
                         status_code=401, content={"detail": "access code required"},
                     )
@@ -2130,8 +2175,33 @@ def create_app(
         # publishing now, just before the orchestrator starts running in a
         # worker thread via asyncio.to_thread.
         state.bus.set_loop(asyncio.get_event_loop())
+        if _SERVERLESS:
+            # A serverless function is frozen once it responds, so a background
+            # task would never finish. Run the hunt inside the request instead.
+            await _run_hunt_bg(state, registry)
+            return {"ok": True, "hunt_status": state.hunt_status}
         asyncio.create_task(_run_hunt_bg(state, registry))
         return {"ok": True, "hunt_status": "running"}
+
+    @app.get("/api/cron/sweep")
+    async def cron_sweep(request: Request) -> dict:
+        """The scheduled sweep where no process stays up to run one (Vercel
+        Cron). Authorised by CRON_SECRET, not the access code."""
+        secret = os.environ.get("CRON_SECRET", "")
+        supplied = request.headers.get("authorization", "")
+        if not secret or not hmac.compare_digest(supplied, f"Bearer {secret}"):
+            raise HTTPException(status_code=401, detail="unauthorized")
+        if state is None:
+            raise HTTPException(status_code=400, detail="personal mode only")
+        await asyncio.to_thread(state.refresh)
+        if state.user_profile is None:
+            return {"ok": True, "skipped": "no profile yet"}
+        state.bus.set_loop(asyncio.get_event_loop())
+        res = await asyncio.to_thread(_discover_once, state, registry)
+        if state.notifier:
+            digest = build_digest(state)
+            _notify(state, "digest", digest["subject"], digest["body"])
+        return {"ok": True, **res}
 
     @app.post("/api/discover")
     async def discover_now(state: DashboardState = Depends(get_state)) -> dict:
@@ -2961,9 +3031,9 @@ def create_app(
         # cookie should already be present. Absence is rare/abuse-only.
         if access_code:
             supplied = (
-                ws.headers.get("X-Access-Code") or ws.query_params.get("code")
+                ws.headers.get("X-Access-Code") or ws.query_params.get("code") or ""
             )
-            if supplied != access_code:
+            if not hmac.compare_digest(supplied, access_code):
                 await ws.close(code=1008)  # policy violation
                 return
 

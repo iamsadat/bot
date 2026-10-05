@@ -188,3 +188,60 @@ def test_offline_mode_never_routes_to_a_browser(monkeypatch):
     monkeypatch.setenv("JOBHUNT_AUTOFILL_ENABLED", "1")  # conftest pins OFFLINE=1
     assert _browser_route("https://job-boards.greenhouse.io/acme/jobs/1",
                           autonomous=True) is False
+
+
+# --------------------------------------------------------------------------- #
+# Laptop + phone on one database
+# --------------------------------------------------------------------------- #
+
+def _stored_state(db_path) -> DashboardState:
+    from jobhunt.dashboard.persistence import DashboardStore
+    state = DashboardState(trace_store=TraceStore(), bus=ThoughtBus(),
+                           store=DashboardStore(str(db_path)))
+    state.restore()
+    return state
+
+
+def test_two_processes_on_one_database_see_each_others_writes(env, tmp_path):
+    laptop, phone = _stored_state(tmp_path / "s.db"), _stored_state(tmp_path / "s.db")
+    personal.seed_profile(laptop)
+    assert phone.refresh() is True and phone.user_profile.name == "Alex Tester"
+
+    phone.user_profile.target_roles = ["Analytics Engineer"]
+    phone.persist()
+    assert laptop.refresh() is True
+    assert laptop.user_profile.target_roles == ["Analytics Engineer"]
+    # Nothing new since: no reload, so in-flight work is never swapped out.
+    assert laptop.refresh() is False
+
+
+def test_api_requests_pick_up_the_other_process_first(env, monkeypatch, tmp_path):
+    laptop, phone = _stored_state(tmp_path / "s.db"), _stored_state(tmp_path / "s.db")
+    client = _personal_client(phone, monkeypatch, tmp_path)
+    personal.seed_profile(laptop)
+    assert client.get("/api/status").json()["has_profile"] is True
+
+
+def test_cron_sweep_needs_its_secret_and_bypasses_only_the_access_code(
+        env, monkeypatch, tmp_path):
+    from jobhunt.dashboard import server
+
+    monkeypatch.setenv("CRON_SECRET", "s3cret")
+    ran = []
+    monkeypatch.setattr(server, "_discover_once",
+                        lambda state, registry: ran.append(1) or {"added": 0})
+    state = _state()
+    personal.seed_profile(state)
+    out = tmp_path / "out"
+    out.mkdir()
+    monkeypatch.setenv("JOBHUNT_FRONTEND_DIR", str(out))
+    client = TestClient(create_app(state, personal=True, access_code="pin"))
+
+    assert client.get("/api/cron/sweep").status_code == 401
+    assert client.get("/api/cron/sweep",
+                      headers={"Authorization": "Bearer wrong"}).status_code == 401
+    r = client.get("/api/cron/sweep", headers={"Authorization": "Bearer s3cret"})
+    assert r.status_code == 200 and ran == [1]
+    # The access code still guards everything else.
+    assert client.get("/api/status").status_code == 401
+    assert client.get("/api/status", headers={"X-Access-Code": "pin"}).status_code == 200

@@ -66,6 +66,12 @@ def enable(env_file: str | Path | None = "me.env") -> list[str]:
     """Turn on personal mode for this process. Returns the keys loaded."""
     loaded = load_env_file(env_file) if env_file else []
     os.environ["JOBHUNT_PERSONAL"] = "1"
+    if os.environ.get("VERCEL"):
+        # Frozen between requests: sweeps come from Vercel Cron instead, and
+        # there is no browser to fill forms in.
+        for key in ("JOBHUNT_DISCOVERY_POLL_SECONDS", "JOBHUNT_DIGEST_INTERVAL_SECONDS",
+                    "JOBHUNT_AUTOFILL_ENABLED"):
+            os.environ.setdefault(key, "0")
     for key, value in DEFAULTS.items():
         os.environ.setdefault(key, value)
     return loaded

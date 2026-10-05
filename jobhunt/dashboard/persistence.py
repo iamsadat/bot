@@ -132,8 +132,8 @@ class DashboardStore:
         experiments: dict | None = None,
         linked_email: str | None = None,
         billing_plan: str | None = None,
-    ) -> None:
-        """Upsert the snapshot row."""
+    ) -> Any:
+        """Upsert the snapshot row. Returns its new ``stamp()``."""
         appr_dicts = [
             a.to_dict() if isinstance(a, ApprovalRequest) else a for a in approvals
         ]
@@ -167,6 +167,15 @@ class DashboardStore:
             if billing_plan is not None:
                 row.plan = billing_plan
             s.commit()
+            return row.updated_at
+
+    def stamp(self) -> Any:
+        """When the snapshot last changed — one cheap query, so a process can
+        tell whether another one (a phone on Vercel, a laptop) has written
+        since it last loaded."""
+        with self.Session() as s:
+            return (s.query(_Snapshot.updated_at)
+                    .order_by(_Snapshot.id.desc()).limit(1).scalar())
 
     def clear(self) -> None:
         """Reset everything (used by tests)."""
