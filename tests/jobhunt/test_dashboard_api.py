@@ -375,6 +375,35 @@ def test_get_document_404():
     assert r.status_code == 404
 
 
+def test_get_document_draft_bullets_carry_evidence_id():
+    from jobhunt.agents.resume import ResumeArchitectAgent, ResumeInputs
+    from jobhunt.dashboard.server import _persist_tailored_docs
+    from jobhunt.models import JobPosting, UserProfile
+
+    profile = UserProfile(
+        user_id="u1", name="Ada Lovelace", email="ada@x.com",
+        target_roles=["backend"], locations=["Remote"], skills=["python", "redis"],
+        experiences=[{"title": "Backend Engineer", "company": "Globex",
+                      "bullets": ["Built Python services with Redis caching."]}],
+        projects=[{"name": "JobHunt", "bullets": ["Multi-agent platform in Python."]}],
+    )
+    posting = JobPosting(
+        job_id="j1", source="greenhouse", source_id="1", url="https://example.com/1",
+        title="Backend Engineer", company="Acme", location="Remote",
+        jd_text="We need a backend engineer strong in Python and Redis.",
+    )
+    state, client = _client()
+    agent = ResumeArchitectAgent(state.trace_store, state.bus)
+    docs = agent.run(ResumeInputs(profile=profile, postings=[posting]), "t1").output
+    _persist_tailored_docs(state, docs)
+
+    draft = client.get("/api/documents/j1").json()["document"]["draft"]
+    bullets = [b for s in draft["sections"] for r in s.get("rows", [])
+               for b in r.get("bullets", [])]
+    assert bullets
+    assert all(b.get("evidence_id") for b in bullets)
+
+
 def test_download_txt():
     state, client = _client()
     _seed_doc(state)

@@ -15,15 +15,13 @@ function Rich({ s }: { s: string }) {
   );
 }
 
-// ponytail: ResumeDraft bullets carry no per-bullet evidence id — the app's
-// whole premise is that a tailored draft never writes a bullet without one
-// (see the backend's evidence-graph gate), so every bullet here gets the
-// "freshly tailored" sweep treatment rather than guessing which ones qualify.
-function SweepBullet({ text, delay }: { text: string; delay: number }) {
+// Bullets backed by an evidence id get the "freshly tailored" sweep; plain
+// bullets (e.g. older documents) render as normal text in the same box.
+function SweepBullet({ text, delay, sweep }: { text: string; delay: number; sweep: boolean }) {
   return (
     <div
       className="rounded-[7px] px-[7px] py-[4px] text-[9.5px] leading-[1.5]"
-      style={{
+      style={sweep ? {
         backgroundImage:
           'linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--color-accent-2) 34%, transparent) 42%, transparent 64%)',
         backgroundSize: '220% 100%',
@@ -32,7 +30,7 @@ function SweepBullet({ text, delay }: { text: string; delay: number }) {
         animationTimingFunction: 'ease-in-out',
         animationIterationCount: 'infinite',
         animationDelay: `${delay}s`,
-      }}
+      } : undefined}
     >
       {text}
     </div>
@@ -74,7 +72,7 @@ function ResumeDoc({ d }: { d: ResumeDraft }) {
                 {!!r.bullets?.length && (
                   <div className="mt-1 flex flex-col gap-1">
                     {r.bullets.map((b, k) => (
-                      <SweepBullet key={k} text={b.text} delay={k * 0.5} />
+                      <SweepBullet key={k} text={b.text} delay={k * 0.5} sweep={!!b.evidence_id} />
                     ))}
                   </div>
                 )}
