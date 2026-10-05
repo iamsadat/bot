@@ -893,9 +893,9 @@ def _capabilities(notifier, inbox_source) -> list[dict]:
          playwright and on("JOBHUNT_AUTOFILL_ENABLED"),
          "pip install playwright && playwright install chromium"
          if not playwright else "Set JOBHUNT_AUTOFILL_ENABLED=1"),
-        ("llm", "AI résumé polish", bool(llm.get("active")),
+        ("llm", "AI writing (Claude)", bool(llm.get("active")),
          llm.get("reason") if llm.get("provider") else
-         "Add GEMINI_API_KEY (free at aistudio.google.com) to me.env"),
+         "Install Claude Code and run `claude` once to sign in (uses your Claude plan)"),
         ("notifications", "Notifications", bool(notifier and notifier.sinks),
          "Add JOBHUNT_TELEGRAM_BOT_TOKEN + JOBHUNT_TELEGRAM_CHAT_ID to me.env"),
         ("inbox", "Recruiter email tracking", inbox_source is not None,
@@ -1152,6 +1152,27 @@ def _persist_tailored_docs(state: DashboardState, docs, *, task: str = "hunt-bg"
     return new
 
 
+def _sweep_budget(callback):
+    """Cap the LLM calls one sweep may make; past the cap, callers get "" and
+    use their deterministic text. A sweep tailors up to 25 résumés, each a
+    handful of calls — on a Claude subscription that is minutes of wall time
+    and real plan usage, so only the top matches (tailored first) get AI text.
+    ``JOBHUNT_LLM_CALLS_PER_SWEEP``: default 40, 0 for no cap.
+    """
+    cap = int(os.environ.get("JOBHUNT_LLM_CALLS_PER_SWEEP", "40") or 0)
+    if cap <= 0:
+        return callback
+    used = [0]
+
+    def budgeted(action: str, payload: dict) -> str:
+        if used[0] >= cap:
+            return ""
+        used[0] += 1
+        return callback(action, payload)
+
+    return budgeted
+
+
 def _execute_hunt(state: DashboardState, registry=None) -> None:
     """Runs the full orchestrator pipeline synchronously (called in a thread)."""
     from jobhunt.agents.orchestrator import Orchestrator, OrchestratorInputs
@@ -1162,7 +1183,7 @@ def _execute_hunt(state: DashboardState, registry=None) -> None:
 
     assert state.user_profile is not None
     llm_client = build_llm_client_from_env()
-    llm_cb = resume_callback(llm_client) if llm_client is not None else None
+    llm_cb = _sweep_budget(resume_callback(llm_client)) if llm_client is not None else None
     orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)
 
     result = orch.run(
@@ -1372,7 +1393,7 @@ def _discover_once(state: DashboardState, registry) -> dict:
     sources = _build_sources(
         state.ats_config, page=state.source_page, profile=state.user_profile)
     llm_client = build_llm_client_from_env()
-    llm_cb = resume_callback(llm_client) if llm_client is not None else None
+    llm_cb = _sweep_budget(resume_callback(llm_client)) if llm_client is not None else None
     orch = Orchestrator(state.trace_store, state.bus, llm=llm_cb)
     result = orch.run(
         OrchestratorInputs(

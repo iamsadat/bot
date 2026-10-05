@@ -21,7 +21,12 @@ capabilities are on and the one line that turns on each of the rest.
 Approving a job opens its real application form in a browser, filled in from
 your profile and screening answers — you review it and press Submit. Turn on
 autonomous applying from the dashboard's Autonomy panel when you trust it.
-`me.env` is gitignored; nothing personal belongs in this public repo.
+AI writing — tailored bullets, cover letters, interview questions, answer
+feedback, outreach — runs on your Claude Pro/Max plan, with no API key: install
+Claude Code (`npm install -g @anthropic-ai/claude-code`) and run `claude` once to
+sign in. Each sweep spends at most `JOBHUNT_LLM_CALLS_PER_SWEEP` calls (default
+40) on its top matches. `me.env` is gitignored; nothing personal belongs in this
+public repo.
 
 ## Live site & deploy
 
@@ -36,8 +41,8 @@ autonomous applying from the dashboard's Autonomy panel when you trust it.
   into one mobile-accessible site (auto-enables Pages on first run).
 * **Backend (live dashboard):** `python -m jobhunt serve` locally, or one-click host with the
   bundled `Dockerfile` + `render.yaml` (serves `uvicorn jobhunt.dashboard.app:app`). Persistence
-  path is `JOBHUNT_DB_PATH`; set `GEMINI_API_KEY` (free tier) or `ANTHROPIC_API_KEY`
-  (paid) to enable real LLM bullet tone-polish on the resume pipeline.
+  path is `JOBHUNT_DB_PATH`. AI writing runs on a Claude Pro/Max plan through a signed-in
+  Claude Code CLI (no API key), or on `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`.
 
 ## Deploy your own live instance
 

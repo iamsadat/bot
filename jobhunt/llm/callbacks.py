@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable
 
 from jobhunt.llm.anthropic_client import LLMClient
@@ -201,7 +202,11 @@ def _interview_questions(client: LLMClient, payload: dict, model: str | None) ->
     job_text = _job_block(title, company, jd_text, keywords)
     user = f"CANDIDATE FACTS:\n{facts}\n\nJOB:\n{job_text}"
     text = clean_llm_text(client.complete(_QUESTIONS_SYSTEM, user, max_tokens=700, model=model))
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip().endswith("?")]
+    # A question line ends in "?" or carries its tag: models often phrase a
+    # prompt as "Walk me through …", which counting only "?" lines discarded.
+    lines = [ln.strip() for ln in text.splitlines()
+             if ln.strip().endswith("?") or re.match(r"\s*\[(technical|behaviou?ral|resume)\]",
+                                                     ln, re.I)]
     if len(lines) < 4:
         return ""
     if grounding_violations("\n".join(lines), [facts, job_text], check_numbers=False):
