@@ -2032,7 +2032,9 @@ def create_app(
     @app.get("/api/profile")
     def get_profile(state: DashboardState = Depends(get_state)) -> dict:
         if state.user_profile is None:
-            return {"profile": None}
+            # An uploaded but unsaved résumé, so returning to onboarding
+            # restores it instead of showing an empty form.
+            return {"profile": None, "pending_parse": state.last_resume_parse}
         return {"profile": state.user_profile.to_dict(), "ats_config": state.ats_config}
 
     @app.put("/api/profile")

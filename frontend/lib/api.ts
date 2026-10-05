@@ -92,7 +92,7 @@ export const api = {
   autonomy: () => req<Autonomy>('GET', '/api/autonomy'),
   setAutonomy: (b: Partial<Autonomy>) => req<any>('POST', '/api/autonomy', b),
   document: (jobId: string) => req<{ document: Doc }>('GET', `/api/documents/${jobId}`),
-  profile: () => req<{ profile: Profile | null; ats_config?: AtsConfig }>('GET', '/api/profile'),
+  profile: () => req<{ profile: Profile | null; ats_config?: AtsConfig; pending_parse?: any }>('GET', '/api/profile'),
   parseResume: (text: string) => req<ParsedResume>('POST', '/api/onboarding/resume', { text }),
   parseResumeFile: (filename: string, content_base64: string) =>
     req<ParsedResume>('POST', '/api/profile/parse-resume-file', { filename, content_base64 }),

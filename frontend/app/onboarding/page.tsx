@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Nav from '@/components/Nav';
 import Rail from '@/components/Rail';
 import { Button, Card, Field, Input, Meter, PageHead, SectionHead, Select, Tag, Textarea } from '@/components/ui';
@@ -50,6 +51,9 @@ function normalizeAnswers(raw?: Record<string, unknown>): Record<string, unknown
 const splitList = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
 
 export default function Onboarding() {
+  const router = useRouter();
+  const [placeholders, setPlaceholders] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -88,7 +92,11 @@ export default function Onboarding() {
         setAtsRest(rest);
       }
       const p = r.profile;
-      if (!p) return;
+      if (!p) {
+        // Uploaded but never saved: bring the parse back instead of a blank form.
+        if (r.pending_parse) applyParsed(r.pending_parse);
+        return;
+      }
       setHasProfile(true);
       setName(p.name || ''); setEmail(p.email || ''); setPhone(p.phone || '');
       setRoles((p.target_roles || []).join(', '));
@@ -103,6 +111,14 @@ export default function Onboarding() {
   }, []);
 
   const applyParsed = (r: any) => {
+    // Contact details and a first target role fill only empty fields, so a
+    // re-upload never overwrites what was typed.
+    const c = r.contact || {};
+    if (c.name) setName((v) => v || c.name);
+    if (c.email) setEmail((v) => v || c.email);
+    if (c.phone) setPhone((v) => v || c.phone);
+    if (r.inferred_titles?.length) setRoles((v) => v || r.inferred_titles[0]);
+    setPlaceholders(r.placeholders || []);
     if (r.skills?.length) setSkills((s) => Array.from(new Set([...s.split(',').map((x: string) => x.trim()).filter(Boolean), ...r.skills])).join(', '));
     if (r.experiences?.length) setExps(r.experiences as Exp[]);
     if (r.education?.length) setEdu(r.education as Edu[]);
@@ -163,12 +179,19 @@ export default function Onboarding() {
   };
   const setAnswer = (key: string, value: string) => setAnswers((a) => ({ ...a, [key]: value }));
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     const target_roles = splitList(roles);
-    if (!target_roles.length) {
-      setMsg('Add at least one target role before saving.');
-      return;
+    const missing = [
+      !name.trim() && 'full name',
+      !email.includes('@') && 'email',
+      !target_roles.length && 'a target role',
+    ].filter(Boolean);
+    if (missing.length) {
+      setMsg(`Can't save yet — add ${missing.join(', ')} under Basics.`);
+      document.getElementById('targets')?.scrollIntoView({ behavior: 'smooth' });
+      return false;
     }
+    setSaving(true);
     setMsg('Saving…');
     // Every stored key goes back (unknown ones included); the server drops
     // blank values, so clearing a field removes that answer.
@@ -201,13 +224,25 @@ export default function Onboarding() {
         ashby_slugs: splitList(ashbySlugs),
       });
       setMsg('Saved ✓');
+      return true;
     } catch (e) {
       setMsg(`Save failed — ${(e as Error).message || 'check name/email/role.'}`);
+      return false;
+    } finally {
+      setSaving(false);
     }
   };
 
+  // The dashboard sends anyone without a saved profile back here, so leaving
+  // without saving looped onto an empty form. Save first; leave only if it took.
+  const saveAndOpenDashboard = async () => {
+    if (await save()) router.push('/dashboard');
+  };
+
   const saveButton = (
-    <Button variant="primary" onClick={save}>Save profile</Button>
+    <Button variant="primary" onClick={() => { void save(); }} disabled={saving}>
+      {saving ? 'Saving…' : 'Save profile'}
+    </Button>
   );
 
   // Bullets are the closest real analogue to the mockup's "claims you can
@@ -392,6 +427,14 @@ export default function Onboarding() {
             {/* Basics */}
             <Card elevation="sm" id="targets">
               <SectionHead title="Basics" />
+              {placeholders.length > 0 && (
+                <p className="rounded-[12px] px-3 py-2 text-xs"
+                   style={{ background: 'color-mix(in srgb, var(--color-accent) 14%, transparent)' }}>
+                  Your résumé file still has template blanks: <strong>{placeholders.join(', ')}</strong>.
+                  They were left out — fill in the real values here (and in Experience / Education
+                  below), or they'll be missing from every application.
+                </p>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Full name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
                 <Field label="Email"><Input value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
@@ -501,8 +544,14 @@ export default function Onboarding() {
 
             <div className="flex items-center gap-3">
               {saveButton}
-              <a href="/dashboard" className="btn btn-secondary">Go to dashboard →</a>
-              {msg && <span className="text-xs text-muted">{msg}</span>}
+              <Button variant="secondary" onClick={saveAndOpenDashboard} disabled={saving}>
+                Save &amp; open dashboard →
+              </Button>
+              {msg && (
+                <span className={`text-sm ${/fail|can't/i.test(msg) ? 'font-semibold text-[color:var(--color-accent-700)]' : 'text-muted'}`}>
+                  {msg}
+                </span>
+              )}
             </div>
           </div>
         </main>
