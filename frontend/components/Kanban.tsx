@@ -24,11 +24,7 @@ export default function Kanban({
             </div>
             <div className="space-y-2">
               {items.map((j) => {
-                // ponytail: the API has no per-job "awaiting your approval" flag —
-                // an Applied job the ATS hasn't confirmed as submitted yet is the
-                // closest existing signal to "tailored, waiting on you". Upgrade
-                // to a real field if the backend ever adds one.
-                const awaiting = col === 'Applied' && !j.submitted;
+                const awaiting = !!j.awaiting_approval;
                 return (
                   <motion.div
                     layout

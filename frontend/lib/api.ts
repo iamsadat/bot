@@ -203,6 +203,7 @@ export interface DiscoverResult {
 export interface Job {
   job_id: string; title: string; company: string; location: string; url: string;
   status: string; relevance_score?: number; remote?: boolean; submitted?: boolean;
+  awaiting_approval?: boolean;
   score_breakdown?: ScoreBreakdown;
   events?: { ts: number; stage: string; detail: string; status: string }[];
 }

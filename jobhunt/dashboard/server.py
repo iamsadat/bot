@@ -2082,7 +2082,11 @@ def create_app(
 
     @app.get("/api/jobs")
     def get_jobs(state: DashboardState = Depends(get_state)) -> dict:
-        return {"jobs": state.jobs}
+        awaiting = {r.job_id for r in state.approval_queue.pending()}
+        return {"jobs": [
+            {**j, "awaiting_approval": j.get("job_id") in awaiting}
+            for j in state.jobs
+        ]}
 
     @app.post("/api/jobs/{job_id}/status")
     def update_job_status(
