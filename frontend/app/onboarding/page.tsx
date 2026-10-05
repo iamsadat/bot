@@ -377,8 +377,22 @@ export default function Onboarding() {
                   <Card elevation="sm">
                     <div className="text-[11px] uppercase tracking-[0.09em] text-muted">Skills parsed</div>
                     <div className="flex flex-wrap gap-1.5">
-                      {skillChips.map((s) => <Tag key={s} tone="neutral">{s}</Tag>)}
+                      {skillChips.map((s) => (
+                        <Tag key={s} tone="neutral">
+                          {s}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${s}`}
+                            title="Remove — save to apply"
+                            onClick={() => setSkills(skillChips.filter((x) => x !== s).join(', '))}
+                            className="ml-1 opacity-60 hover:opacity-100"
+                          >
+                            ×
+                          </button>
+                        </Tag>
+                      ))}
                     </div>
+                    <p className="text-[11px] text-muted">Click × to drop a skill that was misread, then save.</p>
                   </Card>
                 )}
               </div>
