@@ -988,6 +988,35 @@ def _job_dict_from_posting(p) -> dict:
     }
 
 
+def _posting_salary(job: dict) -> dict | None:
+    """The posting's own pay band, or None. Adapters don't record a currency,
+    so none is claimed; the market estimate stays on demand (``/api/salary``)."""
+    lo, hi = job.get("salary_min"), job.get("salary_max")
+    if not (lo or hi):
+        return None
+    return {"min": lo, "max": hi, "currency": "", "source": "posting"}
+
+
+def _job_details(job: dict) -> dict:
+    """Derived, zero-cost details added to each job at response time."""
+    from jobhunt.company_tiers import linkedin_links, tier_for
+    company = job.get("company", "")
+    return {"salary": _posting_salary(job), "tier": tier_for(company),
+            "contacts": linkedin_links(company)}
+
+
+def _cached_estimate(cache: dict, client, role: str, location: str, country: str):
+    """Market estimate shared by every posting for the same kind of role in the
+    same city, so a board of jobs costs one Adzuna lookup per process."""
+    from jobhunt.llm.callbacks import role_key
+    role = role_key(role) or role.strip().lower()
+    city = location.split(",")[0].strip().lower()
+    key = (role, city, country)
+    if key not in cache:
+        cache[key] = client.estimate(role, city, country)
+    return cache[key]
+
+
 def _fingerprint(company: str, title: str, location: str) -> str:
     import hashlib
     key = "|".join([company.strip().lower(), title.strip().lower(),
@@ -1792,6 +1821,7 @@ def create_app(
         build_news_client_from_env, build_salary_client_from_env,
     )
     salary_client = build_salary_client_from_env()
+    salary_cache: dict = {}  # (role, city, country) → estimate, process lifetime
     news_client = build_news_client_from_env()
 
     # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
@@ -2615,7 +2645,7 @@ def create_app(
     def get_jobs(state: DashboardState = Depends(get_state)) -> dict:
         awaiting = {r.job_id for r in state.approval_queue.pending()}
         return {"jobs": [
-            {**j, "awaiting_approval": j.get("job_id") in awaiting}
+            {**j, **_job_details(j), "awaiting_approval": j.get("job_id") in awaiting}
             for j in state.jobs
         ]}
 
@@ -3027,8 +3057,8 @@ def create_app(
         try:
             # The profile's country, as job search uses: ADZUNA_COUNTRY
             # defaults to "us", so a Bangalore lookup was a 400 from Adzuna US.
-            est = salary_client.estimate(role, location,
-                                         adzuna_country(state.user_profile))
+            est = _cached_estimate(salary_cache, salary_client, role, location,
+                                   adzuna_country(state.user_profile))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"ok": True, **asdict(est)}

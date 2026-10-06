@@ -95,7 +95,11 @@ function ResumeDoc({ d }: { d: ResumeDraft }) {
 }
 
 function money(n: number, ccy: string) {
-  return `${ccy === 'USD' ? '$' : ccy === 'GBP' ? '£' : ccy + ' '}${Math.round(n / 1000)}k`;
+  return `${ccy === 'USD' ? '$' : ccy === 'GBP' ? '£' : ccy ? ccy + ' ' : ''}${Math.round(n / 1000)}k`;
+}
+
+export function band(lo: number | null, hi: number | null, ccy = '') {
+  return lo && hi ? `${money(lo, ccy)}–${money(hi, ccy)}` : money((lo || hi)!, ccy);
 }
 
 const STATUSES = ['Saved', 'Applied', 'Assessment', 'Interview', 'Offer', 'Closed'];
@@ -203,7 +207,8 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
     if (job) {
       api.document(job.job_id).then((r) => setDoc(r.document)).catch(() => setDoc(null));
       // Salary intel is optional (needs Adzuna keys) — silently skip if off.
-      api.salary(job.title, job.location || '')
+      // A posting with its own band needs no market estimate.
+      if (!job.salary) api.salary(job.title, job.location || '')
         .then((s) => { if (s.sample > 0) setSalary(s); })
         .catch(() => {});
     }
@@ -290,6 +295,28 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
             )}
 
             <MatchBreakdown job={job} />
+
+            <Card elevation="sm" className="flex flex-col gap-1 text-sm">
+              <div>
+                <span className="text-muted">Company </span>
+                <span className="font-semibold">{job.tier || 'unrated'}</span>
+                {job.salary && (
+                  <>
+                    <span className="text-muted"> · Posted pay </span>
+                    <span className="font-semibold">{band(job.salary.min, job.salary.max, job.salary.currency)}</span>
+                  </>
+                )}
+              </div>
+              {!!job.contacts?.length && (
+                <div className="flex flex-wrap gap-x-3 text-xs">
+                  {job.contacts.map((c) => (
+                    <a key={c.url} href={c.url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)' }}>
+                      {c.label} ↗
+                    </a>
+                  ))}
+                </div>
+              )}
+            </Card>
 
             {salary && (
               <Card elevation="sm" className="text-sm">

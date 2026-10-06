@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import { Job } from '@/lib/api';
 import { Tag, Button } from './ui';
+import { band } from './ResumePreview';
 
 const COLUMNS = ['Saved', 'Applied', 'Assessment', 'Interview', 'Offer', 'Closed'];
 
@@ -60,6 +61,8 @@ export default function Kanban({
                           {Math.round(j.relevance_score * 100)}% match
                         </Tag>
                       )}
+                      {j.tier && <Tag tone="neutral">{j.tier}</Tag>}
+                      {j.salary && <Tag tone="neutral">{band(j.salary.min, j.salary.max)}</Tag>}
                       {j.remote && <Tag tone="neutral">remote</Tag>}
                       {j.submitted && <Tag tone="accent-2">submitted</Tag>}
                       {j.needs_you && !j.submitted && (

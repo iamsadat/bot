@@ -329,6 +329,11 @@ export interface Job {
   status: string; relevance_score?: number; remote?: boolean; submitted?: boolean;
   awaiting_approval?: boolean; needs_you?: string;
   score_breakdown?: ScoreBreakdown;
+  // Derived at response time: the posting's own pay band (currency unknown),
+  // a curated company tier ('' = unrated) and LinkedIn people-search links.
+  salary?: { min: number | null; max: number | null; currency: string; source: 'posting' } | null;
+  tier?: string;
+  contacts?: { label: string; url: string }[];
   events?: { ts: number; stage: string; detail: string; status: string }[];
 }
 export interface Approval {
