@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { api, apiFetch, describeSubmission, Doc, Job, ResumeDraft } from '@/lib/api';
 import { Button, Card, CardTitle, Meter, Select, Tag } from './ui';
+import ResumeEditor from './ResumeEditor';
 
 function Rich({ s }: { s: string }) {
   // Render **bold** runs.
@@ -94,7 +95,11 @@ function ResumeDoc({ d }: { d: ResumeDraft }) {
 }
 
 function money(n: number, ccy: string) {
-  return `${ccy === 'USD' ? '$' : ccy === 'GBP' ? '£' : ccy + ' '}${Math.round(n / 1000)}k`;
+  return `${ccy === 'USD' ? '$' : ccy === 'GBP' ? '£' : ccy ? ccy + ' ' : ''}${Math.round(n / 1000)}k`;
+}
+
+export function band(lo: number | null, hi: number | null, ccy = '') {
+  return lo && hi ? `${money(lo, ccy)}–${money(hi, ccy)}` : money((lo || hi)!, ccy);
 }
 
 const STATUSES = ['Saved', 'Applied', 'Assessment', 'Interview', 'Offer', 'Closed'];
@@ -155,6 +160,17 @@ function MatchBreakdown({ job }: { job: Job }) {
   );
 }
 
+// "boards.greenhouse.io/capco" — enough to see where a posting really lives.
+function postingSource(url: string): string {
+  try {
+    const u = new URL(url);
+    const first = u.pathname.split('/').filter(Boolean)[0];
+    return u.host.replace(/^www\./, '') + (first ? `/${first}` : '');
+  } catch {
+    return '';
+  }
+}
+
 export default function ResumePreview({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [salary, setSalary] = useState<any>(null);
@@ -164,6 +180,7 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
   const [approveMsg, setApproveMsg] = useState<{ text: string; warn?: boolean } | null>(null);
   const [aiBusy, setAiBusy] = useState<'' | 'resume' | 'cover_letter'>('');
   const [aiErr, setAiErr] = useState('');
+  const [editing, setEditing] = useState(false);
 
   // Only good matches are rewritten automatically; any other one on request.
   const writeWithAi = async (part: 'resume' | 'cover_letter') => {
@@ -186,10 +203,12 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
     setDlErr('');
     setApproved(false);
     setApproveMsg(null);
+    setEditing(false);
     if (job) {
       api.document(job.job_id).then((r) => setDoc(r.document)).catch(() => setDoc(null));
       // Salary intel is optional (needs Adzuna keys) — silently skip if off.
-      api.salary(job.title, job.location || '')
+      // A posting with its own band needs no market estimate.
+      if (!job.salary) api.salary(job.title, job.location || '')
         .then((s) => { if (s.sample > 0) setSalary(s); })
         .catch(() => {});
     }
@@ -261,6 +280,12 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               <div>
                 <h2 className="m-0 text-[22px]">{job.title}</h2>
                 <p className="mt-1 text-sm text-muted">{job.company} · {job.location}</p>
+                {job.url && (
+                  <a href={job.url} target="_blank" rel="noreferrer"
+                     className="mt-1 inline-block text-xs" style={{ color: 'var(--color-accent)' }}>
+                    Open posting ↗ <span className="text-muted">{postingSource(job.url)}</span>
+                  </a>
+                )}
               </div>
               <Button variant="secondary" icon onClick={onClose} aria-label="Close">✕</Button>
             </div>
@@ -270,6 +295,28 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
             )}
 
             <MatchBreakdown job={job} />
+
+            <Card elevation="sm" className="flex flex-col gap-1 text-sm">
+              <div>
+                <span className="text-muted">Company </span>
+                <span className="font-semibold">{job.tier || 'unrated'}</span>
+                {job.salary && (
+                  <>
+                    <span className="text-muted"> · Posted pay </span>
+                    <span className="font-semibold">{band(job.salary.min, job.salary.max, job.salary.currency)}</span>
+                  </>
+                )}
+              </div>
+              {!!job.contacts?.length && (
+                <div className="flex flex-wrap gap-x-3 text-xs">
+                  {job.contacts.map((c) => (
+                    <a key={c.url} href={c.url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)' }}>
+                      {c.label} ↗
+                    </a>
+                  ))}
+                </div>
+              )}
+            </Card>
 
             {salary && (
               <Card elevation="sm" className="text-sm">
@@ -290,7 +337,7 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
                 ✦ Claude is rewriting this résumé — it updates here in a minute. The version below is ready to use now.
               </p>
             )}
-            {doc && !doc.ai_status && (
+            {doc && !doc.ai_status && !doc.edited && (
               <div className="flex items-center gap-2">
                 <Button variant="secondary" onClick={() => writeWithAi('resume')} disabled={!!aiBusy}>
                   {aiBusy === 'resume' ? 'Starting…' : '✦ Write résumé with AI'}
@@ -305,6 +352,12 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
                   ↓ {f.toUpperCase()}
                 </Button>
               ))}
+              {doc?.draft && (
+                <Button variant="secondary" onClick={() => setEditing(!editing)}>
+                  {editing ? 'Close editor' : '✎ Edit résumé'}
+                </Button>
+              )}
+              {doc?.edited && <Tag tone="neutral">edited</Tag>}
               {dlErr && <span className="text-xs" style={{ color: 'var(--color-accent-500)' }}>{dlErr}</span>}
               <Select
                 key={job.job_id}
@@ -357,7 +410,13 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               </details>
             )}
 
-            {doc?.draft ? (
+            {doc?.draft && editing ? (
+              <ResumeEditor
+                jobId={job.job_id} draft={doc.draft}
+                onSaved={(d) => { setDoc(d); setEditing(false); }}
+                onCancel={() => setEditing(false)}
+              />
+            ) : doc?.draft ? (
               <ResumeDoc d={doc.draft} />
             ) : (
               <div

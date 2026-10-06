@@ -32,6 +32,7 @@ Endpoints:
   POST /api/jobs/{job_id}/notes   set per-application notes + next action
   GET  /api/applications          pipeline applications
   GET  /api/documents/{job_id}    fetch tailored resume + cover letter text
+  PUT  /api/documents/{job_id}    save hand edits to the tailored resume draft
   GET  /api/documents/{job_id}/download
                                   download artifact (txt / pdf / docx)
   GET  /api/traces                reasoning traces (paginated)
@@ -987,6 +988,35 @@ def _job_dict_from_posting(p) -> dict:
     }
 
 
+def _posting_salary(job: dict) -> dict | None:
+    """The posting's own pay band, or None. Adapters don't record a currency,
+    so none is claimed; the market estimate stays on demand (``/api/salary``)."""
+    lo, hi = job.get("salary_min"), job.get("salary_max")
+    if not (lo or hi):
+        return None
+    return {"min": lo, "max": hi, "currency": "", "source": "posting"}
+
+
+def _job_details(job: dict) -> dict:
+    """Derived, zero-cost details added to each job at response time."""
+    from jobhunt.company_tiers import linkedin_links, tier_for
+    company = job.get("company", "")
+    return {"salary": _posting_salary(job), "tier": tier_for(company),
+            "contacts": linkedin_links(company)}
+
+
+def _cached_estimate(cache: dict, client, role: str, location: str, country: str):
+    """Market estimate shared by every posting for the same kind of role in the
+    same city, so a board of jobs costs one Adzuna lookup per process."""
+    from jobhunt.llm.callbacks import role_key
+    role = role_key(role) or role.strip().lower()
+    city = location.split(",")[0].strip().lower()
+    key = (role, city, country)
+    if key not in cache:
+        cache[key] = client.estimate(role, city, country)
+    return cache[key]
+
+
 def _fingerprint(company: str, title: str, location: str) -> str:
     import hashlib
     key = "|".join([company.strip().lower(), title.strip().lower(),
@@ -1273,7 +1303,7 @@ def _start_polish(state: DashboardState, postings, *, force: bool = False) -> in
     good ones (match ≥ ``JOBHUNT_AI_MIN_MATCH``, default 70%; at most
     ``JOBHUNT_AI_PER_SWEEP``, default 5) one at a time, saving each. Any other
     résumé can be rewritten on demand (``force``). A résumé the owner already
-    approved or submitted is left exactly as they saw it.
+    approved, submitted or edited by hand is left exactly as they saw it.
 
     Returns how many were queued.
     """
@@ -1287,7 +1317,8 @@ def _start_polish(state: DashboardState, postings, *, force: bool = False) -> in
         return 0
     llm = _sweep_budget(resume_callback(client))
     todo = [p for p in postings if p.job_id in state.documents
-            and state.documents[p.job_id].get("ai_status") != "done"]
+            and state.documents[p.job_id].get("ai_status") != "done"
+            and not state.documents[p.job_id].get("edited")]
     if not force:
         todo = sorted((p for p in todo if (p.relevance_score or 0) >= _ai_min_match()),
                       key=lambda p: -(p.relevance_score or 0.0))[:max(0, _ai_per_sweep())]
@@ -1331,6 +1362,9 @@ def _start_polish(state: DashboardState, postings, *, force: bool = False) -> in
                 doc = state.documents.get(p.job_id)
                 if doc is None:
                     continue
+                if doc.get("edited"):  # edited by hand meanwhile: theirs wins
+                    settle(p.job_id)
+                    continue
                 if not untouched(p.job_id) or llm.produced == before:
                     # Approved meanwhile, or the LLM wrote nothing (budget
                     # spent, breaker open): keep what the owner saw.
@@ -1352,6 +1386,43 @@ def _start_polish(state: DashboardState, postings, *, force: bool = False) -> in
 
     threading.Thread(target=run, name="resume-polish", daemon=True).start()
     return len(todo)
+
+
+def _clean_draft_edit(d) -> dict:
+    """Validate a hand-edited draft's ``summary`` and ``sections``; return just
+    those that were sent, normalised. Raises ValueError on a wrong shape or an oversized field.
+    Bullets keep their evidence id; a new one is marked "edited"."""
+    def text(v, cap: int = 1000) -> str:
+        if v is None:
+            return ""
+        if not isinstance(v, str) or len(v) > cap:
+            raise ValueError("text fields must be strings within limits")
+        return v
+
+    def items(v, cap: int) -> list:
+        if v is None:
+            return []
+        if not isinstance(v, list) or len(v) > cap or not all(isinstance(x, dict) for x in v):
+            raise ValueError("lists must hold objects within limits")
+        return v
+
+    def bullets(v) -> list[dict]:
+        return [{"text": text(b.get("text")), "evidence_id": text(b.get("evidence_id")) or "edited"}
+                for b in items(v, 20)]
+
+    if not isinstance(d, dict):
+        raise ValueError("draft must be an object")
+    out = {
+        "summary": text(d.get("summary"), 3000),
+        "sections": [{
+            "title": text(s.get("title")), "kind": text(s.get("kind")) or "generic",
+            "body": text(s.get("body"), 3000), "bullets": bullets(s.get("bullets")),
+            "rows": [{"left": text(r.get("left")), "right": text(r.get("right")),
+                      "link": text(r.get("link")), "bullets": bullets(r.get("bullets"))}
+                     for r in items(s.get("rows"), 60)],
+        } for s in items(d.get("sections"), 30)],
+    }
+    return {k: v for k, v in out.items() if k in d}
 
 
 def _write_cover_letter(state: DashboardState, job_id: str) -> bool:
@@ -1750,6 +1821,7 @@ def create_app(
         build_news_client_from_env, build_salary_client_from_env,
     )
     salary_client = build_salary_client_from_env()
+    salary_cache: dict = {}  # (role, city, country) → estimate, process lifetime
     news_client = build_news_client_from_env()
 
     # Submitter registry for the auto-apply flow. Defaults to real Greenhouse +
@@ -2573,7 +2645,7 @@ def create_app(
     def get_jobs(state: DashboardState = Depends(get_state)) -> dict:
         awaiting = {r.job_id for r in state.approval_queue.pending()}
         return {"jobs": [
-            {**j, "awaiting_approval": j.get("job_id") in awaiting}
+            {**j, **_job_details(j), "awaiting_approval": j.get("job_id") in awaiting}
             for j in state.jobs
         ]}
 
@@ -2637,6 +2709,30 @@ def create_app(
             raise HTTPException(status_code=404, detail="document not found")
         return {"document": doc}
 
+    @app.put("/api/documents/{job_id}")
+    def edit_document(job_id: str, body: dict,
+                      state: DashboardState = Depends(get_state)) -> dict:
+        """Save the owner's hand edits to a tailored résumé (summary + sections).
+        Downloads render from the stored draft, so they follow; the background
+        AI rewrite never touches an edited document."""
+        from jobhunt.resume_template import ResumeDraft
+
+        doc = state.documents.get(job_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        try:
+            edited = _clean_draft_edit((body or {}).get("draft"))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"invalid draft: {e}")
+        draft = {**(doc.get("draft") or {}), **edited}
+        doc["draft"] = draft
+        doc["resume_text"] = ResumeDraft.from_dict(draft).to_text()
+        doc["edited"] = True
+        if doc.get("ai_status") == "pending":
+            doc.pop("ai_status")
+        state.persist()
+        return {"document": doc}
+
     @app.post("/api/documents/{job_id}/ai")
     def write_with_ai(job_id: str, body: dict | None = None,
                       state: DashboardState = Depends(get_state)) -> dict:
@@ -2656,6 +2752,9 @@ def create_app(
             return {"ok": ok, "document": state.documents[job_id]}
         if part != "resume":
             raise HTTPException(status_code=400, detail="part must be resume or cover_letter")
+        if state.documents[job_id].get("edited"):
+            raise HTTPException(status_code=409,
+                                detail="You edited this résumé by hand — AI won't overwrite it.")
         queued = _start_polish(state, [posting], force=True)
         if not queued:
             raise HTTPException(status_code=409,
@@ -2958,8 +3057,8 @@ def create_app(
         try:
             # The profile's country, as job search uses: ADZUNA_COUNTRY
             # defaults to "us", so a Bangalore lookup was a 400 from Adzuna US.
-            est = salary_client.estimate(role, location,
-                                         adzuna_country(state.user_profile))
+            est = _cached_estimate(salary_cache, salary_client, role, location,
+                                   adzuna_country(state.user_profile))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"ok": True, **asdict(est)}

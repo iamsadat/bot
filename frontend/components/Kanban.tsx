@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import { Job } from '@/lib/api';
 import { Tag, Button } from './ui';
+import { band } from './ResumePreview';
 
 const COLUMNS = ['Saved', 'Applied', 'Assessment', 'Interview', 'Offer', 'Closed'];
 
@@ -44,7 +45,15 @@ export default function Kanban({
                       borderColor: awaiting ? 'var(--color-accent)' : 'transparent',
                     }}
                   >
-                    <p className="truncate text-[13px] font-bold">{j.company}</p>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="truncate text-[13px] font-bold">{j.company}</p>
+                      {j.url && (
+                        <a href={j.url} target="_blank" rel="noreferrer" title="Open posting"
+                           aria-label={`Open ${j.company} posting`}
+                           onClick={(e) => e.stopPropagation()}
+                           className="shrink-0 text-[12px] text-muted hover:opacity-70">↗</a>
+                      )}
+                    </div>
                     <p className="mb-2 truncate text-[11.5px] text-muted">{j.title}</p>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {typeof j.relevance_score === 'number' && j.relevance_score > 0 && (
@@ -52,6 +61,8 @@ export default function Kanban({
                           {Math.round(j.relevance_score * 100)}% match
                         </Tag>
                       )}
+                      {j.tier && <Tag tone="neutral">{j.tier}</Tag>}
+                      {j.salary && <Tag tone="neutral">{band(j.salary.min, j.salary.max)}</Tag>}
                       {j.remote && <Tag tone="neutral">remote</Tag>}
                       {j.submitted && <Tag tone="accent-2">submitted</Tag>}
                       {j.needs_you && !j.submitted && (

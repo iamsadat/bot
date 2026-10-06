@@ -179,7 +179,7 @@ a:hover { color: var(--color-accent-700); }
 }
 .input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
 .input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
-textarea.input { min-height: 90px; resize: vertical; }
+textarea.input { min-height: 90px; resize: vertical; border-radius: 16px; padding: 10px 14px; }
 
 .radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
 .radio input,
