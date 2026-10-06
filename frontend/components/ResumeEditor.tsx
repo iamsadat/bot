@@ -47,7 +47,7 @@ export default function ResumeEditor({ jobId, draft, onSaved, onCancel }: {
             {(s.rows || []).map((r, j) => (
               <div key={j} className="rounded-xl2 p-3" style={{ background: 'var(--color-bg)' }}>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <Input placeholder="Heading (**bold** allowed)" value={r.left} onChange={(ev) => { const v = ev.target.value; edit((c) => { c.sections[i].rows![j].left = v; }); }} />
+                  <Input placeholder="Heading" value={r.left.replace(/\*\*/g, '')} onChange={(ev) => { const v = ev.target.value; edit((c) => { c.sections[i].rows![j].left = boldLead(v, c.sections[i].rows![j].left); }); }} />
                   <Input placeholder="Dates / place" value={r.right || ''} onChange={(ev) => { const v = ev.target.value; edit((c) => { c.sections[i].rows![j].right = v; }); }} />
                 </div>
                 {(r.bullets || []).map((b, k) => (
@@ -77,4 +77,16 @@ export default function ResumeEditor({ jobId, draft, onSaved, onCancel }: {
       </div>
     </div>
   );
+}
+
+// The résumé shows an entry's lead ("Data Engineer, Acme") in bold. The
+// editor hides the ** markers and keeps the same lead bold while the edited
+// text still starts with it; otherwise the whole heading is bold.
+function boldLead(v: string, prev: string): string {
+  const plain = v.replace(/\*\*/g, '');
+  if (!plain.trim()) return '';
+  const lead = prev.match(/^\*\*(.+?)\*\*/)?.[1];
+  return lead && plain.startsWith(lead)
+    ? `**${lead}**${plain.slice(lead.length)}`
+    : `**${plain}**`;
 }
