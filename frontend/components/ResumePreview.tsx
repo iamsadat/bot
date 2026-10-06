@@ -155,6 +155,17 @@ function MatchBreakdown({ job }: { job: Job }) {
   );
 }
 
+// "boards.greenhouse.io/capco" — enough to see where a posting really lives.
+function postingSource(url: string): string {
+  try {
+    const u = new URL(url);
+    const first = u.pathname.split('/').filter(Boolean)[0];
+    return u.host.replace(/^www\./, '') + (first ? `/${first}` : '');
+  } catch {
+    return '';
+  }
+}
+
 export default function ResumePreview({ job, onClose }: { job: Job | null; onClose: () => void }) {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [salary, setSalary] = useState<any>(null);
@@ -261,6 +272,12 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               <div>
                 <h2 className="m-0 text-[22px]">{job.title}</h2>
                 <p className="mt-1 text-sm text-muted">{job.company} · {job.location}</p>
+                {job.url && (
+                  <a href={job.url} target="_blank" rel="noreferrer"
+                     className="mt-1 inline-block text-xs" style={{ color: 'var(--color-accent)' }}>
+                    Open posting ↗ <span className="text-muted">{postingSource(job.url)}</span>
+                  </a>
+                )}
               </div>
               <Button variant="secondary" icon onClick={onClose} aria-label="Close">✕</Button>
             </div>
