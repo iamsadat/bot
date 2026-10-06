@@ -92,6 +92,8 @@ export const api = {
   autonomy: () => req<Autonomy>('GET', '/api/autonomy'),
   setAutonomy: (b: Partial<Autonomy>) => req<any>('POST', '/api/autonomy', b),
   document: (jobId: string) => req<{ document: Doc }>('GET', `/api/documents/${jobId}`),
+  saveDocument: (jobId: string, draft: ResumeDraft) =>
+    req<{ document: Doc }>('PUT', `/api/documents/${encodeURIComponent(jobId)}`, { draft }),
   writeWithAi: (jobId: string, part: 'resume' | 'cover_letter') =>
     req<{ ok: boolean; document: Doc }>('POST', `/api/documents/${encodeURIComponent(jobId)}/ai`, { part }),
   profile: () => req<{ profile: Profile | null; ats_config?: AtsConfig; pending_parse?: any }>('GET', '/api/profile'),
@@ -345,7 +347,7 @@ export interface Doc {
   job_id: string; company: string; title: string; draft?: ResumeDraft | null;
   keyword_coverage?: number; matched_keywords?: string[]; missing_keywords?: string[];
   ai_status?: 'pending' | 'done';
-  cover_letter_text?: string; cover_ai?: boolean;
+  cover_letter_text?: string; cover_ai?: boolean; edited?: boolean;
 }
 export interface ResumeDraft {
   candidate_name: string; candidate_email: string; phone?: string; location?: string;

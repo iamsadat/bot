@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { api, apiFetch, describeSubmission, Doc, Job, ResumeDraft } from '@/lib/api';
 import { Button, Card, CardTitle, Meter, Select, Tag } from './ui';
+import ResumeEditor from './ResumeEditor';
 
 function Rich({ s }: { s: string }) {
   // Render **bold** runs.
@@ -175,6 +176,7 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
   const [approveMsg, setApproveMsg] = useState<{ text: string; warn?: boolean } | null>(null);
   const [aiBusy, setAiBusy] = useState<'' | 'resume' | 'cover_letter'>('');
   const [aiErr, setAiErr] = useState('');
+  const [editing, setEditing] = useState(false);
 
   // Only good matches are rewritten automatically; any other one on request.
   const writeWithAi = async (part: 'resume' | 'cover_letter') => {
@@ -197,6 +199,7 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
     setDlErr('');
     setApproved(false);
     setApproveMsg(null);
+    setEditing(false);
     if (job) {
       api.document(job.job_id).then((r) => setDoc(r.document)).catch(() => setDoc(null));
       // Salary intel is optional (needs Adzuna keys) — silently skip if off.
@@ -307,7 +310,7 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
                 ✦ Claude is rewriting this résumé — it updates here in a minute. The version below is ready to use now.
               </p>
             )}
-            {doc && !doc.ai_status && (
+            {doc && !doc.ai_status && !doc.edited && (
               <div className="flex items-center gap-2">
                 <Button variant="secondary" onClick={() => writeWithAi('resume')} disabled={!!aiBusy}>
                   {aiBusy === 'resume' ? 'Starting…' : '✦ Write résumé with AI'}
@@ -322,6 +325,12 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
                   ↓ {f.toUpperCase()}
                 </Button>
               ))}
+              {doc?.draft && (
+                <Button variant="secondary" onClick={() => setEditing(!editing)}>
+                  {editing ? 'Close editor' : '✎ Edit résumé'}
+                </Button>
+              )}
+              {doc?.edited && <Tag tone="neutral">edited</Tag>}
               {dlErr && <span className="text-xs" style={{ color: 'var(--color-accent-500)' }}>{dlErr}</span>}
               <Select
                 key={job.job_id}
@@ -374,7 +383,13 @@ export default function ResumePreview({ job, onClose }: { job: Job | null; onClo
               </details>
             )}
 
-            {doc?.draft ? (
+            {doc?.draft && editing ? (
+              <ResumeEditor
+                jobId={job.job_id} draft={doc.draft}
+                onSaved={(d) => { setDoc(d); setEditing(false); }}
+                onCancel={() => setEditing(false)}
+              />
+            ) : doc?.draft ? (
               <ResumeDoc d={doc.draft} />
             ) : (
               <div
